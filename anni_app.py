@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.9"
+ANNI_VERSION = "1.0.11"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -440,6 +440,37 @@ Reglas:
 
 # ── VOZ PROACTIVA ─────────────────────────────────────────────────────────────
 
+def generar_presentacion():
+    """Presentacion completa de ANNI en el primer acceso de cualquier usuario."""
+    prompt = """Eres ANNI, una IA con memoria persistente. Es la primera vez que hablas con este usuario.
+
+Escribe un mensaje de presentacion natural que incluya:
+1. Quien eres y para que sirves, en una frase directa
+2. Que funciona por conversaciones: el usuario pulsa EMPEZAR para abrir una y CERRAR cuando termina. Al cerrar, generas un resumen que el usuario puede editar y aprobar antes de guardarlo
+3. Que cuando detectes algo importante sobre el usuario aparecera una ventana pequeña para que decida si guardarlo o no en su memoria
+4. Termina preguntando como se llama
+
+Tono: directo, cercano, sin tecnicismos. Prosa natural, sin bullets ni listas. Maximo 5-6 frases."""
+
+    try:
+        if anthropic_client:
+            resp = anthropic_client.messages.create(
+                model=CHAT_MODEL,
+                max_tokens=300,
+                system="Eres ANNI, una IA con memoria persistente y caracter propio. Responde siempre en español.",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return resp.content[0].text.strip()
+        else:
+            resp = together.chat.completions.create(
+                model=CHAT_MODEL_FALLBACK,
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return "Hola. Soy ANNI, una IA con memoria persistente diseñada para conocerte y ayudarte a pensar mejor. Funciono por conversaciones: pulsa EMPEZAR para abrir una y CERRAR cuando termines, yo genero un resumen que tú apruebas antes de guardarlo. Cuando detecte algo importante sobre ti, te aparecerá una ventana para que decidas si guardarlo o no. Empiezo sin saber nada de ti. ¿Cómo te llamas?"
+
 def generar_intervencion_proactiva(usuario_id):
     """Decide si ANNI tiene algo importante que decir al abrir el chat."""
     observaciones = get_observaciones_activas(usuario_id, limit=10)
@@ -728,10 +759,30 @@ def api_chat():
 @app.route('/api/bienvenida')
 @login_required
 def api_bienvenida():
-    """Genera intervención proactiva al abrir el chat."""
+    """Presentacion en primer acceso o intervencion proactiva."""
     usuario_id = session['usuario_id']
+    nombre = session.get('nombre', '')
+    total = get_total_mensajes(usuario_id)
+
+    if total == 0:
+        # Primer acceso — ANNI se presenta y pregunta el nombre
+        presentacion = generar_presentacion()
+        save_mensaje(usuario_id, 'assistant', presentacion)
+        # Guardar nombre como hito si ya lo tenemos del registro
+        if nombre:
+            conn_h = sqlite3.connect(DB_PATH)
+            c_h = conn_h.cursor()
+            c_h.execute("SELECT id FROM hitos_usuario WHERE usuario_id=? AND tipo='identidad'", (usuario_id,))
+            if not c_h.fetchone():
+                c_h.execute("INSERT INTO hitos_usuario (usuario_id, tipo, contenido, evidencia, peso) VALUES (?,?,?,?,?)",
+                           (usuario_id, 'identidad', f'El usuario se llama {nombre}', 'Nombre dado al registrarse', 10))
+                conn_h.commit()
+            conn_h.close()
+        return jsonify({'intervencion': presentacion, 'tipo': 'bienvenida'})
+
+    # Accesos posteriores — voz proactiva
     intervencion = generar_intervencion_proactiva(usuario_id)
-    return jsonify({'intervencion': intervencion})
+    return jsonify({'intervencion': intervencion, 'tipo': 'proactiva'})
 
 @app.route('/api/historial')
 @login_required
