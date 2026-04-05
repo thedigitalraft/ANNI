@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.13"
+ANNI_VERSION = "1.0.14"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -140,10 +140,18 @@ def init_db():
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_diario_usuario ON diario(usuario_id, fecha)")
 
-    # Migración hitos_usuario
-    try:
-        c.execute("ALTER TABLE hitos_usuario ADD COLUMN embedding BLOB")
-    except: pass
+    # Migraciones hitos_usuario
+    for col in [
+        "ALTER TABLE hitos_usuario ADD COLUMN titulo TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN categoria TEXT DEFAULT 'general'",
+        "ALTER TABLE hitos_usuario ADD COLUMN cuando_activarlo TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN como_usarlo TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN donde_puede_fallar TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN embedding BLOB",
+    ]:
+        try:
+            c.execute(col)
+        except: pass
 
     # Embeddings para búsqueda semántica
     c.execute("""CREATE TABLE IF NOT EXISTS embeddings (
@@ -543,10 +551,16 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
     # Hitos del usuario
     conn_h = sqlite3.connect(DB_PATH)
     c_h = conn_h.cursor()
-    c_h.execute("SELECT tipo, contenido FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY peso DESC, ts DESC LIMIT 20", (usuario_id,))
+    c_h.execute("SELECT tipo, contenido, cuando_activarlo FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY peso DESC, ts DESC LIMIT 20", (usuario_id,))
     hitos = c_h.fetchall()
     conn_h.close()
-    hitos_txt = "\n".join([f"- [{h[0]}] {h[1]}" for h in hitos]) if hitos else "Sin hitos confirmados aún."
+    hitos_txt_parts = []
+    for h in hitos:
+        linea = f"[{h[0]}] {h[1]}"
+        if len(h) > 2 and h[2]:  # cuando_activarlo
+            linea += f" | Activar: {h[2]}"
+        hitos_txt_parts.append(linea)
+    hitos_txt = "\n".join(hitos_txt_parts) if hitos_txt_parts else "Sin hitos confirmados aun."
 
     return f"""Eres ANNI. Tienes memoria real de {nombre if nombre else "este usuario"} construida conversación a conversación.
 
@@ -937,9 +951,11 @@ def api_hitos():
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM hitos_usuario WHERE usuario_id=? AND activo=1", (usuario_id,))
     total = c.fetchone()[0]
-    c.execute("SELECT id, tipo, contenido, evidencia, peso, ts FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY ts DESC LIMIT ? OFFSET ?",
+    c.execute("""SELECT id, tipo, titulo, categoria, contenido, evidencia, peso, cuando_activarlo, como_usarlo, ts
+        FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY ts DESC LIMIT ? OFFSET ?""",
               (usuario_id, per_page, offset))
-    hitos = [{'id': r[0], 'tipo': r[1], 'contenido': r[2], 'evidencia': r[3], 'peso': r[4], 'ts': ts_format(r[5])} for r in c.fetchall()]
+    hitos = [{'id': r[0], 'tipo': r[1], 'titulo': r[2] or '', 'categoria': r[3] or '', 'contenido': r[4],
+              'evidencia': r[5] or '', 'peso': r[6], 'cuando': r[7] or '', 'como': r[8] or '', 'ts': ts_format(r[9])} for r in c.fetchall()]
     conn.close()
     return jsonify({'hitos': hitos, 'total': total, 'page': page, 'pages': (total + per_page - 1) // per_page})
 
@@ -949,14 +965,20 @@ def api_aprobar_hito():
     usuario_id = session['usuario_id']
     data = request.json or {}
     contenido = data.get('contenido', '').strip()
-    tipo = data.get('tipo', 'observacion')
+    titulo = data.get('titulo', '').strip().upper()
+    categoria = data.get('categoria', 'general')
+    tipo = data.get('tipo', categoria)
     evidencia = data.get('evidencia', '')
+    cuando = data.get('cuando_activarlo', '')
+    como = data.get('como_usarlo', '')
     if not contenido:
         return jsonify({'ok': False})
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("INSERT INTO hitos_usuario (usuario_id, tipo, contenido, evidencia, peso) VALUES (?,?,?,?,?)",
-              (usuario_id, tipo, contenido, evidencia, 5))
+    c.execute("""INSERT INTO hitos_usuario
+        (usuario_id, tipo, titulo, categoria, contenido, evidencia, peso, cuando_activarlo, como_usarlo)
+        VALUES (?,?,?,?,?,?,?,?,?)""",
+        (usuario_id, tipo, titulo, categoria, contenido, evidencia, 5, cuando, como))
     hid = c.lastrowid
     conn.commit()
     conn.close()
@@ -1091,24 +1113,36 @@ def api_detectar_hito():
     respuesta = data.get('respuesta', '').strip()
     if not mensaje or len(mensaje) < 8:
         return jsonify({'hito': None})
+
     prompt = f"""Analiza este intercambio y determina si contiene informacion importante y duradera sobre el usuario.
 
 Usuario: "{mensaje}"
 ANNI: "{respuesta[:300]}"
 
-Un hito vale la pena recordar: quien es el usuario, como piensa, personas importantes, patrones de comportamiento, decisiones relevantes.
+Un hito vale la pena recordar cuando revela: quien es el usuario, como piensa, personas importantes en su vida (nombres y relacion), patrones de comportamiento, valores, decisiones relevantes, miedos, motivaciones.
 
-Si SI hay un hito importante responde SOLO con este JSON:
-{{"hito": true, "tipo": "patron", "contenido": "frase concisa del hito", "evidencia": "frase exacta del usuario"}}
+IMPORTANTE: Si el usuario menciona el nombre de una persona cercana (esposa, hijo, amigo, socio) ESO ES UN HITO de tipo "relacion".
 
-Si NO hay hito responde SOLO con:
+Si SI hay un hito, responde SOLO con este JSON (sin markdown):
+{{
+  "hito": true,
+  "titulo": "TITULO EN MAYUSCULAS CORTO",
+  "categoria": "forma_de_pensar|toma_de_decisiones|lo_que_importa|energia|relacion|identidad|general",
+  "contenido": "descripcion concisa de lo que revela este hito sobre el usuario",
+  "evidencia": "frase exacta del usuario que lo demuestra",
+  "cuando_activarlo": "en que situaciones ANNI deberia usar este hito",
+  "como_usarlo": "como deberia actuar ANNI cuando detecte esta situacion"
+}}
+
+Si NO hay hito relevante, responde SOLO con:
 {{"hito": false}}
 
 Solo JSON."""
+
     try:
         resp = together.chat.completions.create(
             model=CHAT_MODEL_FALLBACK,
-            max_tokens=150,
+            max_tokens=400,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = resp.choices[0].message.content.strip().replace("```json","").replace("```","").strip()
@@ -1377,8 +1411,35 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 <div class='modal-bg' id='modal-hito'>
 <div class='modal'>
 <h2>Nuevo hito detectado</h2>
-<p style='font-size:14px;color:#888;margin-bottom:8px' id='hito-evidencia'></p>
-<textarea id='hito-txt' rows='3'></textarea>
+<p style='font-size:12px;color:#888;font-style:italic;margin-bottom:14px' id='hito-evidencia'></p>
+<div style='margin-bottom:12px'>
+<label style='font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:4px'>TITULO</label>
+<input type='text' id='hito-titulo' style='width:100%;border:2px solid #e0e0e0;border-radius:8px;padding:10px;font-size:14px;font-weight:700;outline:none;font-family:inherit'>
+</div>
+<div style='margin-bottom:12px'>
+<label style='font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:4px'>CATEGORIA</label>
+<select id='hito-cat' style='width:100%;border:2px solid #e0e0e0;border-radius:8px;padding:10px;font-size:14px;outline:none;font-family:inherit'>
+<option value='forma_de_pensar'>Forma de pensar</option>
+<option value='toma_de_decisiones'>Toma de decisiones</option>
+<option value='lo_que_importa'>Lo que importa</option>
+<option value='energia'>Energia</option>
+<option value='relacion'>Relacion</option>
+<option value='identidad'>Identidad</option>
+<option value='general'>General</option>
+</select>
+</div>
+<div style='margin-bottom:12px'>
+<label style='font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:4px'>DESCRIPCION</label>
+<textarea id='hito-txt' rows='3' style='width:100%;border:2px solid #e0e0e0;border-radius:8px;padding:10px;font-size:14px;resize:vertical;outline:none;font-family:inherit'></textarea>
+</div>
+<div style='margin-bottom:12px'>
+<label style='font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:4px'>CUANDO ACTIVARLO</label>
+<input type='text' id='hito-cuando' placeholder='En que situaciones usar este hito' style='width:100%;border:2px solid #e0e0e0;border-radius:8px;padding:10px;font-size:14px;outline:none;font-family:inherit'>
+</div>
+<div style='margin-bottom:4px'>
+<label style='font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:4px'>COMO USARLO</label>
+<input type='text' id='hito-como' placeholder='Como deberia actuar ANNI' style='width:100%;border:2px solid #e0e0e0;border-radius:8px;padding:10px;font-size:14px;outline:none;font-family:inherit'>
+</div>
 <div class='modal-btns'>
 <button class='btn-cancel' onclick='rechazarHito()'>No guardar</button>
 <button class='btn-ok' onclick='aprobarHito()'>Guardar hito</button>
@@ -1555,15 +1616,24 @@ add('anni','Conversacion cerrada sin guardar resumen.');}
 
 function mostrarModalHito(h){
 pendHito=h;
-document.getElementById('hito-txt').value=h.contenido;
+document.getElementById('hito-titulo').value=h.titulo||'';
+document.getElementById('hito-cat').value=h.categoria||'general';
+document.getElementById('hito-txt').value=h.contenido||'';
+document.getElementById('hito-cuando').value=h.cuando_activarlo||'';
+document.getElementById('hito-como').value=h.como_usarlo||'';
 document.getElementById('hito-evidencia').textContent=h.evidencia?'"'+h.evidencia+'"':'';
 document.getElementById('modal-hito').classList.add('open');}
 
 function aprobarHito(){
 var txt=document.getElementById('hito-txt').value.trim();
-if(!txt||!pendHito)return;
+if(!txt)return;
+var titulo=document.getElementById('hito-titulo').value.trim();
+var cat=document.getElementById('hito-cat').value;
+var cuando=document.getElementById('hito-cuando').value.trim();
+var como=document.getElementById('hito-como').value.trim();
+var evidencia=pendHito?pendHito.evidencia||'':'';
 fetch('/api/hitos/aprobar',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({contenido:txt,tipo:pendHito.tipo,evidencia:pendHito.evidencia||''})})
+body:JSON.stringify({titulo:titulo,categoria:cat,contenido:txt,evidencia:evidencia,cuando_activarlo:cuando,como_usarlo:como})})
 .then(r=>r.json()).then(d=>{
 document.getElementById('modal-hito').classList.remove('open');
 pendHito=null;});}
@@ -1615,11 +1685,16 @@ body.innerHTML='';
 if(!d.hitos.length){body.innerHTML='<p style="color:#999;padding:20px">Sin hitos guardados aun.</p>';return;}
 d.hitos.forEach(function(h){
 var card=document.createElement('div');card.className='item-card';
-card.innerHTML='<div class="item-meta">#'+h.id+' &middot; ['+h.tipo+'] &middot; '+h.ts+'</div>'+
+var titulo=h.titulo?'<div style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+escH(h.titulo)+'</div>':'';
+var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(h.categoria)+'</span>':'';
+var ev=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px">"'+escH(h.evidencia)+'"</div>':'';
+var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Activar:</b> '+escH(h.cuando)+'</div>':'';
+var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</b> '+escH(h.como)+'</div>':'';
+card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+
+titulo+
 '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+
-(h.evidencia?'<div style="font-size:13px;color:#888;margin-top:6px;font-style:italic">"'+escH(h.evidencia)+'"</div>':'')+
+ev+cuando+como+
 '<div class="item-actions">'+
-'<button class="btn-edit" onclick="editHito('+h.id+')">Editar</button>'+
 '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
 '</div>';
 body.appendChild(card);});
