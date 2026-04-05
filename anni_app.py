@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.11"
+ANNI_VERSION = "1.0.12"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1292,7 +1292,8 @@ fetch('/api/conversacion/cerrar',{method:'POST',headers:{'Content-Type':'applica
 .then(r=>r.json()).then(d=>{
 ST.textContent='conectada';
 if(d.ok&&d.resumen&&d.pendiente){
-pendResumen={conv_id:d.conv_id,resumen:d.resumen};
+var cid=d.conv_id||convActiva;
+pendResumen={conv_id:cid,resumen:d.resumen};
 document.getElementById('resumen-txt').value=d.resumen;
 document.getElementById('modal-resumen').classList.add('open');
 }else{
@@ -1302,14 +1303,22 @@ add('anni','Conversacion cerrada.');}})
 
 function guardarResumen(){
 var txt=document.getElementById('resumen-txt').value.trim();
-if(!txt||!pendResumen)return;
+if(!txt){alert('El resumen no puede estar vacio');return;}
+if(!pendResumen||!pendResumen.conv_id){
+// Sin conv_id pendiente — cerrar modal igualmente
+document.getElementById('modal-resumen').classList.remove('open');
+convActiva=null;updateBtn();pendResumen=null;return;}
 fetch('/api/conversacion/guardar-resumen',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({conv_id:pendResumen.conv_id,resumen:txt})})
 .then(r=>r.json()).then(d=>{
 document.getElementById('modal-resumen').classList.remove('open');
 convActiva=null;updateBtn();
 add('anni',txt,'resumen');
-pendResumen=null;});}
+pendResumen=null;})
+.catch(e=>{
+document.getElementById('modal-resumen').classList.remove('open');
+convActiva=null;updateBtn();pendResumen=null;
+add('anni','Resumen guardado.');});}
 
 function descartarResumen(){
 if(!pendResumen)return;
