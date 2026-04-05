@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.7"
+ANNI_VERSION = "1.0.9"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1027,25 +1027,26 @@ CHAT_HTML = """<!DOCTYPE html>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
-body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;display:flex;flex-direction:row}
-/* SIDEBAR */
-#sb{width:54px;min-height:100vh;background:#f5f5f5;border-right:2px solid #e8e8e8;display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:8px;flex-shrink:0;transition:width .2s}
-.sb-btn{width:38px;height:38px;background:none;border:2px solid #e0e0e0;border-radius:10px;cursor:pointer;font-size:11px;font-weight:700;color:#555;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.2;padding:2px;-webkit-appearance:none}
-.sb-btn:active,.sb-btn:hover{background:#e8e8e8}
-.sb-btn.red{color:#cc0000;border-color:#ffcccc}
-/* MAIN AREA */
-#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-header{padding:12px 16px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff}
+body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;display:flex;flex-direction:column}
+/* BARRA NAV SUPERIOR */
+#nav{background:#f5f5f5;border-bottom:2px solid #e8e8e8;padding:8px 20px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.nav-btn{font-size:13px;font-weight:700;color:#555;background:#fff;border:2px solid #e0e0e0;border-radius:8px;padding:7px 14px;cursor:pointer;-webkit-appearance:none;letter-spacing:0.5px;transition:all .15s}
+.nav-btn:hover{background:#f0f0f0}
+.nav-btn:active{background:#e8e8e8}
+.nav-btn.red{color:#cc0000;border-color:#ffcccc;background:#fff}
+.nav-btn.red:hover{background:#fff5f5}
+/* HEADER */
+header{padding:12px 20px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff}
 .logo-wrap{display:flex;flex-direction:column;gap:1px}
 .logo{font-size:26px;font-weight:900;color:#cc0000;letter-spacing:-1px;line-height:1}
 .logo-sub{font-size:10px;color:#999;letter-spacing:0.3px;line-height:1.4}
-.hr{display:flex;align-items:center;gap:8px}
+.hr{display:flex;align-items:center;gap:10px}
 .st{font-size:13px;color:#888}
-.btn-conv{font-size:13px;font-weight:700;border-radius:8px;padding:8px 12px;cursor:pointer;border:2px solid;-webkit-appearance:none}
+.btn-conv{font-size:13px;font-weight:700;border-radius:8px;padding:8px 14px;cursor:pointer;border:2px solid;-webkit-appearance:none;transition:all .2s}
 .btn-conv.verde{background:#fff;color:#228822;border-color:#228822}
 .btn-conv.rojo{background:#cc0000;color:#fff;border-color:#cc0000}
 .conv-info{font-size:12px;color:#888;white-space:nowrap}
-a.btn-salir{font-size:13px;font-weight:600;color:#555;text-decoration:none;padding:8px 10px;border:2px solid #e0e0e0;border-radius:8px}
+a.btn-salir{font-size:13px;font-weight:600;color:#555;text-decoration:none;padding:8px 12px;border:2px solid #e0e0e0;border-radius:8px}
 /* CHAT */
 #chat{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:20px;-webkit-overflow-scrolling:touch;max-width:760px;width:100%;margin:0 auto;align-self:center}
 .msg-anni{display:flex;flex-direction:column;gap:4px;align-self:flex-start;max-width:85%}
@@ -1079,14 +1080,15 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 .modal-bg.open{display:flex}
 .modal{background:#fff;border-radius:16px;padding:28px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto}
 .modal h2{font-size:20px;font-weight:800;margin-bottom:16px;color:#111}
-.modal textarea{width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:14px;font-size:15px;line-height:1.6;resize:vertical;min-height:120px;outline:none;font-family:inherit}
-.modal textarea:focus{border-color:#cc0000}
-.modal-btns{display:flex;gap:10px;margin-top:16px;justify-content:flex-end}
+.modal textarea,.modal input[type=password]{width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:14px;font-size:15px;line-height:1.6;outline:none;font-family:inherit}
+.modal textarea{resize:vertical;min-height:120px}
+.modal textarea:focus,.modal input[type=password]:focus{border-color:#cc0000}
+.modal-btns{display:flex;gap:10px;margin-top:16px;justify-content:flex-end;flex-wrap:wrap}
 .modal-btns button{padding:12px 20px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;border:2px solid;-webkit-appearance:none}
 .btn-ok{background:#cc0000;color:#fff;border-color:#cc0000}
 .btn-cancel{background:#fff;color:#555;border-color:#e0e0e0}
 .btn-descartar{background:#fff;color:#888;border-color:#e0e0e0}
-/* PÁGINA LATERAL */
+/* PÁGINA */
 #page{display:none;position:fixed;inset:0;background:#fff;z-index:900;flex-direction:column}
 #page.open{display:flex}
 .page-header{padding:16px 20px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
@@ -1100,7 +1102,7 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 .btn-edit,.btn-del{font-size:12px;font-weight:700;padding:6px 12px;border-radius:6px;cursor:pointer;border:2px solid;-webkit-appearance:none;background:none}
 .btn-edit{color:#555;border-color:#e0e0e0}
 .btn-del{color:#cc0000;border-color:#ffcccc}
-.pager{display:flex;gap:8px;justify-content:center;margin-top:20px}
+.pager{display:flex;gap:8px;justify-content:center;margin-top:20px;flex-wrap:wrap}
 .pager button{padding:8px 14px;border:2px solid #e0e0e0;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;background:#fff;color:#555}
 .pager button.active{background:#cc0000;color:#fff;border-color:#cc0000}
 .form-group{margin-bottom:16px}
@@ -1108,41 +1110,39 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 .form-group input,.form-group textarea{width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:12px 14px;font-size:15px;outline:none;font-family:inherit}
 .form-group input:focus,.form-group textarea:focus{border-color:#cc0000}
 .dia-badge{background:#cc0000;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;display:inline-block;margin-bottom:6px}
-@media(max-width:600px){#sb{width:46px}.sb-btn{width:34px;height:34px;font-size:10px}header{padding:10px 12px}.logo{font-size:22px}.conv-info{display:none}#chat{padding:16px;gap:16px}.msg-anni .txt,.msg-user .burbuja,.pro{font-size:16px}textarea{font-size:16px}.btn-conv{padding:7px 10px;font-size:12px}}
+@media(max-width:600px){#nav{padding:8px 12px;gap:6px}.nav-btn{font-size:12px;padding:6px 10px}header{padding:10px 14px}.logo{font-size:22px}.conv-info{display:none}#chat{padding:16px;gap:16px}.msg-anni .txt,.msg-user .burbuja,.pro{font-size:16px}textarea{font-size:16px}.btn-conv{padding:7px 10px;font-size:12px}}
 </style>
 </head>
 <body>
-<!-- SIDEBAR -->
-<div id='sb'>
-  <button class='sb-btn' onclick='showPage("hitos")' title='Hitos'>HITOs</button>
-  <button class='sb-btn' onclick='showPage("chats")' title='Chats'>CHATS</button>
-  <button class='sb-btn' onclick='showPage("diario")' title='Diario'>DIA-RIO</button>
-  <button class='sb-btn' onclick='descargarBD()' title='Descargar BD'>BD</button>
+<!-- BARRA NAV SUPERIOR -->
+<div id='nav'>
+  <button class='nav-btn' onclick='showPage("hitos")'>HITOS</button>
+  <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
+  <button class='nav-btn' onclick='showPage("diario")'>DIARIO</button>
+  <button class='nav-btn' onclick='descargarBD()'>BD</button>
 </div>
-<!-- MAIN -->
-<div id='main'>
+<!-- HEADER -->
 <header>
-<div class='logo-wrap'>
-<div class='logo'>ANNI</div>
-<div class='logo-sub'>v__ANNI_VERSION__ &middot; IA con memoria persistente &middot; creada por Rafa Torrijos</div>
-</div>
-<div class='hr'>
-<span class='st' id='st'>conectada</span>
-<span class='conv-info' id='conv-info'></span>
-<button class='btn-conv verde' id='btn-conv' onclick='toggleConv()'>EMPEZAR</button>
-<a href='/logout' class='btn-salir'>Salir</a>
-</div>
+  <div class='logo-wrap'>
+    <div class='logo'>ANNI</div>
+    <div class='logo-sub'>v__ANNI_VERSION__ &middot; IA con memoria persistente &middot; creada por Rafa Torrijos</div>
+  </div>
+  <div class='hr'>
+    <span class='st' id='st'>conectada</span>
+    <span class='conv-info' id='conv-info'></span>
+    <button class='btn-conv verde' id='btn-conv' onclick='toggleConv()'>EMPEZAR</button>
+    <a href='/logout' class='btn-salir'>Salir</a>
+  </div>
 </header>
 <div id='chat'></div>
 <div id='ia'>
-<div id='preview'></div>
-<div class='ir'>
-<button class='clip' onclick='document.getElementById("finput").click()' title='Adjuntar'>[+]</button>
-<input type='file' id='finput' accept='image/*,.pdf,.txt,.doc,.docx' onchange='archivoSel(this)'>
-<textarea id='inp' placeholder='Habla con Anni...' rows='1'></textarea>
-<button id='s' onclick='env()'>Enviar</button>
-</div>
-</div>
+  <div id='preview'></div>
+  <div class='ir'>
+    <button class='clip' onclick='document.getElementById("finput").click()' title='Adjuntar'>[+]</button>
+    <input type='file' id='finput' accept='image/*,.pdf,.txt,.doc,.docx' onchange='archivoSel(this)'>
+    <textarea id='inp' placeholder='Habla con Anni...' rows='1'></textarea>
+    <button id='s' onclick='env()'>Enviar</button>
+  </div>
 </div>
 
 <!-- MODAL RESUMEN -->
@@ -1176,8 +1176,8 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 <div class='modal'>
 <h2>Descargar base de datos</h2>
 <p style='font-size:14px;color:#888;margin-bottom:12px'>Introduce tu contrasena para confirmar.</p>
-<input type='password' id='bd-pwd' placeholder='tu contrasena' style='width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:14px;font-size:16px;outline:none;margin-bottom:4px'>
-<div id='bd-err' style='color:#cc0000;font-size:13px;margin-bottom:8px;display:none'></div>
+<input type='password' id='bd-pwd' placeholder='tu contrasena'>
+<div id='bd-err' style='color:#cc0000;font-size:13px;margin-top:8px;margin-bottom:4px;display:none'></div>
 <div class='modal-btns'>
 <button class='btn-cancel' onclick='closeMod("modal-bd")'>Cancelar</button>
 <button class='btn-ok' onclick='confirmarDescarga()'>Descargar</button>
@@ -1185,11 +1185,11 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 </div>
 </div>
 
-<!-- PÁGINAS LATERALES -->
-<div id='page' class=''>
+<!-- PÁGINA LATERAL -->
+<div id='page'>
 <div class='page-header'>
 <h1 id='page-title'>Hitos</h1>
-<button class='page-close' onclick='closePage()'>Cerrar</button>
+<button class='page-close' onclick='closePage()'>Inicio</button>
 </div>
 <div class='page-body' id='page-body'></div>
 </div>
@@ -1205,6 +1205,7 @@ var CONVINFO=document.getElementById('conv-info');
 var convActiva=null;var convNum=0;
 var pendResumen=null;var pendHito=null;
 var NOMBRE='__NOMBRE_USUARIO__';
+var currentPage=1;var currentSection='';
 
 function ts(){
 var d=new Date();
@@ -1270,7 +1271,7 @@ I.value='';I.style.height='auto';S.disabled=true;ST.textContent='pensando...';
 add('user',disp);PRV.style.display='none';typing();
 var body={message:msg};
 if(archivoData){body.archivo=archivoData;}
-var lastMsg=msg;var lastArch=archivoData?archivoData.nombre:'';
+var lastMsg=msg;
 archivoData=null;document.getElementById('finput').value='';
 fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
 .then(r=>r.json()).then(d=>{
@@ -1279,7 +1280,6 @@ var resp=d.response||'';
 add('anni',resp);
 if(d.conv_id&&!convActiva){convActiva=d.conv_id;convNum=d.conv_id;updateBtn();}
 S.disabled=false;ST.textContent='conectada';I.focus();
-// Detectar hito
 if(lastMsg&&resp){
 fetch('/api/detectar-hito',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({mensaje:lastMsg,respuesta:resp})})
@@ -1306,8 +1306,7 @@ document.getElementById('resumen-txt').value=d.resumen;
 document.getElementById('modal-resumen').classList.add('open');
 }else{
 convActiva=null;updateBtn();
-add('anni','Conversacion cerrada.');
-}})
+add('anni','Conversacion cerrada.');}})
 .catch(e=>{ST.textContent='error';});}
 
 function guardarResumen(){
@@ -1324,7 +1323,7 @@ pendResumen=null;});}
 function descartarResumen(){
 if(!pendResumen)return;
 fetch('/api/conversacion/guardar-resumen',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({conv_id:pendResumen.conv_id,resumen:'[Descartado por el usuario]'})})
+body:JSON.stringify({conv_id:pendResumen.conv_id,resumen:'[Descartado]'})})
 .then(()=>{});
 document.getElementById('modal-resumen').classList.remove('open');
 convActiva=null;updateBtn();pendResumen=null;
@@ -1371,16 +1370,13 @@ URL.revokeObjectURL(url);
 document.getElementById('modal-bd').classList.remove('open');})
 .catch(d=>{err.textContent=d.error||'Error';err.style.display='block';});}
 
-/* PÁGINAS */
-var currentPage=1;var currentSection='';
 function showPage(sec){
 currentSection=sec;currentPage=1;
-var titles={'hitos':'Hitos del usuario','chats':'Conversaciones','diario':'Diario'};
+var titles={hitos:'Hitos del usuario',chats:'Conversaciones',diario:'Diario'};
 document.getElementById('page-title').textContent=titles[sec]||sec;
 document.getElementById('page').classList.add('open');
 loadPage(sec,1);}
 function closePage(){document.getElementById('page').classList.remove('open');}
-
 function loadPage(sec,page){
 var body=document.getElementById('page-body');
 body.innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
@@ -1437,19 +1433,19 @@ body.appendChild(pagerEl(d.pages,page,'loadChats'));});}
 
 function loadDiario(page){
 var body=document.getElementById('page-body');
-// Formulario nueva entrada
 var hoy=new Date();
 var yyyy=hoy.getFullYear();
 var mm=String(hoy.getMonth()+1).padStart(2,'0');
 var dd=String(hoy.getDate()).padStart(2,'0');
 var hoyStr=yyyy+'-'+mm+'-'+dd;
-var form='<div class="item-card" style="background:#fff5f5;border-color:#ffcccc"><h3 style="font-size:16px;font-weight:800;margin-bottom:14px;color:#cc0000">Nueva entrada</h3>'+
-'<div class="form-group"><label>Fecha</label><input type="date" id="d-fecha" value="'+hoyStr+'" onchange="calcDia()"></div>'+
+body.innerHTML='<div class="item-card" style="background:#fff5f5;border-color:#ffcccc">'+
+'<h3 style="font-size:16px;font-weight:800;margin-bottom:14px;color:#cc0000">Nueva entrada</h3>'+
+'<div class="form-group"><label>Fecha</label><input type="date" id="d-fecha" value="'+hoyStr+'" oninput="calcDia()"></div>'+
 '<div id="d-dia" style="margin-bottom:12px"></div>'+
 '<div class="form-group"><label>Titulo</label><input type="text" id="d-titulo" placeholder="Titulo de la entrada"></div>'+
 '<div class="form-group"><label>Texto</label><textarea id="d-texto" rows="5" placeholder="Escribe aqui..."></textarea></div>'+
-'<button class="btn-ok" style="padding:12px 20px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#cc0000;color:#fff;border:none" onclick="guardarDiario()">Guardar entrada</button></div>';
-body.innerHTML=form;
+'<button onclick="guardarDiario()" style="padding:12px 20px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#cc0000;color:#fff;border:none">Guardar entrada</button>'+
+'</div>';
 calcDia();
 fetch('/api/diario?page='+page).then(r=>r.json()).then(d=>{
 if(!d.entradas.length)return;
@@ -1467,7 +1463,7 @@ function calcDia(){
 var f=document.getElementById('d-fecha');
 var el=document.getElementById('d-dia');
 if(!f||!el)return;
-var inicio=new Date('2026-03-01');
+var inicio=new Date('2026-03-01T00:00:00');
 var sel=new Date(f.value+'T00:00:00');
 var diff=Math.round((sel-inicio)/(1000*60*60*24))+1;
 el.innerHTML='<span class="dia-badge">Dia '+diff+' del experimento</span>';}
@@ -1479,9 +1475,7 @@ var texto=document.getElementById('d-texto').value.trim();
 if(!fecha||!titulo||!texto){alert('Rellena todos los campos');return;}
 fetch('/api/diario',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({fecha:fecha,titulo:titulo,texto:texto})})
-.then(r=>r.json()).then(d=>{
-if(d.ok){loadDiario(1);}
-else{alert(d.error||'Error');}});}
+.then(r=>r.json()).then(d=>{if(d.ok){loadDiario(1);}else{alert(d.error||'Error');}});}
 
 function delDiario(id){
 if(!confirm('Borrar esta entrada?'))return;
