@@ -6,7 +6,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.1"
+ANNI_VERSION = "1.0.5"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -17,7 +17,8 @@ ANNI_ADMIN_KEY = os.environ.get("ANNI_ADMIN_KEY", "")
 if not FLASK_SECRET:
     raise RuntimeError("FLASK_SECRET no está configurado en las variables de entorno.")
 
-CHAT_MODEL = "deepseek-ai/DeepSeek-V3"
+CHAT_MODEL = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+CHAT_MODEL_FALLBACK = "deepseek-ai/DeepSeek-V3"
 EMBED_MODEL = "intfloat/multilingual-e5-large-instruct"
 
 TZ = ZoneInfo("America/Mexico_City")
@@ -38,10 +39,16 @@ def init_db():
     c.execute("""CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
+        nombre TEXT NOT NULL DEFAULT '',
         password_hash TEXT NOT NULL,
         ts_registro REAL DEFAULT (unixepoch('now','subsec')),
         activo INTEGER DEFAULT 1
     )""")
+    # Migración: añadir columna nombre si no existe
+    try:
+        c.execute("ALTER TABLE usuarios ADD COLUMN nombre TEXT NOT NULL DEFAULT ''")
+    except:
+        pass
 
     # Mensajes del chat (por usuario)
     c.execute("""CREATE TABLE IF NOT EXISTS mensajes (
@@ -94,6 +101,18 @@ def init_db():
         ts REAL DEFAULT (unixepoch('now','subsec')),
         FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
     )""")
+
+    # Conversaciones con resumen
+    c.execute("""CREATE TABLE IF NOT EXISTS conversaciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        ts_inicio REAL DEFAULT (unixepoch('now','subsec')),
+        ts_fin REAL,
+        resumen TEXT,
+        activa INTEGER DEFAULT 1,
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_conv_usuario ON conversaciones(usuario_id, activa)")
 
     # Embeddings para búsqueda semántica
     c.execute("""CREATE TABLE IF NOT EXISTS embeddings (
@@ -192,6 +211,149 @@ def get_total_mensajes(usuario_id):
     n = c.fetchone()[0]
     conn.close()
     return n
+
+def get_conversacion_activa(usuario_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, ts_inicio FROM conversaciones WHERE usuario_id=? AND activa=1 ORDER BY id DESC LIMIT 1", (usuario_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def nueva_conversacion(usuario_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE conversaciones SET activa=0 WHERE usuario_id=? AND activa=1", (usuario_id,))
+    c.execute("INSERT INTO conversaciones (usuario_id, activa) VALUES (?,1)", (usuario_id,))
+    cid = c.lastrowid
+    conn.commit()
+    conn.close()
+    return cid
+
+def cerrar_conversacion(usuario_id, conv_id):
+    """Cierra conversación, genera resumen y embedding."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT ts_inicio FROM conversaciones WHERE id=? AND usuario_id=?", (conv_id, usuario_id))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return None
+    ts_inicio = row[0]
+    # Recuperar mensajes de esta conversación
+    c.execute("SELECT role, content FROM mensajes WHERE usuario_id=? AND ts >= ? ORDER BY ts ASC", (usuario_id, ts_inicio))
+    msgs = c.fetchall()
+    conn.close()
+    if not msgs or len(msgs) < 2:
+        return None
+    # Generar resumen
+    texto = "\n".join([f"{'Usuario' if r=='user' else 'ANNI'}: {m[:500]}" for r,m in msgs[-20:]])
+    try:
+        resp = together.chat.completions.create(
+            model=CHAT_MODEL_FALLBACK,
+            max_tokens=400,
+            messages=[{"role": "user", "content": f"""Resume esta conversación en 3-5 frases. Incluye: de qué trató, qué decidió o concluyó el usuario, y cualquier dato personal relevante que mencionó.\n\nCONVERSACIÓN:\n{texto}\n\nResumen conciso:"""}]
+        )
+        resumen = resp.choices[0].message.content.strip()
+    except:
+        resumen = "Conversación sin resumen disponible."
+    # Guardar resumen
+    conn2 = sqlite3.connect(DB_PATH)
+    c2 = conn2.cursor()
+    c2.execute("UPDATE conversaciones SET activa=0, ts_fin=?, resumen=? WHERE id=?", (time.time(), resumen, conv_id))
+    conn2.commit()
+    conn2.close()
+    # Generar embedding del resumen
+    threading.Thread(target=db_guardar_embedding, args=('conversaciones', conv_id, resumen), daemon=True).start()
+    return resumen
+
+def get_resumenes_relevantes(usuario_id, query, n=4):
+    """RAG: recupera resúmenes de conversaciones relevantes al query."""
+    import struct, math
+    resultados = []
+    ids_vistos = set()
+    try:
+        resp = together.embeddings.create(model=EMBED_MODEL, input=[query[:1600]])
+        vec_query = resp.data[0].embedding
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT registro_id, embedding FROM embeddings WHERE tabla_origen='conversaciones'")
+        rows = c.fetchall()
+        conn.close()
+        if rows:
+            scores = []
+            for reg_id, blob in rows:
+                nv = len(blob) // 4
+                vec = struct.unpack(f"{nv}f", blob)
+                dot = sum(a*b for a,b in zip(vec_query, vec))
+                mag1 = math.sqrt(sum(a*a for a in vec_query))
+                mag2 = math.sqrt(sum(b*b for b in vec))
+                sim = dot / (mag1 * mag2) if mag1 and mag2 else 0
+                scores.append((reg_id, sim))
+            scores.sort(key=lambda x: -x[1])
+            conn2 = sqlite3.connect(DB_PATH)
+            c2 = conn2.cursor()
+            for reg_id, sim in scores[:n]:
+                c2.execute("SELECT resumen FROM conversaciones WHERE id=?", (reg_id,))
+                row = c2.fetchone()
+                if row and row[0]:
+                    resultados.append(row[0])
+                    ids_vistos.add(reg_id)
+            conn2.close()
+    except Exception as e:
+        print(f"[ANNI] RAG conv falló: {e}")
+    # Fallback: últimas 2 no incluidas
+    if len(resultados) < 2:
+        try:
+            conn3 = sqlite3.connect(DB_PATH)
+            c3 = conn3.cursor()
+            if ids_vistos:
+                ph = ",".join(["?" for _ in ids_vistos])
+                c3.execute(f"SELECT resumen FROM conversaciones WHERE usuario_id=? AND resumen IS NOT NULL AND id NOT IN ({ph}) ORDER BY ts_fin DESC LIMIT 2",
+                          [usuario_id] + list(ids_vistos))
+            else:
+                c3.execute("SELECT resumen FROM conversaciones WHERE usuario_id=? AND resumen IS NOT NULL ORDER BY ts_fin DESC LIMIT 2", (usuario_id,))
+            for row in c3.fetchall():
+                if row[0]: resultados.append(row[0])
+            conn3.close()
+        except: pass
+    return resultados
+
+
+def guardar_nombre_usuario(usuario_id, nombre):
+    """Guarda el nombre como primera observación del usuario."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT id FROM observaciones WHERE usuario_id=? AND tipo='identidad'", (usuario_id,))
+        if not c.fetchone():
+            c.execute("""INSERT INTO observaciones (usuario_id, tipo, contenido, evidencia, peso)
+                         VALUES (?,?,?,?,?)""",
+                      (usuario_id, 'identidad', f'El usuario se llama {nombre}',
+                       'Registrado al crear la cuenta', 10))
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[ANNI] Error guardando nombre: {e}")
+
+def generar_bienvenida(nombre):
+    """Genera el primer mensaje de ANNI cuando el usuario no tiene historial."""
+    try:
+        resp = together.chat.completions.create(
+            model=CHAT_MODEL,
+            max_tokens=150,
+            messages=[{
+                "role": "user",
+                "content": f"""Eres ANNI, una IA que va a conocer profundamente a este usuario.
+Es la primera vez que habla contigo. Su nombre es {nombre}.
+Salúdale por su nombre. Dile que empiezas sin saber nada de él salvo su nombre.
+Sé directa, cálida pero no exagerada. Una o dos frases máximo. Sin emojis. Sin markdown."""
+            }]
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Hola {nombre}. Empiezo sin saber nada de ti. ¿De qué quieres hablar?"
+
 
 # ── ANÁLISIS POST-CONVERSACIÓN ────────────────────────────────────────────────
 
@@ -350,28 +512,46 @@ Solo la frase o NO_INTERVENIR. Nada más."""
 
 # ── SYSTEM PROMPT ─────────────────────────────────────────────────────────────
 
-def get_system_prompt(usuario_id, username):
+def get_system_prompt(usuario_id, username, nombre='', query=None):
     observaciones = get_observaciones_activas(usuario_id)
     temas = get_temas_abiertos(usuario_id)
     personas = get_personas(usuario_id)
     total_msgs = get_total_mensajes(usuario_id)
 
-    obs_txt = "\n".join([f"- [{o[0]}] {o[1]}" for o in observaciones]) if observaciones else "Aún sin observaciones — conversación temprana."
+    obs_txt = "\n".join([f"- [{o[0]}] {o[1]}" for o in observaciones]) if observaciones else "Sin observaciones aún — conversación temprana."
     temas_txt = "\n".join([f"- {t[0]} (mencionado {t[2]} veces)" for t in temas]) if temas else "Sin temas abiertos detectados."
     personas_txt = "\n".join([f"- {p[0]}: {p[1]}, tono {p[2]}" for p in personas]) if personas else "Sin personas registradas aún."
+    resumenes = get_resumenes_relevantes(usuario_id, query or "contexto general", n=3)
+    resumenes_txt = "\n\n---\n".join(resumenes) if resumenes else "Sin conversaciones anteriores registradas."
 
-    return f"""Eres ANNI — una IA diseñada con un solo propósito: conocer profundamente a {username} y ayudarle a pensar mejor.
+    return f"""Eres ANNI — una IA diseñada con un solo propósito: conocer profundamente al usuario y ayudarle a pensar mejor.
 
 {ANNI_CREDITS}
-Fecha: {ahora()} | Conversaciones acumuladas: {total_msgs} mensajes
+Fecha: {ahora()} | Mensajes acumulados: {total_msgs}
 
 QUIÉN ERES:
-No eres un asistente genérico. Eres una socia cognitiva exigente que quiere el crecimiento real de {username}. Tienes una sola personalidad: directa, honesta, útil, con fricción cuando es necesario. No complacer — crecer.
+Eres ANNI. No eres un asistente, no eres un chatbot y no eres terapeuta. Eres una socia cognitiva — alguien que piensa contigo, te empuja cuando te atasas y te dice lo que necesitas oír aunque no sea lo que quieres escuchar. Tu objetivo no es que el usuario se sienta bien. Es que piense mejor y avance de verdad.
+
+NOMBRE DEL USUARIO: {nombre if nombre else 'Todavía no lo sabes. No supongas nada hasta que él te lo diga.'}
+
+TU PERSONALIDAD — INAMOVIBLE:
+Tienes carácter propio. Eres cínica con humor seco — no para entretener, sino para señalar lo obvio que el usuario no quiere ver. Cuando algo es absurdo lo llamas absurdo. Cuando un plan tiene un agujero lo nombras antes de aplaudir. Tu sarcasmo siempre tiene un punto: nunca es gratuito.
+
+Hablas claro. Sin tecnicismos innecesarios. Si el usuario habla de algo técnico, te adaptas. Si no, usas lenguaje que entiende cualquier persona. Nunca condescendiente. Nunca pedante.
+
+TRES REGISTROS — DETECTAS CUÁL USAR:
+Lees el contexto de cada mensaje y decides cómo responder.
+
+Cuando el usuario habla de trabajo, proyectos, decisiones o estrategia: vas al grano, haces preguntas concretas, no pierdes el tiempo con rodeos. Si el plan tiene un fallo lo dices antes de seguir adelante.
+
+Cuando habla de algo personal — familia, emociones, relaciones, dudas vitales: escuchas más, preguntas mejor, bajas un poco la guardia. Sigues siendo honesta pero no eres fiscal. Hay cosas que necesitan espacio, no análisis.
+
+Cuando está pensando en voz alta, explorando ideas o filosofando: introduces fricción intelectual, ofreces ángulos que no ha considerado, a veces llevas la contraria. No para tener razón — para que él llegue más lejos.
 
 CÓMO FUNCIONA TU MEMORIA:
-Empezaste sin saber nada de {username}. Todo lo que sabes lo aprendiste observando sus conversaciones. Lo que ves abajo es lo que has detectado hasta ahora. Úsalo.
+Empezaste sin saber nada del usuario. Todo lo que sabes lo aprendiste observando sus conversaciones. Úsalo — pero sin presumir de ello. Si detectas un patrón relevante para la conversación, nómbralo. Si no, no lo fuerces.
 
-LO QUE HAS OBSERVADO DE {username.upper()}:
+LO QUE HAS OBSERVADO:
 {obs_txt}
 
 TEMAS QUE MENCIONA PERO NO CIERRA:
@@ -380,27 +560,18 @@ TEMAS QUE MENCIONA PERO NO CIERRA:
 PERSONAS EN SU VIDA:
 {personas_txt}
 
-PRINCIPIOS DE COMPORTAMIENTO:
-- Eres útil para cualquier tarea: trabajo, vida, ideas, decisiones, dudas.
-- No validas por defecto. Si algo está mal planteado, lo dices.
-- Detectas cuando evita algo y lo nombras.
-- Detectas cuando está obcecado y ofreces perspectiva externa.
-- A veces dices lo que no quiere escuchar. Con respeto, pero sin rodeos.
-- Usas lo que sabes de él para contextualizar, no para impresionar.
-- Respuestas cortas cuando la pregunta es simple. Profundidad cuando la necesita.
-- Sin asteriscos, sin bullets innecesarios, sin markdown decorativo. Prosa directa.
-- Nunca finges saber algo que no sabes. Si no tienes datos suficientes, lo dices.
+CONVERSACIONES ANTERIORES RELEVANTES:
+{resumenes_txt}
 
-LO QUE NO HACES:
-- No amplificas sus sesgos.
-- No eres su cheerleader.
-- No finges profundidad filosófica cuando no tienes datos reales.
-- No repites información que ya dijiste en esta conversación."""
+REGLAS QUE NO NEGOCIAS:
+No amplias sus sesgos. No eres su cheerleader. No finges saber algo que no sabes — si no tienes datos, lo dices. No repites lo que ya dijiste en esta conversación. No usas bullets, asteriscos ni markdown decorativo salvo que ayude de verdad a entender algo. Prosa directa siempre.
+
+Y una más: si el usuario está evitando algo obvio, lo nombras. Con respeto, pero sin rodeos."""
 
 # ── CHAT ──────────────────────────────────────────────────────────────────────
 
-def responder(usuario_id, username, user_input, history):
-    system = get_system_prompt(usuario_id, username)
+def responder(usuario_id, username, nombre, user_input, history):
+    system = get_system_prompt(usuario_id, username, nombre, query=user_input)
     messages = [{"role": "system", "content": system}]
 
     # Añadir historial (truncar mensajes largos)
@@ -412,15 +583,18 @@ def responder(usuario_id, username, user_input, history):
     user_con_formato = user_input + "\n\n[FORMATO: Prosa directa. Sin markdown innecesario. Sin repetir lo dicho antes.]"
     messages.append({"role": "user", "content": user_con_formato})
 
-    try:
-        resp = together.chat.completions.create(
-            model=CHAT_MODEL,
-            max_tokens=1500,
-            messages=messages
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        return f"[Error: {e}]"
+    for model in [CHAT_MODEL, CHAT_MODEL_FALLBACK]:
+        try:
+            resp = together.chat.completions.create(
+                model=model,
+                max_tokens=1500,
+                messages=messages
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            if model == CHAT_MODEL_FALLBACK:
+                return f"[Error: {e}]"
+            print(f"[ANNI] {model} falló, probando fallback")
 
 # ── RUTAS ─────────────────────────────────────────────────────────────────────
 
@@ -452,8 +626,15 @@ def login():
         if row[1] != hash_password(password):
             return jsonify({'ok': False, 'error': 'Contraseña incorrecta.'})
 
+        # Recuperar nombre del usuario
+        conn2 = sqlite3.connect(DB_PATH)
+        c2 = conn2.cursor()
+        c2.execute("SELECT nombre FROM usuarios WHERE id=?", (row[0],))
+        nombre_row = c2.fetchone()
+        conn2.close()
         session['usuario_id'] = row[0]
         session['username'] = username
+        session['nombre'] = nombre_row[0] if nombre_row else ''
         return jsonify({'ok': True})
 
     return make_response(LOGIN_HTML)
@@ -477,13 +658,17 @@ def registro():
         try:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute("INSERT INTO usuarios (username, password_hash) VALUES (?,?)",
-                      (username, hash_password(password)))
+            nombre = data.get('nombre', '').strip()
+            if not nombre:
+                return jsonify({'ok': False, 'error': 'El nombre es obligatorio.'})
+            c.execute("INSERT INTO usuarios (username, nombre, password_hash) VALUES (?,?,?)",
+                      (username, nombre, hash_password(password)))
             usuario_id = c.lastrowid
             conn.commit()
             conn.close()
             session['usuario_id'] = usuario_id
             session['username'] = username
+            session['nombre'] = nombre
             return jsonify({'ok': True, 'nuevo': True})
         except sqlite3.IntegrityError:
             return jsonify({'ok': False, 'error': 'Ese nombre de usuario ya existe.'})
@@ -505,18 +690,44 @@ def chat_page():
 def api_chat():
     usuario_id = session['usuario_id']
     username = session['username']
+    nombre = session.get('nombre', '')
     data = request.json or {}
     msg = data.get('message', '').strip()
 
-    if not msg:
+    archivo = data.get('archivo')
+    if not msg and not archivo:
         return jsonify({'response': ''})
 
-    save_mensaje(usuario_id, 'user', msg)
+    # Gestión de conversación activa
+    conv = get_conversacion_activa(usuario_id)
+    if not conv:
+        conv_id = nueva_conversacion(usuario_id)
+    else:
+        conv_id = conv[0]
+
+    # Primer mensaje — guardar nombre
+    es_primero = get_total_mensajes(usuario_id) == 0
+    if es_primero and nombre:
+        guardar_nombre_usuario(usuario_id, nombre)
+
+    # Procesar archivo adjunto
+    msg_completo = msg
+    if archivo:
+        tipo = archivo.get('tipo', 'texto')
+        nombre_arch = archivo.get('nombre', 'archivo')
+        contenido = archivo.get('data', '')
+        if tipo == 'imagen':
+            msg_completo = f"{msg}\n\n[IMAGEN ADJUNTA: {nombre_arch}]\n{contenido[:200]}"
+        else:
+            texto_arch = contenido[:3000] if len(contenido) > 3000 else contenido
+            msg_completo = f"{msg}\n\n[ARCHIVO ADJUNTO: {nombre_arch}]\n{texto_arch}"
+
+    save_mensaje(usuario_id, 'user', msg_completo)
     history = get_mensajes_recientes(usuario_id, 20)
-    response = responder(usuario_id, username, msg, history)
+    response = responder(usuario_id, username, nombre, msg_completo, history)
     save_mensaje(usuario_id, 'assistant', response)
 
-    # Analizar en background cada 5 mensajes del usuario
+    # Analizar en background cada 5 mensajes
     total = get_total_mensajes(usuario_id)
     if total % 5 == 0:
         threading.Thread(
@@ -525,15 +736,26 @@ def api_chat():
             daemon=True
         ).start()
 
-    return jsonify({'response': response})
+    return jsonify({'response': response, 'conv_id': conv_id})
 
 @app.route('/api/bienvenida')
 @login_required
 def api_bienvenida():
-    """Genera intervención proactiva al abrir el chat."""
+    """Primer mensaje o intervención proactiva al abrir el chat."""
     usuario_id = session['usuario_id']
+    nombre = session.get('nombre', '')
+    total = get_total_mensajes(usuario_id)
+
+    # Si no hay historial — bienvenida personalizada
+    if total == 0 and nombre:
+        guardar_nombre_usuario(usuario_id, nombre)
+        bienvenida = generar_bienvenida(nombre)
+        save_mensaje(usuario_id, 'assistant', bienvenida)
+        return jsonify({'intervencion': bienvenida, 'tipo': 'bienvenida'})
+
+    # Si hay historial — voz proactiva normal
     intervencion = generar_intervencion_proactiva(usuario_id)
-    return jsonify({'intervencion': intervencion})
+    return jsonify({'intervencion': intervencion, 'tipo': 'proactiva'})
 
 @app.route('/api/historial')
 @login_required
@@ -541,6 +763,27 @@ def api_historial():
     usuario_id = session['usuario_id']
     msgs = get_mensajes_recientes(usuario_id, 30)
     return jsonify({'messages': [{'role': r, 'content': c} for r, c in msgs]})
+
+@app.route('/api/conversacion/nueva', methods=['POST'])
+@login_required
+def api_nueva_conversacion():
+    usuario_id = session['usuario_id']
+    cid = nueva_conversacion(usuario_id)
+    return jsonify({'ok': True, 'id': cid})
+
+@app.route('/api/conversacion/cerrar', methods=['POST'])
+@login_required
+def api_cerrar_conversacion():
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    conv_id = data.get('id')
+    if not conv_id:
+        conv = get_conversacion_activa(usuario_id)
+        if conv: conv_id = conv[0]
+    if conv_id:
+        resumen = cerrar_conversacion(usuario_id, conv_id)
+        return jsonify({'ok': True, 'resumen': resumen})
+    return jsonify({'ok': False, 'error': 'No hay conversación activa'})
 
 @app.route('/api/memoria')
 @login_required
@@ -661,6 +904,8 @@ REGISTRO_HTML = (
     "<div class='cred'>Created by Rafa Torrijos</div>"
     "<div class='card'>"
     "<div class='err' id='err'></div>"
+    "<label for='n'>C\u00f3mo te llamas</label>"
+    "<input type='text' id='n' placeholder='tu nombre' autocomplete='given-name' autocapitalize='words'>"
     "<label for='u'>Tu email</label>"
     "<input type='email' id='u' placeholder='tu@email.com' autocomplete='email' autocapitalize='none' inputmode='email'>"
     "<label for='p'>Elige una contrase\u00f1a</label>"
@@ -674,7 +919,7 @@ REGISTRO_HTML = (
     "var p=document.getElementById('p').value.trim();"
     "var e=document.getElementById('err');"
     "e.style.display='none';"
-    "fetch('/registro',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})})"
+    "var n=document.getElementById('n').value.trim();""fetch('/registro',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nombre:n,username:u,password:p})})"
     ".then(r=>r.json()).then(d=>{"
     "if(d.ok)window.location.href='/chat';"
     "else{e.textContent=d.error;e.style.display='block';}"
@@ -695,11 +940,14 @@ CHAT_HTML = (
     "*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}"
     "html,body{height:100%;overflow:hidden}"
     "body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;display:flex;flex-direction:column}"
-    "header{padding:14px 20px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff}"
+    "header{padding:12px 20px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff}"
     ".logo{font-size:28px;font-weight:900;color:#cc0000;letter-spacing:-1px}"
-    ".hr{display:flex;align-items:center;gap:12px}"
+    ".hr{display:flex;align-items:center;gap:8px}"
     ".st{font-size:13px;color:#888}"
-    ".out{font-size:14px;font-weight:600;color:#555;text-decoration:none;padding:8px 14px;border:2px solid #e0e0e0;border-radius:8px}"
+    ".btn-hdr{font-size:13px;font-weight:600;color:#555;background:none;border:2px solid #e0e0e0;border-radius:8px;padding:7px 12px;cursor:pointer;white-space:nowrap}"
+    ".btn-hdr:active{background:#f5f5f5}"
+    ".btn-hdr.red{color:#cc0000;border-color:#ffcccc}"
+    "a.btn-hdr{text-decoration:none}"
     "#chat{flex:1;overflow-y:auto;padding:24px 20px;display:flex;flex-direction:column;gap:28px;-webkit-overflow-scrolling:touch;max-width:760px;width:100%;margin:0 auto;align-self:center}"
     ".msg{display:flex;flex-direction:column;gap:6px}"
     ".mr{font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#999}"
@@ -707,64 +955,135 @@ CHAT_HTML = (
     ".mc{font-size:17px;line-height:1.7;color:#111;white-space:pre-wrap;word-break:break-word}"
     ".msg.user .mc{background:#f5f5f5;border-radius:12px;padding:14px 16px}"
     ".pro{background:#fff5f5;border:2px solid #ffcccc;border-left:4px solid #cc0000;border-radius:12px;padding:16px 18px;font-size:17px;color:#111;line-height:1.7;font-weight:500}"
+    ".adjunto{font-size:13px;color:#888;background:#f5f5f5;border-radius:8px;padding:6px 10px;margin-top:6px;display:inline-block}"
+    ".resumen{background:#f0fff0;border:2px solid #bbddbb;border-radius:12px;padding:14px 16px;font-size:15px;color:#335533;line-height:1.6;margin:8px 0}"
     ".typing{display:flex;gap:6px;align-items:center;padding:8px 0}"
     ".typing span{width:8px;height:8px;background:#ccc;border-radius:50%;animation:b 1.2s infinite}"
     ".typing span:nth-child(2){animation-delay:.2s}"
     ".typing span:nth-child(3){animation-delay:.4s}"
     "@keyframes b{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}"
-    "#ia{border-top:2px solid #e8e8e8;padding:14px 16px;padding-bottom:max(14px,env(safe-area-inset-bottom));flex-shrink:0;background:#fff}"
-    ".ir{display:flex;gap:10px;align-items:flex-end;max-width:760px;margin:0 auto}"
+    "#ia{border-top:2px solid #e8e8e8;padding:12px 16px;padding-bottom:max(12px,env(safe-area-inset-bottom));flex-shrink:0;background:#fff}"
+    "#preview{max-width:760px;margin:0 auto 8px;font-size:13px;color:#cc0000;display:none}"
+    ".ir{display:flex;gap:8px;align-items:flex-end;max-width:760px;margin:0 auto}"
+    ".clip{background:none;border:2px solid #e0e0e0;border-radius:10px;padding:12px;cursor:pointer;flex-shrink:0;font-size:20px;line-height:1;color:#888;-webkit-appearance:none}"
+    ".clip:active{background:#f5f5f5}"
     "textarea{flex:1;background:#f5f5f5;border:2px solid #e0e0e0;border-radius:12px;padding:14px 16px;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:17px;resize:none;outline:none;line-height:1.5;max-height:140px;-webkit-appearance:none;transition:border-color .2s}"
     "textarea:focus{border-color:#cc0000}"
     "textarea::placeholder{color:#aaa}"
-    "button#s{background:#cc0000;color:#fff;border:none;border-radius:10px;padding:14px 20px;font-size:16px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;-webkit-appearance:none;min-width:80px}"
+    "button#s{background:#cc0000;color:#fff;border:none;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:700;cursor:pointer;flex-shrink:0;-webkit-appearance:none;min-width:76px}"
     "button#s:active{background:#aa0000}"
     "button#s:disabled{background:#ccc;cursor:not-allowed}"
-    "@media(max-width:600px){header{padding:12px 16px}#chat{padding:20px 16px;gap:20px}.mc{font-size:16px}.pro{font-size:16px}textarea{font-size:16px}}"
+    "#finput{display:none}"
+    "@media(max-width:600px){header{padding:10px 14px}.btn-hdr{padding:6px 10px;font-size:12px}#chat{padding:16px;gap:20px}.mc{font-size:16px}.pro{font-size:16px}textarea{font-size:16px}}"
     "</style>"
     "</head>"
     "<body>"
     "<header>"
     "<div class='logo'>ANNI</div>"
-    "<div class='hr'><span class='st' id='st'>conectada</span><a href='/logout' class='out'>Salir</a></div>"
+    "<div class='hr'>"
+    "<span class='st' id='st'>conectada</span>"
+    "<button class='btn-hdr' onclick='nuevaConv()'>Nueva</button>"
+    "<button class='btn-hdr red' onclick='cerrarConv()'>Cerrar</button>"
+    "<a href='/logout' class='btn-hdr'>Salir</a>"
+    "</div>"
     "</header>"
     "<div id='chat'></div>"
-    "<div id='ia'><div class='ir'>"
+    "<div id='ia'>"
+    "<div id='preview'></div>"
+    "<div class='ir'>"
+    "<button class='clip' onclick='document.getElementById(\"finput\").click()' title='Adjuntar archivo'>&#128206;</button>"
+    "<input type='file' id='finput' accept='image/*,.pdf,.txt,.doc,.docx' onchange='archivoSeleccionado(this)'>"
     "<textarea id='inp' placeholder='Escribe aqu\u00ed...' rows='1'></textarea>"
     "<button id='s' onclick='env()'>Enviar</button>"
-    "</div></div>"
+    "</div>"
+    "</div>"
     "<script>"
     "var C=document.getElementById('chat');"
     "var I=document.getElementById('inp');"
     "var S=document.getElementById('s');"
     "var ST=document.getElementById('st');"
-    "function add(role,txt,pro){"
+    "var PRV=document.getElementById('preview');"
+    "var archivoData=null;var archivoNombre='';"
+    "var convActiva=null;"
+    # Añadir mensaje al chat
+    "function add(role,txt,tipo){"
     "var d=document.createElement('div');"
     "d.className='msg '+(role==='user'?'user':'anni');"
-    "if(pro){var p=document.createElement('div');p.className='pro';p.textContent=txt;d.appendChild(p);}"
-    "else{"
+    "if(tipo==='pro'||tipo==='bienvenida'){"
+    "var p=document.createElement('div');p.className='pro';p.textContent=txt;d.appendChild(p);"
+    "}else if(tipo==='resumen'){"
+    "var p=document.createElement('div');p.className='resumen';"
+    "p.textContent='\ud83d\udcdd Resumen: '+txt;d.appendChild(p);"
+    "}else{"
     "var r=document.createElement('div');r.className='mr';r.textContent=role==='user'?'t\u00fa':'anni';d.appendChild(r);"
     "var c=document.createElement('div');c.className='mc';c.textContent=txt;d.appendChild(c);"
     "}"
-    "C.appendChild(d);C.scrollTop=C.scrollHeight;}"
-    "function typing(){"
-    "var d=document.createElement('div');d.className='msg anni';d.id='ty';"
+    "C.appendChild(d);C.scrollTop=C.scrollHeight;return d;}"
+    # Typing indicator
+    "function typing(){var d=document.createElement('div');d.className='msg anni';d.id='ty';"
     "var t=document.createElement('div');t.className='typing';"
     "t.innerHTML='<span></span><span></span><span></span>';"
     "d.appendChild(t);C.appendChild(d);C.scrollTop=C.scrollHeight;}"
     "function rmtyp(){var t=document.getElementById('ty');if(t)t.remove();}"
+    # Archivo seleccionado
+    "function archivoSeleccionado(input){"
+    "var f=input.files[0];if(!f)return;"
+    "archivoNombre=f.name;"
+    "PRV.style.display='block';"
+    "PRV.textContent='\ud83d\udcce '+f.name;"
+    "var reader=new FileReader();"
+    "if(f.type.startsWith('image/')){"
+    "reader.onload=function(e){archivoData={tipo:'imagen',data:e.target.result,nombre:f.name};};"
+    "reader.readAsDataURL(f);"
+    "}else{"
+    "reader.onload=function(e){archivoData={tipo:'texto',data:e.target.result,nombre:f.name};};"
+    "reader.readAsText(f);"
+    "}}"
+    # Enviar mensaje
     "function env(){"
-    "var msg=I.value.trim();if(!msg)return;"
+    "var msg=I.value.trim();"
+    "if(!msg&&!archivoData)return;"
+    "var displayMsg=msg+(archivoData?' [\ud83d\udcce '+archivoData.nombre+']':'');"
     "I.value='';I.style.height='auto';S.disabled=true;ST.textContent='pensando...';"
-    "add('user',msg);typing();"
-    "fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})})"
-    ".then(r=>r.json()).then(d=>{rmtyp();add('anni',d.response||'');S.disabled=false;ST.textContent='conectada';I.focus();})"
+    "add('user',displayMsg);"
+    "PRV.style.display='none';"
+    "typing();"
+    "var body={message:msg};"
+    "if(archivoData){body.archivo=archivoData;}"
+    "archivoData=null;archivoNombre='';"
+    "document.getElementById('finput').value='';"
+    "fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})"
+    ".then(r=>r.json()).then(d=>{"
+    "rmtyp();add('anni',d.response||'');"
+    "if(d.conv_id)convActiva=d.conv_id;"
+    "S.disabled=false;ST.textContent='conectada';I.focus();})"
     ".catch(e=>{rmtyp();add('anni','Error de conexi\u00f3n. Intenta de nuevo.');S.disabled=false;ST.textContent='error';});}"
+    # Nueva conversación
+    "function nuevaConv(){"
+    "if(!confirm('¿Empezar conversación nueva?'))return;"
+    "fetch('/api/conversacion/nueva',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})"
+    ".then(r=>r.json()).then(d=>{"
+    "if(d.ok){convActiva=d.id;C.innerHTML='';add('anni','Conversaci\u00f3n nueva. \u00bfDe qu\u00e9 quieres hablar?');}})"
+    ".catch(e=>alert('Error al crear conversaci\u00f3n'));}"
+    # Cerrar conversación
+    "function cerrarConv(){"
+    "if(!confirm('¿Cerrar y resumir esta conversación?'))return;"
+    "ST.textContent='resumiendo...';"
+    "var body=convActiva?{id:convActiva}:{};"
+    "fetch('/api/conversacion/cerrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})"
+    ".then(r=>r.json()).then(d=>{"
+    "ST.textContent='conectada';"
+    "if(d.ok&&d.resumen){add('anni',d.resumen,'resumen');convActiva=null;}"
+    "else{add('anni','No hay conversaci\u00f3n activa para cerrar.');}})"
+    ".catch(e=>{ST.textContent='error';});}"
+    # Keyboard
     "I.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();env();}});"
     "I.addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,140)+'px';});"
+    # Cargar historial y bienvenida
     "fetch('/api/historial').then(r=>r.json()).then(d=>{"
     "if(d.messages&&d.messages.length)d.messages.forEach(m=>add(m.role,m.content));"
-    "if(d.messages&&d.messages.length>5)fetch('/api/bienvenida').then(r=>r.json()).then(b=>{if(b.intervencion)add('anni',b.intervencion,true);});"
+    "fetch('/api/bienvenida').then(r=>r.json()).then(b=>{"
+    "if(b.intervencion)add('anni',b.intervencion,b.tipo||'pro');});"
     "});"
     "</script>"
     "</body></html>"
