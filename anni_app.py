@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.15"
+ANNI_VERSION = "1.0.17"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -182,7 +182,23 @@ def init_db():
 # ── UTILIDADES ────────────────────────────────────────────────────────────────
 
 def hash_password(pwd):
-    return hashlib.sha256(pwd.encode()).hexdigest()
+    """Hash con sal usando pbkdf2. Backward compatible con sha256 legacy."""
+    import os
+    sal = os.urandom(32)
+    key = hashlib.pbkdf2_hmac('sha256', pwd.encode('utf-8'), sal, 100000)
+    return sal.hex() + ':' + key.hex()
+
+def verificar_password(pwd, stored):
+    """Verifica password soportando tanto pbkdf2 como sha256 legacy."""
+    if ':' in stored:
+        # Nuevo formato pbkdf2
+        sal_hex, key_hex = stored.split(':', 1)
+        sal = bytes.fromhex(sal_hex)
+        key = hashlib.pbkdf2_hmac('sha256', pwd.encode('utf-8'), sal, 100000)
+        return key.hex() == key_hex
+    else:
+        # Formato legacy sha256
+        return hashlib.sha256(pwd.encode()).hexdigest() == stored
 
 def ahora():
     return datetime.now(TZ).strftime("%d/%m/%Y %H:%M")
@@ -348,6 +364,38 @@ def get_total_mensajes(usuario_id):
     conn.close()
     return n
 
+def db_guardar_embedding(tabla_origen, registro_id, texto):
+    """Genera y guarda embedding para un registro. Corre en background thread."""
+    if not texto or not texto.strip():
+        return
+    try:
+        import struct
+        resp = together.embeddings.create(model=EMBED_MODEL, input=[texto[:1600]])
+        vec = resp.data[0].embedding
+        blob = struct.pack(f"{len(vec)}f", *vec)
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        # Encontrar usuario_id desde el registro
+        if tabla_origen == 'conversaciones':
+            c.execute("SELECT usuario_id FROM conversaciones WHERE id=?", (registro_id,))
+        elif tabla_origen == 'hitos_usuario':
+            c.execute("SELECT usuario_id FROM hitos_usuario WHERE id=?", (registro_id,))
+        else:
+            conn.close()
+            return
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            return
+        usuario_id = row[0]
+        c.execute("INSERT OR REPLACE INTO embeddings (usuario_id, tabla_origen, registro_id, embedding) VALUES (?,?,?,?)",
+                  (usuario_id, tabla_origen, registro_id, blob))
+        conn.commit()
+        conn.close()
+        print(f"[ANNI] Embedding guardado: {tabla_origen}#{registro_id}")
+    except Exception as e:
+        print(f"[ANNI] Error embedding {tabla_origen}#{registro_id}: {e}")
+
 # ── ANÁLISIS POST-CONVERSACIÓN ────────────────────────────────────────────────
 
 def analizar_conversacion(usuario_id, ultimos_mensajes):
@@ -357,8 +405,9 @@ def analizar_conversacion(usuario_id, ultimos_mensajes):
 
     # Solo analizar mensajes del usuario
     msgs_usuario = [m[1] for m in ultimos_mensajes if m[0] == 'user']
-    if not msgs_usuario or len(msgs_usuario) < 2:
+    if not msgs_usuario or len(msgs_usuario) < 1:
         return
+    print(f"[ANNI] Analizando conversacion usuario {usuario_id} — {len(msgs_usuario)} msgs")
 
     texto = "\n".join(msgs_usuario[-10:])
 
@@ -690,8 +739,8 @@ def login():
         if not row:
             return jsonify({'ok': False, 'error': 'Usuario no encontrado.'})
 
-        if row[1] != hash_password(password):
-            return jsonify({'ok': False, 'error': 'Contraseña incorrecta.'})
+        if not verificar_password(password, row[1]):
+            return jsonify({'ok': False, 'error': 'Contrasena incorrecta.'})
 
         conn2 = sqlite3.connect(DB_PATH)
         c2 = conn2.cursor()
@@ -722,22 +771,22 @@ def registro():
         username = username.lower()
 
         try:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("INSERT INTO usuarios (username, password_hash) VALUES (?,?)",
-                      (username, hash_password(password)))
-            usuario_id = c.lastrowid
-            conn.commit()
-            conn.close()
             nombre = data.get('nombre', '').strip()
             if not nombre:
                 return jsonify({'ok': False, 'error': 'El nombre es obligatorio.'})
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("INSERT INTO usuarios (username, nombre, password_hash) VALUES (?,?,?)",
+                      (username, nombre, hash_password(password)))
+            usuario_id = c.lastrowid
+            conn.commit()
+            conn.close()
             session['usuario_id'] = usuario_id
             session['username'] = username
             session['nombre'] = nombre
             return jsonify({'ok': True, 'nuevo': True})
         except sqlite3.IntegrityError:
-            return jsonify({'ok': False, 'error': 'Ese nombre de usuario ya existe.'})
+            return jsonify({'ok': False, 'error': 'Ese email ya esta registrado.'})
 
     return make_response(REGISTRO_HTML)
 
@@ -907,7 +956,19 @@ def api_guardar_resumen():
                  (time.time(), resumen, conv_id, usuario_id))
     conn.commit()
     conn.close()
-    threading.Thread(target=db_guardar_embedding, args=('conversaciones', conv_id, resumen), daemon=True).start()
+    try:
+        import struct
+        resp = together.embeddings.create(model=EMBED_MODEL, input=[resumen[:1600]])
+        vec = resp.data[0].embedding
+        blob = struct.pack(f"{len(vec)}f", *vec)
+        conn2 = sqlite3.connect(DB_PATH)
+        conn2.execute("INSERT OR REPLACE INTO embeddings (usuario_id, tabla_origen, registro_id, embedding) VALUES (?,?,?,?)",
+                      (usuario_id, 'conversaciones', conv_id, blob))
+        conn2.commit()
+        conn2.close()
+        print(f"[ANNI] Embedding conversacion #{conv_id} guardado")
+    except Exception as e:
+        print(f"[ANNI] Error embedding conv #{conv_id}: {e}")
     return jsonify({'ok': True})
 
 @app.route('/api/memoria')
@@ -982,6 +1043,22 @@ def api_aprobar_hito():
     hid = c.lastrowid
     conn.commit()
     conn.close()
+    # Generar embedding en background
+    texto_embed = f"{titulo} {contenido} {cuando}".strip()
+    # Embedding síncrono — no daemon thread que puede morir antes de ejecutarse
+    try:
+        import struct
+        resp = together.embeddings.create(model=EMBED_MODEL, input=[texto_embed[:1600]])
+        vec = resp.data[0].embedding
+        blob = struct.pack(f"{len(vec)}f", *vec)
+        conn2 = sqlite3.connect(DB_PATH)
+        conn2.execute("INSERT OR REPLACE INTO embeddings (usuario_id, tabla_origen, registro_id, embedding) VALUES (?,?,?,?)",
+                      (usuario_id, 'hitos_usuario', hid, blob))
+        conn2.commit()
+        conn2.close()
+        print(f"[ANNI] Embedding hito #{hid} guardado")
+    except Exception as e:
+        print(f"[ANNI] Error embedding hito #{hid}: {e}")
     return jsonify({'ok': True, 'id': hid})
 
 @app.route('/api/hitos/<int:hid>', methods=['PUT'])
@@ -1096,7 +1173,7 @@ def api_descargar_bd():
     c.execute("SELECT password_hash FROM usuarios WHERE id=?", (usuario_id,))
     row = c.fetchone()
     conn.close()
-    if not row or row[0] != hash_password(password):
+    if not row or not verificar_password(password, row[0]):
         return jsonify({'ok': False, 'error': 'Contrasena incorrecta'})
     from flask import send_file
     return send_file(DB_PATH, as_attachment=True, download_name='anni_backup.db', mimetype='application/octet-stream')
