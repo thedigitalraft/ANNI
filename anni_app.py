@@ -848,175 +848,115 @@ def cerrar_tema():
 # ── HTML ──────────────────────────────────────────────────────────────────────
 
 LOGIN_HTML = """<!DOCTYPE html>
-<html lang="es">
+<html lang='es'>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
 <title>ANNI</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap');
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --bg: #0a0a0a;
-    --surface: #111111;
-    --border: #222222;
-    --text: #e8e4dc;
-    --sub: #6b6560;
-    --accent: #c9a96e;
-    --accent-dim: rgba(201,169,110,0.15);
-    --error: #c97070;
-  }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'DM Sans', sans-serif;
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-  .container {
-    width: 100%;
-    max-width: 420px;
-  }
-  .logo {
-    font-family: 'DM Serif Display', serif;
-    font-size: 48px;
-    color: var(--accent);
-    letter-spacing: -1px;
-    margin-bottom: 8px;
-  }
-  .tagline {
-    color: var(--sub);
-    font-size: 13px;
-    font-weight: 300;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    margin-bottom: 48px;
-  }
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 32px;
-  }
-  .field {
-    margin-bottom: 16px;
-  }
-  label {
-    display: block;
-    font-size: 11px;
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
-    color: var(--sub);
-    margin-bottom: 8px;
-  }
-  input {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 16px;
-    color: var(--text);
-    font-family: 'DM Sans', sans-serif;
-    font-size: 15px;
-    outline: none;
-    transition: border-color 0.2s;
-  }
-  input:focus { border-color: var(--accent); }
-  .btn {
-    width: 100%;
-    background: var(--accent);
-    color: #0a0a0a;
-    border: none;
-    border-radius: 8px;
-    padding: 14px;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 14px;
-    font-weight: 500;
-    letter-spacing: 1px;
-    cursor: pointer;
-    margin-top: 8px;
-    transition: opacity 0.2s;
-  }
-  .btn:hover { opacity: 0.85; }
-  .link {
-    text-align: center;
-    margin-top: 20px;
-    font-size: 13px;
-    color: var(--sub);
-  }
-  .link a { color: var(--accent); text-decoration: none; }
-  .error {
-    background: rgba(201,112,112,0.1);
-    border: 1px solid var(--error);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 13px;
-    color: var(--error);
-    margin-bottom: 16px;
-    display: none;
-  }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.wrap{width:100%;max-width:480px}
+.logo{font-size:72px;font-weight:900;color:#cc0000;letter-spacing:-3px;line-height:1;margin-bottom:6px}
+.ver{font-size:15px;color:#555;margin-bottom:4px}
+.cred{font-size:13px;color:#999;margin-bottom:48px}
+.card{background:#f5f5f5;border:1px solid #e0e0e0;border-radius:16px;padding:32px}
+.err{background:#fff0f0;border:2px solid #cc0000;border-radius:10px;padding:14px 16px;font-size:16px;color:#cc0000;margin-bottom:20px;display:none;font-weight:500}
+label{display:block;font-size:15px;font-weight:700;color:#111;margin-bottom:10px;margin-top:24px}
+label:first-of-type{margin-top:0}
+input{width:100%;background:#fff;border:2px solid #e0e0e0;border-radius:10px;padding:18px;color:#111;font-size:18px;outline:none;transition:border-color .2s;-webkit-appearance:none}
+input:focus{border-color:#cc0000}
+.btn{width:100%;background:#cc0000;color:#fff;border:none;border-radius:10px;padding:20px;font-size:18px;font-weight:700;cursor:pointer;margin-top:28px;-webkit-appearance:none}
+.btn:active{background:#aa0000}
+.lnk{text-align:center;margin-top:24px;font-size:15px;color:#555}
+.lnk a{color:#cc0000;text-decoration:none;font-weight:700}
 </style>
 </head>
 <body>
-<div class="container">
-  <div class="logo">ANNI</div>
-  <div class="tagline">Tu socia cognitiva</div>
-  <div class="card">
-    <div class="error" id="err"></div>
-    <div class="field">
-      <label>Usuario</label>
-      <input type="text" id="username" placeholder="tu nombre de usuario" autocomplete="username">
-    </div>
-    <div class="field">
-      <label>Contraseña</label>
-      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password">
-    </div>
-    <button class="btn" onclick="login()">ENTRAR</button>
-    <div class="link">¿Primera vez? <a href="/registro">Créate una cuenta</a></div>
-  </div>
+<div class='wrap'>
+<div class='logo'>ANNI</div>
+<div class='ver'>v__ANNI_VERSION__</div>
+<div class='cred'>Created by Rafa Torrijos</div>
+<div class='card'>
+<div class='err' id='err'></div>
+<label for='u'>Email</label>
+<input type='email' id='u' placeholder='tu@email.com' autocomplete='email' autocapitalize='none' inputmode='email'>
+<label for='p'>Contrasena</label>
+<input type='password' id='p' placeholder='tu contrasena' autocomplete='current-password'>
+<button class='btn' onclick='go()'>ENTRAR</button>
+<div class='lnk'>Primera vez? <a href='/registro'>Crear cuenta</a></div>
+</div>
 </div>
 <script>
-function login() {
-  var u = document.getElementById('username').value.trim();
-  var p = document.getElementById('password').value.trim();
-  var err = document.getElementById('err');
-  err.style.display = 'none';
-  fetch('/login', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({username: u, password: p})
-  }).then(r => r.json()).then(d => {
-    if (d.ok) window.location.href = '/chat';
-    else { err.textContent = d.error; err.style.display = 'block'; }
-  });
-}
-document.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+function go(){
+var u=document.getElementById('u').value.trim();
+var p=document.getElementById('p').value.trim();
+var e=document.getElementById('err');e.style.display='none';
+fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})})
+.then(r=>r.json()).then(d=>{
+if(d.ok)window.location.href='/chat';
+else{e.textContent=d.error;e.style.display='block';}});}
+document.addEventListener('keydown',e=>{if(e.key==='Enter')go();});
 </script>
-</body>
-</html>"""
+</body></html>"""
 
-REGISTRO_HTML = LOGIN_HTML.replace(
-    "onclick=\"login()\"", "onclick=\"registro()\""
-).replace(
-    "ENTRAR", "CREAR CUENTA"
-).replace(
-    "¿Primera vez? <a href=\"/registro\">Créate una cuenta</a>",
-    "¿Ya tienes cuenta? <a href=\"/login\">Entra aquí</a>"
-).replace(
-    "autocomplete=\"current-password\"", "autocomplete=\"new-password\""
-).replace(
-    "function login()",
-    "function registro()"
-).replace(
-    "fetch('/login'",
-    "fetch('/registro'"
-).replace(
-    "<title>ANNI</title>",
-    "<title>ANNI — Registro</title>"
-)
+REGISTRO_HTML = """<!DOCTYPE html>
+<html lang='es'>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<title>ANNI</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.wrap{width:100%;max-width:480px}
+.logo{font-size:72px;font-weight:900;color:#cc0000;letter-spacing:-3px;line-height:1;margin-bottom:6px}
+.ver{font-size:15px;color:#555;margin-bottom:4px}
+.cred{font-size:13px;color:#999;margin-bottom:48px}
+.card{background:#f5f5f5;border:1px solid #e0e0e0;border-radius:16px;padding:32px}
+.err{background:#fff0f0;border:2px solid #cc0000;border-radius:10px;padding:14px 16px;font-size:16px;color:#cc0000;margin-bottom:20px;display:none;font-weight:500}
+label{display:block;font-size:15px;font-weight:700;color:#111;margin-bottom:10px;margin-top:24px}
+label:first-of-type{margin-top:0}
+input{width:100%;background:#fff;border:2px solid #e0e0e0;border-radius:10px;padding:18px;color:#111;font-size:18px;outline:none;transition:border-color .2s;-webkit-appearance:none}
+input:focus{border-color:#cc0000}
+.btn{width:100%;background:#cc0000;color:#fff;border:none;border-radius:10px;padding:20px;font-size:18px;font-weight:700;cursor:pointer;margin-top:28px;-webkit-appearance:none}
+.btn:active{background:#aa0000}
+.lnk{text-align:center;margin-top:24px;font-size:15px;color:#555}
+.lnk a{color:#cc0000;text-decoration:none;font-weight:700}
+</style>
+</head>
+<body>
+<div class='wrap'>
+<div class='logo'>ANNI</div>
+<div class='ver'>v__ANNI_VERSION__</div>
+<div class='cred'>Created by Rafa Torrijos</div>
+<div class='card'>
+<div class='err' id='err'></div>
+<label for='n'>Como te llamas</label>
+<input type='text' id='n' placeholder='tu nombre' autocomplete='given-name' autocapitalize='words'>
+<label for='u'>Tu email</label>
+<input type='email' id='u' placeholder='tu@email.com' autocomplete='email' autocapitalize='none' inputmode='email'>
+<label for='p'>Contrasena</label>
+<input type='password' id='p' placeholder='minimo 6 caracteres' autocomplete='new-password'>
+<button class='btn' onclick='go()'>CREAR CUENTA</button>
+<div class='lnk'>Ya tienes cuenta? <a href='/login'>Entra aqui</a></div>
+</div>
+</div>
+<script>
+function go(){
+var n=document.getElementById('n').value.trim();
+var u=document.getElementById('u').value.trim();
+var p=document.getElementById('p').value.trim();
+var e=document.getElementById('err');e.style.display='none';
+fetch('/registro',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nombre:n,username:u,password:p})})
+.then(r=>r.json()).then(d=>{
+if(d.ok)window.location.href='/chat';
+else{e.textContent=d.error;e.style.display='block';}});}
+document.addEventListener('keydown',e=>{if(e.key==='Enter')go();});
+</script>
+</body></html>"""
+
+
 
 CHAT_HTML = """<!DOCTYPE html>
 <html lang='es'>
