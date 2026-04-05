@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.14"
+ANNI_VERSION = "1.0.15"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1277,66 +1277,74 @@ CHAT_HTML = """<!DOCTYPE html>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
 body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;display:flex;flex-direction:column}
-/* BARRA NAV SUPERIOR */
-#nav{background:#f5f5f5;border-bottom:2px solid #e8e8e8;padding:8px 20px;display:flex;align-items:center;gap:8px;flex-shrink:0}
-.nav-btn{font-size:13px;font-weight:700;color:#555;background:#fff;border:2px solid #e0e0e0;border-radius:8px;padding:7px 14px;cursor:pointer;-webkit-appearance:none;letter-spacing:0.5px;transition:all .15s}
-.nav-btn:hover{background:#f0f0f0}
-.nav-btn:active{background:#e8e8e8}
-.nav-btn.red{color:#cc0000;border-color:#ffcccc;background:#fff}
-.nav-btn.red:hover{background:#fff5f5}
-/* HEADER */
-header{padding:12px 20px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff}
-.logo-wrap{display:flex;flex-direction:column;gap:1px}
-.logo{font-size:26px;font-weight:900;color:#cc0000;letter-spacing:-1px;line-height:1}
-.logo-sub{font-size:10px;color:#999;letter-spacing:0.3px;line-height:1.4}
-.hr{display:flex;align-items:center;gap:10px}
-.st{font-size:13px;color:#888}
-.btn-conv{font-size:13px;font-weight:700;border-radius:8px;padding:8px 14px;cursor:pointer;border:2px solid;-webkit-appearance:none;transition:all .2s}
-.btn-conv.verde{background:#fff;color:#228822;border-color:#228822}
-.btn-conv.rojo{background:#cc0000;color:#fff;border-color:#cc0000}
-.conv-info{font-size:12px;color:#888;white-space:nowrap}
-a.btn-salir{font-size:13px;font-weight:600;color:#555;text-decoration:none;padding:8px 12px;border:2px solid #e0e0e0;border-radius:8px}
+
+/* BARRA NAV */
+#nav{background:#fff;border-bottom:1px solid #e8e8e8;padding:8px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.nav-btn{font-size:12px;font-weight:700;color:#555;background:#fff;border:1px solid #d0d0d0;border-radius:6px;padding:6px 12px;cursor:pointer;-webkit-appearance:none;letter-spacing:0.5px}
+.nav-btn:hover{background:#f5f5f5}
+.nav-btn.salir{color:#cc0000;border-color:#ffcccc;margin-left:auto}
+
+/* HEADER CENTRADO */
+#hdr{padding:20px 16px 16px;text-align:center;flex-shrink:0;background:#fff}
+.logo{font-size:52px;font-weight:900;color:#cc0000;letter-spacing:-2px;line-height:1}
+.ver{font-size:14px;font-weight:700;color:#cc0000;margin-top:4px;letter-spacing:1px}
+.sub{font-size:12px;color:#aaa;margin-top:4px;line-height:1.5}
+
+/* BARRA EMPEZAR */
+#conv-bar{background:#555;padding:10px 20px;display:flex;align-items:center;justify-content:center;flex-shrink:0;gap:16px}
+#btn-conv{font-size:14px;font-weight:700;background:none;border:2px solid;border-radius:8px;padding:8px 32px;cursor:pointer;-webkit-appearance:none;letter-spacing:0.5px;transition:all .2s}
+#btn-conv.verde{color:#44cc44;border-color:#44cc44}
+#btn-conv.rojo{color:#fff;border-color:#fff;background:rgba(204,0,0,0.8)}
+.conv-info{font-size:12px;color:#ccc}
+
 /* CHAT */
-#chat{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:20px;-webkit-overflow-scrolling:touch;max-width:760px;width:100%;margin:0 auto;align-self:center}
-.msg-anni{display:flex;flex-direction:column;gap:4px;align-self:flex-start;max-width:85%}
-.msg-anni .lbl{font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#999}
-.msg-anni .txt{font-size:17px;line-height:1.7;color:#111;white-space:pre-wrap;word-break:break-word}
+#chat{flex:1;overflow-y:auto;padding:20px 20px;display:flex;flex-direction:column;gap:20px;-webkit-overflow-scrolling:touch;max-width:720px;width:100%;margin:0 auto;align-self:center}
+.msg-anni{display:flex;flex-direction:column;gap:4px;align-self:flex-start;max-width:90%}
+.msg-anni .lbl{font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#bbb}
+.msg-anni .txt{font-size:17px;line-height:1.75;color:#111;white-space:pre-wrap;word-break:break-word}
 .msg-user{display:flex;flex-direction:column;gap:4px;align-self:flex-end;max-width:85%;align-items:flex-end}
 .msg-user .lbl{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#cc0000}
 .msg-user .burbuja{background:#cc0000;color:#fff;border-radius:16px 16px 4px 16px;padding:14px 18px;font-size:17px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
-.pro{background:#fff5f5;border:2px solid #ffcccc;border-left:4px solid #cc0000;border-radius:12px;padding:16px 18px;font-size:17px;color:#111;line-height:1.7;font-weight:500;max-width:85%}
-.resumen-msg{background:#f0fff0;border:2px solid #bbddbb;border-radius:12px;padding:14px 16px;font-size:15px;color:#335533;line-height:1.6;max-width:90%}
+.pro{background:#fff5f5;border-left:4px solid #cc0000;padding:14px 18px;font-size:17px;color:#111;line-height:1.7;font-weight:500;max-width:90%}
+.resumen-msg{background:#f0fff0;border-left:4px solid #88bb88;padding:14px 18px;font-size:15px;color:#335533;line-height:1.6;max-width:90%}
 .typing{display:flex;gap:6px;align-items:center;padding:8px 0}
 .typing span{width:8px;height:8px;background:#ccc;border-radius:50%;animation:b 1.2s infinite}
 .typing span:nth-child(2){animation-delay:.2s}
 .typing span:nth-child(3){animation-delay:.4s}
 @keyframes b{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+
 /* INPUT */
-#ia{border-top:2px solid #e8e8e8;padding:12px 16px;padding-bottom:max(12px,env(safe-area-inset-bottom));flex-shrink:0;background:#fff}
-#preview{max-width:760px;margin:0 auto 6px;font-size:13px;color:#cc0000;display:none}
-.ir{display:flex;gap:8px;align-items:flex-end;max-width:760px;margin:0 auto}
-.clip{background:none;border:2px solid #e0e0e0;border-radius:10px;padding:11px 13px;cursor:pointer;flex-shrink:0;font-size:15px;color:#888;-webkit-appearance:none}
+#ia{border-top:1px solid #e8e8e8;padding:12px 16px;padding-bottom:max(12px,env(safe-area-inset-bottom));flex-shrink:0;background:#fff}
+#preview{max-width:720px;margin:0 auto 6px;font-size:13px;color:#cc0000;display:none}
+.ir{display:flex;gap:8px;align-items:flex-end;max-width:720px;margin:0 auto}
+.clip{background:none;border:1px solid #e0e0e0;border-radius:10px;padding:12px 13px;cursor:pointer;flex-shrink:0;font-size:15px;color:#888;-webkit-appearance:none}
 .clip:active{background:#f5f5f5}
-textarea{flex:1;background:#f5f5f5;border:2px solid #e0e0e0;border-radius:12px;padding:13px 15px;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:17px;resize:none;outline:none;line-height:1.5;max-height:140px;-webkit-appearance:none;transition:border-color .2s}
+textarea{flex:1;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:12px;padding:13px 15px;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:17px;resize:none;outline:none;line-height:1.5;max-height:140px;-webkit-appearance:none;transition:border-color .2s}
 textarea:focus{border-color:#cc0000}
-textarea::placeholder{color:#aaa}
+textarea::placeholder{color:#bbb}
 button#s{background:#cc0000;color:#fff;border:none;border-radius:10px;padding:13px 18px;font-size:16px;font-weight:700;cursor:pointer;flex-shrink:0;-webkit-appearance:none;min-width:76px}
 button#s:active{background:#aa0000}
-button#s:disabled{background:#ccc;cursor:not-allowed}
+button#s:disabled{background:#ddd;cursor:not-allowed}
 #finput{display:none}
+
 /* MODAL */
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:20px}
 .modal-bg.open{display:flex}
 .modal{background:#fff;border-radius:16px;padding:28px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto}
 .modal h2{font-size:20px;font-weight:800;margin-bottom:16px;color:#111}
-.modal textarea,.modal input[type=password]{width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:14px;font-size:15px;line-height:1.6;outline:none;font-family:inherit}
-.modal textarea{resize:vertical;min-height:120px}
-.modal textarea:focus,.modal input[type=password]:focus{border-color:#cc0000}
+.modal textarea,.modal input[type=password],.modal input[type=text]{width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:12px 14px;font-size:15px;line-height:1.6;outline:none;font-family:inherit}
+.modal textarea{resize:vertical;min-height:100px}
+.modal textarea:focus,.modal input:focus{border-color:#cc0000}
+.modal-label{font-size:12px;font-weight:700;color:#555;display:block;margin:12px 0 4px}
+.modal-label:first-child{margin-top:0}
+.modal select{width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:12px 14px;font-size:15px;outline:none;font-family:inherit}
+.modal select:focus{border-color:#cc0000}
 .modal-btns{display:flex;gap:10px;margin-top:16px;justify-content:flex-end;flex-wrap:wrap}
-.modal-btns button{padding:12px 20px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;border:2px solid;-webkit-appearance:none}
+.modal-btns button{padding:10px 18px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;border:2px solid;-webkit-appearance:none}
 .btn-ok{background:#cc0000;color:#fff;border-color:#cc0000}
 .btn-cancel{background:#fff;color:#555;border-color:#e0e0e0}
 .btn-descartar{background:#fff;color:#888;border-color:#e0e0e0}
+
 /* PÁGINA */
 #page{display:none;position:fixed;inset:0;background:#fff;z-index:900;flex-direction:column}
 #page.open{display:flex}
@@ -1354,36 +1362,46 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 .pager{display:flex;gap:8px;justify-content:center;margin-top:20px;flex-wrap:wrap}
 .pager button{padding:8px 14px;border:2px solid #e0e0e0;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;background:#fff;color:#555}
 .pager button.active{background:#cc0000;color:#fff;border-color:#cc0000}
-.form-group{margin-bottom:16px}
+.form-group{margin-bottom:14px}
 .form-group label{display:block;font-size:13px;font-weight:700;margin-bottom:6px;color:#555}
 .form-group input,.form-group textarea{width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:12px 14px;font-size:15px;outline:none;font-family:inherit}
 .form-group input:focus,.form-group textarea:focus{border-color:#cc0000}
 .dia-badge{background:#cc0000;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;display:inline-block;margin-bottom:6px}
-@media(max-width:600px){#nav{padding:8px 12px;gap:6px}.nav-btn{font-size:12px;padding:6px 10px}header{padding:10px 14px}.logo{font-size:22px}.conv-info{display:none}#chat{padding:16px;gap:16px}.msg-anni .txt,.msg-user .burbuja,.pro{font-size:16px}textarea{font-size:16px}.btn-conv{padding:7px 10px;font-size:12px}}
+
+@media(max-width:600px){
+#nav{padding:8px 12px;gap:6px}.nav-btn{font-size:11px;padding:5px 9px}
+.logo{font-size:40px}
+#chat{padding:16px;gap:16px}
+.msg-anni .txt,.msg-user .burbuja,.pro{font-size:16px}
+textarea{font-size:16px}}
 </style>
 </head>
 <body>
-<!-- BARRA NAV SUPERIOR -->
+
+<!-- BARRA NAV -->
 <div id='nav'>
   <button class='nav-btn' onclick='showPage("hitos")'>HITOS</button>
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
   <button class='nav-btn' onclick='showPage("diario")'>DIARIO</button>
   <button class='nav-btn' onclick='descargarBD()'>BD</button>
+  <a href='/logout' class='nav-btn salir'>SALIR</a>
 </div>
-<!-- HEADER -->
-<header>
-  <div class='logo-wrap'>
-    <div class='logo'>ANNI</div>
-    <div class='logo-sub'>v__ANNI_VERSION__ &middot; IA con memoria persistente &middot; creada por Rafa Torrijos</div>
-  </div>
-  <div class='hr'>
-    <span class='st' id='st'>conectada</span>
-    <span class='conv-info' id='conv-info'></span>
-    <button class='btn-conv verde' id='btn-conv' onclick='toggleConv()'>EMPEZAR</button>
-    <a href='/logout' class='btn-salir'>Salir</a>
-  </div>
-</header>
+
+<!-- HEADER CENTRADO -->
+<div id='hdr'>
+  <div class='logo'>ANNI</div>
+  <div class='ver'>V. __ANNI_VERSION__</div>
+  <div class='sub'>I.A. con memoria persistente<br>creada por Rafa Torrijos</div>
+</div>
+
+<!-- BARRA EMPEZAR/CERRAR -->
+<div id='conv-bar'>
+  <span class='conv-info' id='conv-info'></span>
+  <button id='btn-conv' class='verde' onclick='toggleConv()'>Empezar Conversacion</button>
+</div>
+
 <div id='chat'></div>
+
 <div id='ia'>
   <div id='preview'></div>
   <div class='ir'>
@@ -1412,13 +1430,10 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 <div class='modal'>
 <h2>Nuevo hito detectado</h2>
 <p style='font-size:12px;color:#888;font-style:italic;margin-bottom:14px' id='hito-evidencia'></p>
-<div style='margin-bottom:12px'>
-<label style='font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:4px'>TITULO</label>
-<input type='text' id='hito-titulo' style='width:100%;border:2px solid #e0e0e0;border-radius:8px;padding:10px;font-size:14px;font-weight:700;outline:none;font-family:inherit'>
-</div>
-<div style='margin-bottom:12px'>
-<label style='font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:4px'>CATEGORIA</label>
-<select id='hito-cat' style='width:100%;border:2px solid #e0e0e0;border-radius:8px;padding:10px;font-size:14px;outline:none;font-family:inherit'>
+<span class='modal-label'>TITULO</span>
+<input type='text' id='hito-titulo'>
+<span class='modal-label'>CATEGORIA</span>
+<select id='hito-cat'>
 <option value='forma_de_pensar'>Forma de pensar</option>
 <option value='toma_de_decisiones'>Toma de decisiones</option>
 <option value='lo_que_importa'>Lo que importa</option>
@@ -1427,19 +1442,12 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 <option value='identidad'>Identidad</option>
 <option value='general'>General</option>
 </select>
-</div>
-<div style='margin-bottom:12px'>
-<label style='font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:4px'>DESCRIPCION</label>
-<textarea id='hito-txt' rows='3' style='width:100%;border:2px solid #e0e0e0;border-radius:8px;padding:10px;font-size:14px;resize:vertical;outline:none;font-family:inherit'></textarea>
-</div>
-<div style='margin-bottom:12px'>
-<label style='font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:4px'>CUANDO ACTIVARLO</label>
-<input type='text' id='hito-cuando' placeholder='En que situaciones usar este hito' style='width:100%;border:2px solid #e0e0e0;border-radius:8px;padding:10px;font-size:14px;outline:none;font-family:inherit'>
-</div>
-<div style='margin-bottom:4px'>
-<label style='font-size:12px;font-weight:700;color:#555;display:block;margin-bottom:4px'>COMO USARLO</label>
-<input type='text' id='hito-como' placeholder='Como deberia actuar ANNI' style='width:100%;border:2px solid #e0e0e0;border-radius:8px;padding:10px;font-size:14px;outline:none;font-family:inherit'>
-</div>
+<span class='modal-label'>DESCRIPCION</span>
+<textarea id='hito-txt' rows='3'></textarea>
+<span class='modal-label'>CUANDO ACTIVARLO</span>
+<input type='text' id='hito-cuando' placeholder='En que situaciones usar este hito'>
+<span class='modal-label'>COMO USARLO</span>
+<input type='text' id='hito-como' placeholder='Como deberia actuar ANNI'>
 <div class='modal-btns'>
 <button class='btn-cancel' onclick='rechazarHito()'>No guardar</button>
 <button class='btn-ok' onclick='aprobarHito()'>Guardar hito</button>
@@ -1447,13 +1455,13 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 </div>
 </div>
 
-<!-- MODAL DESCARGA BD -->
+<!-- MODAL BD -->
 <div class='modal-bg' id='modal-bd'>
 <div class='modal'>
 <h2>Descargar base de datos</h2>
 <p style='font-size:14px;color:#888;margin-bottom:12px'>Introduce tu contrasena para confirmar.</p>
 <input type='password' id='bd-pwd' placeholder='tu contrasena'>
-<div id='bd-err' style='color:#cc0000;font-size:13px;margin-top:8px;margin-bottom:4px;display:none'></div>
+<div id='bd-err' style='color:#cc0000;font-size:13px;margin-top:8px;display:none'></div>
 <div class='modal-btns'>
 <button class='btn-cancel' onclick='closeMod("modal-bd")'>Cancelar</button>
 <button class='btn-ok' onclick='confirmarDescarga()'>Descargar</button>
@@ -1461,7 +1469,7 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 </div>
 </div>
 
-<!-- PÁGINA LATERAL -->
+<!-- PÁGINA -->
 <div id='page'>
 <div class='page-header'>
 <h1 id='page-title'>Hitos</h1>
@@ -1474,14 +1482,13 @@ button#s:disabled{background:#ccc;cursor:not-allowed}
 var C=document.getElementById('chat');
 var I=document.getElementById('inp');
 var S=document.getElementById('s');
-var ST=document.getElementById('st');
 var PRV=document.getElementById('preview');
 var BTNCONV=document.getElementById('btn-conv');
 var CONVINFO=document.getElementById('conv-info');
 var convActiva=null;var convNum=0;
 var pendResumen=null;var pendHito=null;
-var NOMBRE='__NOMBRE_USUARIO__';
 var currentPage=1;var currentSection='';
+var NOMBRE='__NOMBRE_USUARIO__';
 
 function ts(){
 var d=new Date();
@@ -1494,10 +1501,12 @@ return dd+'/'+mm+'/'+yy+' '+hh+':'+mi;}
 
 function updateBtn(){
 if(convActiva){
-BTNCONV.textContent='CERRAR';BTNCONV.className='btn-conv rojo';
-CONVINFO.textContent='Chat #'+convNum;
+BTNCONV.textContent='Cerrar Conversacion';
+BTNCONV.className='rojo';
+CONVINFO.textContent='Chat #'+convNum+' en curso';
 }else{
-BTNCONV.textContent='EMPEZAR';BTNCONV.className='btn-conv verde';
+BTNCONV.textContent='Empezar Conversacion';
+BTNCONV.className='verde';
 CONVINFO.textContent='';}}
 
 function toggleConv(){if(convActiva){cerrarConv();}else{nuevaConv();}}
@@ -1507,10 +1516,11 @@ var d=document.createElement('div');
 if(tipo==='pro'||tipo==='bienvenida'){
 d.className='pro';d.textContent=txt;
 }else if(tipo==='resumen'){
-d.className='resumen-msg';d.textContent='Resumen guardado: '+txt;
+d.className='resumen-msg';d.textContent='Resumen: '+txt;
 }else if(role==='user'){
 d.className='msg-user';
-var lbl=document.createElement('div');lbl.className='lbl';lbl.textContent=NOMBRE.toUpperCase()+' - '+ts();
+var lbl=document.createElement('div');lbl.className='lbl';
+lbl.textContent=NOMBRE.toUpperCase()+' - '+ts();
 var bur=document.createElement('div');bur.className='burbuja';bur.textContent=txt;
 d.appendChild(lbl);d.appendChild(bur);
 }else{
@@ -1543,7 +1553,7 @@ function env(){
 var msg=I.value.trim();
 if(!msg&&!archivoData)return;
 var disp=msg+(archivoData?' ['+archivoData.nombre+']':'');
-I.value='';I.style.height='auto';S.disabled=true;ST.textContent='pensando...';
+I.value='';I.style.height='auto';S.disabled=true;
 add('user',disp);PRV.style.display='none';typing();
 var body={message:msg};
 if(archivoData){body.archivo=archivoData;}
@@ -1551,18 +1561,15 @@ var lastMsg=msg;
 archivoData=null;document.getElementById('finput').value='';
 fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
 .then(r=>r.json()).then(d=>{
-rmtyp();
-var resp=d.response||'';
-add('anni',resp);
+rmtyp();var resp=d.response||'';add('anni',resp);
 if(d.conv_id&&!convActiva){convActiva=d.conv_id;convNum=d.conv_id;updateBtn();}
-S.disabled=false;ST.textContent='conectada';I.focus();
+S.disabled=false;I.focus();
 if(lastMsg&&resp){
 fetch('/api/detectar-hito',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({mensaje:lastMsg,respuesta:resp})})
 .then(r=>r.json()).then(h=>{if(h.hito&&h.hito.hito)mostrarModalHito(h.hito);})
-.catch(()=>{});}
-})
-.catch(e=>{rmtyp();add('anni','Error de conexion.');S.disabled=false;ST.textContent='error';});}
+.catch(()=>{});}})
+.catch(e=>{rmtyp();add('anni','Error de conexion.');S.disabled=false;});}
 
 function nuevaConv(){
 fetch('/api/conversacion/nueva',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
@@ -1572,44 +1579,33 @@ add('anni','Conversacion nueva. De que quieres hablar?');}});}
 
 function cerrarConv(){
 if(!convActiva)return;
-ST.textContent='generando resumen...';
 fetch('/api/conversacion/cerrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:convActiva})})
 .then(r=>r.json()).then(d=>{
-ST.textContent='conectada';
 if(d.ok&&d.resumen&&d.pendiente){
 var cid=d.conv_id||convActiva;
 pendResumen={conv_id:cid,resumen:d.resumen};
 document.getElementById('resumen-txt').value=d.resumen;
 document.getElementById('modal-resumen').classList.add('open');
-}else{
-convActiva=null;updateBtn();
-add('anni','Conversacion cerrada.');}})
-.catch(e=>{ST.textContent='error';});}
+}else{convActiva=null;updateBtn();add('anni','Conversacion cerrada.');}})
+.catch(e=>{});}
 
 function guardarResumen(){
 var txt=document.getElementById('resumen-txt').value.trim();
-if(!txt){alert('El resumen no puede estar vacio');return;}
+if(!txt)return;
 if(!pendResumen||!pendResumen.conv_id){
-// Sin conv_id pendiente — cerrar modal igualmente
 document.getElementById('modal-resumen').classList.remove('open');
 convActiva=null;updateBtn();pendResumen=null;return;}
 fetch('/api/conversacion/guardar-resumen',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({conv_id:pendResumen.conv_id,resumen:txt})})
 .then(r=>r.json()).then(d=>{
 document.getElementById('modal-resumen').classList.remove('open');
-convActiva=null;updateBtn();
-add('anni',txt,'resumen');
-pendResumen=null;})
-.catch(e=>{
-document.getElementById('modal-resumen').classList.remove('open');
-convActiva=null;updateBtn();pendResumen=null;
-add('anni','Resumen guardado.');});}
+convActiva=null;updateBtn();add('anni',txt,'resumen');pendResumen=null;})
+.catch(e=>{document.getElementById('modal-resumen').classList.remove('open');convActiva=null;updateBtn();pendResumen=null;});}
 
 function descartarResumen(){
 if(!pendResumen)return;
 fetch('/api/conversacion/guardar-resumen',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({conv_id:pendResumen.conv_id,resumen:'[Descartado]'})})
-.then(()=>{});
+body:JSON.stringify({conv_id:pendResumen.conv_id,resumen:'[Descartado]'})}).then(()=>{});
 document.getElementById('modal-resumen').classList.remove('open');
 convActiva=null;updateBtn();pendResumen=null;
 add('anni','Conversacion cerrada sin guardar resumen.');}
@@ -1625,8 +1621,7 @@ document.getElementById('hito-evidencia').textContent=h.evidencia?'"'+h.evidenci
 document.getElementById('modal-hito').classList.add('open');}
 
 function aprobarHito(){
-var txt=document.getElementById('hito-txt').value.trim();
-if(!txt)return;
+var txt=document.getElementById('hito-txt').value.trim();if(!txt)return;
 var titulo=document.getElementById('hito-titulo').value.trim();
 var cat=document.getElementById('hito-cat').value;
 var cuando=document.getElementById('hito-cuando').value.trim();
@@ -1635,13 +1630,9 @@ var evidencia=pendHito?pendHito.evidencia||'':'';
 fetch('/api/hitos/aprobar',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({titulo:titulo,categoria:cat,contenido:txt,evidencia:evidencia,cuando_activarlo:cuando,como_usarlo:como})})
 .then(r=>r.json()).then(d=>{
-document.getElementById('modal-hito').classList.remove('open');
-pendHito=null;});}
+document.getElementById('modal-hito').classList.remove('open');pendHito=null;});}
 
-function rechazarHito(){
-document.getElementById('modal-hito').classList.remove('open');
-pendHito=null;}
-
+function rechazarHito(){document.getElementById('modal-hito').classList.remove('open');pendHito=null;}
 function closeMod(id){document.getElementById(id).classList.remove('open');}
 
 function descargarBD(){
@@ -1651,12 +1642,9 @@ document.getElementById('modal-bd').classList.add('open');}
 
 function confirmarDescarga(){
 var pwd=document.getElementById('bd-pwd').value.trim();
-var err=document.getElementById('bd-err');
-err.style.display='none';
+var err=document.getElementById('bd-err');err.style.display='none';
 fetch('/api/descargar-bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})})
-.then(r=>{
-if(!r.ok)return r.json().then(d=>{throw d;});
-return r.blob();})
+.then(r=>{if(!r.ok)return r.json().then(d=>{throw d;});return r.blob();})
 .then(blob=>{
 var url=URL.createObjectURL(blob);
 var a=document.createElement('a');a.href=url;a.download='anni_backup.db';a.click();
@@ -1672,16 +1660,14 @@ document.getElementById('page').classList.add('open');
 loadPage(sec,1);}
 function closePage(){document.getElementById('page').classList.remove('open');}
 function loadPage(sec,page){
-var body=document.getElementById('page-body');
-body.innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
+document.getElementById('page-body').innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
 if(sec==='hitos')loadHitos(page);
 else if(sec==='chats')loadChats(page);
 else if(sec==='diario')loadDiario(page);}
 
 function loadHitos(page){
 fetch('/api/hitos?page='+page).then(r=>r.json()).then(d=>{
-var body=document.getElementById('page-body');
-body.innerHTML='';
+var body=document.getElementById('page-body');body.innerHTML='';
 if(!d.hitos.length){body.innerHTML='<p style="color:#999;padding:20px">Sin hitos guardados aun.</p>';return;}
 d.hitos.forEach(function(h){
 var card=document.createElement('div');card.className='item-card';
@@ -1690,29 +1676,11 @@ var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px s
 var ev=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px">"'+escH(h.evidencia)+'"</div>':'';
 var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Activar:</b> '+escH(h.cuando)+'</div>':'';
 var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</b> '+escH(h.como)+'</div>':'';
-card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+
-titulo+
-'<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+
-ev+cuando+como+
-'<div class="item-actions">'+
-'<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
-'</div>';
+card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
+'<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+
+'<div class="item-actions"><button class="btn-del" onclick="delHito('+h.id+')">Borrar</button></div>';
 body.appendChild(card);});
 body.appendChild(pagerEl(d.pages,page,'loadHitos'));});}
-
-function editHito(id){
-var el=document.getElementById('hc-'+id);
-var txt=el.textContent;
-el.innerHTML='<textarea style="width:100%;border:2px solid #cc0000;border-radius:8px;padding:10px;font-size:15px;font-family:inherit" rows="3">'+escH(txt)+'</textarea>'+
-'<div style="margin-top:8px;display:flex;gap:8px">'+
-'<button class="btn-edit" onclick="saveHito('+id+', this)">Guardar</button>'+
-'<button class="btn-del" onclick="loadHitos('+currentPage+')">Cancelar</button></div>';}
-
-function saveHito(id,btn){
-var ta=btn.parentElement.previousElementSibling;
-var txt=ta.value.trim();if(!txt)return;
-fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({contenido:txt})})
-.then(()=>loadHitos(currentPage));}
 
 function delHito(id){
 if(!confirm('Borrar este hito?'))return;
@@ -1720,8 +1688,7 @@ fetch('/api/hitos/'+id,{method:'DELETE'}).then(()=>loadHitos(currentPage));}
 
 function loadChats(page){
 fetch('/api/chats?page='+page).then(r=>r.json()).then(d=>{
-var body=document.getElementById('page-body');
-body.innerHTML='';
+var body=document.getElementById('page-body');body.innerHTML='';
 if(!d.chats.length){body.innerHTML='<p style="color:#999;padding:20px">Sin conversaciones guardadas.</p>';return;}
 d.chats.forEach(function(c){
 var card=document.createElement('div');card.className='item-card';
@@ -1733,10 +1700,7 @@ body.appendChild(pagerEl(d.pages,page,'loadChats'));});}
 function loadDiario(page){
 var body=document.getElementById('page-body');
 var hoy=new Date();
-var yyyy=hoy.getFullYear();
-var mm=String(hoy.getMonth()+1).padStart(2,'0');
-var dd=String(hoy.getDate()).padStart(2,'0');
-var hoyStr=yyyy+'-'+mm+'-'+dd;
+var hoyStr=hoy.getFullYear()+'-'+String(hoy.getMonth()+1).padStart(2,'0')+'-'+String(hoy.getDate()).padStart(2,'0');
 body.innerHTML='<div class="item-card" style="background:#fff5f5;border-color:#ffcccc">'+
 '<h3 style="font-size:16px;font-weight:800;margin-bottom:14px;color:#cc0000">Nueva entrada</h3>'+
 '<div class="form-group"><label>Fecha</label><input type="date" id="d-fecha" value="'+hoyStr+'" oninput="calcDia()"></div>'+
@@ -1759,11 +1723,9 @@ body.appendChild(card);});
 body.appendChild(pagerEl(d.pages,page,'loadDiario'));});}
 
 function calcDia(){
-var f=document.getElementById('d-fecha');
-var el=document.getElementById('d-dia');
+var f=document.getElementById('d-fecha');var el=document.getElementById('d-dia');
 if(!f||!el)return;
-var inicio=new Date('2026-03-01T00:00:00');
-var sel=new Date(f.value+'T00:00:00');
+var inicio=new Date('2026-03-01T00:00:00');var sel=new Date(f.value+'T00:00:00');
 var diff=Math.round((sel-inicio)/(1000*60*60*24))+1;
 el.innerHTML='<span class="dia-badge">Dia '+diff+' del experimento</span>';}
 
@@ -1774,7 +1736,7 @@ var texto=document.getElementById('d-texto').value.trim();
 if(!fecha||!titulo||!texto){alert('Rellena todos los campos');return;}
 fetch('/api/diario',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({fecha:fecha,titulo:titulo,texto:texto})})
-.then(r=>r.json()).then(d=>{if(d.ok){loadDiario(1);}else{alert(d.error||'Error');}});}
+.then(r=>r.json()).then(d=>{if(d.ok){loadDiario(1);}});}
 
 function delDiario(id){
 if(!confirm('Borrar esta entrada?'))return;
@@ -1794,6 +1756,7 @@ function escH(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').rep
 
 I.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();env();}});
 I.addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,140)+'px';});
+
 fetch('/api/historial').then(r=>r.json()).then(d=>{
 if(d.messages&&d.messages.length){d.messages.forEach(m=>add(m.role,m.content));}
 fetch('/api/bienvenida').then(r=>r.json()).then(b=>{if(b.intervencion)add('anni',b.intervencion,b.tipo||'pro');});
