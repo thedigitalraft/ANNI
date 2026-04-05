@@ -6,7 +6,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.0"
+ANNI_VERSION = "1.0.1"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -467,10 +467,12 @@ def registro():
 
         if not username or not password:
             return jsonify({'ok': False, 'error': 'Usuario y contraseña requeridos.'})
-        if len(username) < 3:
-            return jsonify({'ok': False, 'error': 'El usuario debe tener al menos 3 caracteres.'})
+        import re as _re
+        if not _re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', username):
+            return jsonify({'ok': False, 'error': 'Introduce un email válido.'})
         if len(password) < 6:
             return jsonify({'ok': False, 'error': 'La contraseña debe tener al menos 6 caracteres.'})
+        username = username.lower()  # normalizar email a minúsculas
 
         try:
             conn = sqlite3.connect(DB_PATH)
@@ -603,8 +605,8 @@ LOGIN_HTML = (
     "<div class='cred'>Created by Rafa Torrijos</div>"
     "<div class='card'>"
     "<div class='err' id='err'></div>"
-    "<label for='u'>Usuario</label>"
-    "<input type='text' id='u' placeholder='tu usuario' autocomplete='username' autocapitalize='none'>"
+    "<label for='u'>Email</label>"
+    "<input type='email' id='u' placeholder='tu@email.com' autocomplete='email' autocapitalize='none' inputmode='email'>"
     "<label for='p'>Contrase\u00f1a</label>"
     "<input type='password' id='p' placeholder='\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' autocomplete='current-password'>"
     "<button class='btn' onclick='go()'>ENTRAR</button>"
@@ -659,8 +661,8 @@ REGISTRO_HTML = (
     "<div class='cred'>Created by Rafa Torrijos</div>"
     "<div class='card'>"
     "<div class='err' id='err'></div>"
-    "<label for='u'>Elige un usuario</label>"
-    "<input type='text' id='u' placeholder='m\u00ednimo 3 caracteres' autocomplete='username' autocapitalize='none'>"
+    "<label for='u'>Tu email</label>"
+    "<input type='email' id='u' placeholder='tu@email.com' autocomplete='email' autocapitalize='none' inputmode='email'>"
     "<label for='p'>Elige una contrase\u00f1a</label>"
     "<input type='password' id='p' placeholder='m\u00ednimo 6 caracteres' autocomplete='new-password'>"
     "<button class='btn' onclick='go()'>CREAR CUENTA</button>"
