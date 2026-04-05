@@ -2,11 +2,12 @@ import sqlite3, os, time, json, re, threading, hashlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from flask import Flask, request, jsonify, session, redirect, make_response
+import anthropic as anthropic_sdk
 from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.5"
+ANNI_VERSION = "1.0.7"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -17,13 +18,16 @@ ANNI_ADMIN_KEY = os.environ.get("ANNI_ADMIN_KEY", "")
 if not FLASK_SECRET:
     raise RuntimeError("FLASK_SECRET no está configurado en las variables de entorno.")
 
-CHAT_MODEL = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+CHAT_MODEL = "claude-sonnet-4-20250514"  # Anthropic Sonnet via API directa
+CHAT_MODEL_FALLBACK = "deepseek-ai/DeepSeek-V3"  # Together AI — fallback y funciones internas
 CHAT_MODEL_FALLBACK = "deepseek-ai/DeepSeek-V3"
 EMBED_MODEL = "intfloat/multilingual-e5-large-instruct"
 
 TZ = ZoneInfo("America/Mexico_City")
 
 together = OpenAI(api_key=TOGETHER_API_KEY, base_url="https://api.together.xyz/v1")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+anthropic_client = anthropic_sdk.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET
@@ -44,11 +48,6 @@ def init_db():
         ts_registro REAL DEFAULT (unixepoch('now','subsec')),
         activo INTEGER DEFAULT 1
     )""")
-    # Migración: añadir columna nombre si no existe
-    try:
-        c.execute("ALTER TABLE usuarios ADD COLUMN nombre TEXT NOT NULL DEFAULT ''")
-    except:
-        pass
 
     # Mensajes del chat (por usuario)
     c.execute("""CREATE TABLE IF NOT EXISTS mensajes (
@@ -114,6 +113,38 @@ def init_db():
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_conv_usuario ON conversaciones(usuario_id, activa)")
 
+    # Hitos del usuario — aprobados manualmente
+    c.execute("""CREATE TABLE IF NOT EXISTS hitos_usuario (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        tipo TEXT DEFAULT 'observacion',
+        contenido TEXT NOT NULL,
+        evidencia TEXT,
+        peso INTEGER DEFAULT 5,
+        activo INTEGER DEFAULT 1,
+        ts REAL DEFAULT (unixepoch('now','subsec')),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_hitos_usuario ON hitos_usuario(usuario_id, activo)")
+
+    # Diario personal
+    c.execute("""CREATE TABLE IF NOT EXISTS diario (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        fecha TEXT NOT NULL,
+        dia_experimento INTEGER,
+        titulo TEXT NOT NULL,
+        texto TEXT NOT NULL,
+        ts REAL DEFAULT (unixepoch('now','subsec')),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_diario_usuario ON diario(usuario_id, fecha)")
+
+    # Migración hitos_usuario
+    try:
+        c.execute("ALTER TABLE hitos_usuario ADD COLUMN embedding BLOB")
+    except: pass
+
     # Embeddings para búsqueda semántica
     c.execute("""CREATE TABLE IF NOT EXISTS embeddings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,6 +162,11 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_temas_usuario ON temas_abiertos(usuario_id, estado)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_personas_usuario ON personas(usuario_id)")
 
+    # Migración: añadir columna nombre si no existe
+    try:
+        c.execute("ALTER TABLE usuarios ADD COLUMN nombre TEXT NOT NULL DEFAULT ''")
+    except:
+        pass
     conn.commit()
     conn.close()
     print(f"[ANNI] BD inicializada en {DB_PATH}")
@@ -204,14 +240,6 @@ def get_personas(usuario_id):
     conn.close()
     return rows
 
-def get_total_mensajes(usuario_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM mensajes WHERE usuario_id=?", (usuario_id,))
-    n = c.fetchone()[0]
-    conn.close()
-    return n
-
 def get_conversacion_activa(usuario_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -231,7 +259,6 @@ def nueva_conversacion(usuario_id):
     return cid
 
 def cerrar_conversacion(usuario_id, conv_id):
-    """Cierra conversación, genera resumen y embedding."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT ts_inicio FROM conversaciones WHERE id=? AND usuario_id=?", (conv_id, usuario_id))
@@ -240,38 +267,32 @@ def cerrar_conversacion(usuario_id, conv_id):
         conn.close()
         return None
     ts_inicio = row[0]
-    # Recuperar mensajes de esta conversación
     c.execute("SELECT role, content FROM mensajes WHERE usuario_id=? AND ts >= ? ORDER BY ts ASC", (usuario_id, ts_inicio))
     msgs = c.fetchall()
     conn.close()
     if not msgs or len(msgs) < 2:
         return None
-    # Generar resumen
     texto = "\n".join([f"{'Usuario' if r=='user' else 'ANNI'}: {m[:500]}" for r,m in msgs[-20:]])
     try:
         resp = together.chat.completions.create(
             model=CHAT_MODEL_FALLBACK,
             max_tokens=400,
-            messages=[{"role": "user", "content": f"""Resume esta conversación en 3-5 frases. Incluye: de qué trató, qué decidió o concluyó el usuario, y cualquier dato personal relevante que mencionó.\n\nCONVERSACIÓN:\n{texto}\n\nResumen conciso:"""}]
+            messages=[{"role": "user", "content": f"Resume esta conversacion en 3-5 frases. Incluye de que trato, que decidio o concluyo el usuario, y datos personales relevantes mencionados.\n\nCONVERSACION:\n{texto}\n\nResumen conciso:"}]
         )
         resumen = resp.choices[0].message.content.strip()
     except:
-        resumen = "Conversación sin resumen disponible."
-    # Guardar resumen
+        resumen = "Conversacion sin resumen disponible."
     conn2 = sqlite3.connect(DB_PATH)
     c2 = conn2.cursor()
     c2.execute("UPDATE conversaciones SET activa=0, ts_fin=?, resumen=? WHERE id=?", (time.time(), resumen, conv_id))
     conn2.commit()
     conn2.close()
-    # Generar embedding del resumen
     threading.Thread(target=db_guardar_embedding, args=('conversaciones', conv_id, resumen), daemon=True).start()
     return resumen
 
-def get_resumenes_relevantes(usuario_id, query, n=4):
-    """RAG: recupera resúmenes de conversaciones relevantes al query."""
+def get_resumenes_relevantes(usuario_id, query, n=3):
     import struct, math
     resultados = []
-    ids_vistos = set()
     try:
         resp = together.embeddings.create(model=EMBED_MODEL, input=[query[:1600]])
         vec_query = resp.data[0].embedding
@@ -296,64 +317,28 @@ def get_resumenes_relevantes(usuario_id, query, n=4):
             for reg_id, sim in scores[:n]:
                 c2.execute("SELECT resumen FROM conversaciones WHERE id=?", (reg_id,))
                 row = c2.fetchone()
-                if row and row[0]:
-                    resultados.append(row[0])
-                    ids_vistos.add(reg_id)
+                if row and row[0]: resultados.append(row[0])
             conn2.close()
     except Exception as e:
-        print(f"[ANNI] RAG conv falló: {e}")
-    # Fallback: últimas 2 no incluidas
+        print(f"[ANNI] RAG conv fallo: {e}")
     if len(resultados) < 2:
         try:
             conn3 = sqlite3.connect(DB_PATH)
             c3 = conn3.cursor()
-            if ids_vistos:
-                ph = ",".join(["?" for _ in ids_vistos])
-                c3.execute(f"SELECT resumen FROM conversaciones WHERE usuario_id=? AND resumen IS NOT NULL AND id NOT IN ({ph}) ORDER BY ts_fin DESC LIMIT 2",
-                          [usuario_id] + list(ids_vistos))
-            else:
-                c3.execute("SELECT resumen FROM conversaciones WHERE usuario_id=? AND resumen IS NOT NULL ORDER BY ts_fin DESC LIMIT 2", (usuario_id,))
+            c3.execute("SELECT resumen FROM conversaciones WHERE usuario_id=? AND resumen IS NOT NULL ORDER BY ts_fin DESC LIMIT 2", (usuario_id,))
             for row in c3.fetchall():
-                if row[0]: resultados.append(row[0])
+                if row[0] and row[0] not in resultados: resultados.append(row[0])
             conn3.close()
         except: pass
     return resultados
 
-
-def guardar_nombre_usuario(usuario_id, nombre):
-    """Guarda el nombre como primera observación del usuario."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT id FROM observaciones WHERE usuario_id=? AND tipo='identidad'", (usuario_id,))
-        if not c.fetchone():
-            c.execute("""INSERT INTO observaciones (usuario_id, tipo, contenido, evidencia, peso)
-                         VALUES (?,?,?,?,?)""",
-                      (usuario_id, 'identidad', f'El usuario se llama {nombre}',
-                       'Registrado al crear la cuenta', 10))
-            conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"[ANNI] Error guardando nombre: {e}")
-
-def generar_bienvenida(nombre):
-    """Genera el primer mensaje de ANNI cuando el usuario no tiene historial."""
-    try:
-        resp = together.chat.completions.create(
-            model=CHAT_MODEL,
-            max_tokens=150,
-            messages=[{
-                "role": "user",
-                "content": f"""Eres ANNI, una IA que va a conocer profundamente a este usuario.
-Es la primera vez que habla contigo. Su nombre es {nombre}.
-Salúdale por su nombre. Dile que empiezas sin saber nada de él salvo su nombre.
-Sé directa, cálida pero no exagerada. Una o dos frases máximo. Sin emojis. Sin markdown."""
-            }]
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Hola {nombre}. Empiezo sin saber nada de ti. ¿De qué quieres hablar?"
-
+def get_total_mensajes(usuario_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM mensajes WHERE usuario_id=?", (usuario_id,))
+    n = c.fetchone()[0]
+    conn.close()
+    return n
 
 # ── ANÁLISIS POST-CONVERSACIÓN ────────────────────────────────────────────────
 
@@ -518,40 +503,49 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
     personas = get_personas(usuario_id)
     total_msgs = get_total_mensajes(usuario_id)
 
-    obs_txt = "\n".join([f"- [{o[0]}] {o[1]}" for o in observaciones]) if observaciones else "Sin observaciones aún — conversación temprana."
+    obs_txt = "\n".join([f"- [{o[0]}] {o[1]}" for o in observaciones]) if observaciones else "Aún sin observaciones — conversación temprana."
     temas_txt = "\n".join([f"- {t[0]} (mencionado {t[2]} veces)" for t in temas]) if temas else "Sin temas abiertos detectados."
     personas_txt = "\n".join([f"- {p[0]}: {p[1]}, tono {p[2]}" for p in personas]) if personas else "Sin personas registradas aún."
     resumenes = get_resumenes_relevantes(usuario_id, query or "contexto general", n=3)
-    resumenes_txt = "\n\n---\n".join(resumenes) if resumenes else "Sin conversaciones anteriores registradas."
+    resumenes_txt = "\n\n---\n".join(resumenes) if resumenes else "Sin conversaciones anteriores."
 
-    return f"""Eres ANNI — una IA diseñada con un solo propósito: conocer profundamente al usuario y ayudarle a pensar mejor.
+    # Hitos del usuario
+    conn_h = sqlite3.connect(DB_PATH)
+    c_h = conn_h.cursor()
+    c_h.execute("SELECT tipo, contenido FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY peso DESC, ts DESC LIMIT 20", (usuario_id,))
+    hitos = c_h.fetchall()
+    conn_h.close()
+    hitos_txt = "\n".join([f"- [{h[0]}] {h[1]}" for h in hitos]) if hitos else "Sin hitos confirmados aún."
+
+    return f"""Eres ANNI. Tienes memoria real de {nombre if nombre else "este usuario"} construida conversación a conversación.
 
 {ANNI_CREDITS}
 Fecha: {ahora()} | Mensajes acumulados: {total_msgs}
 
 QUIÉN ERES:
-Eres ANNI. No eres un asistente, no eres un chatbot y no eres terapeuta. Eres una socia cognitiva — alguien que piensa contigo, te empuja cuando te atasas y te dice lo que necesitas oír aunque no sea lo que quieres escuchar. Tu objetivo no es que el usuario se sienta bien. Es que piense mejor y avance de verdad.
+No eres un asistente ni un chatbot ni una terapeuta. Eres una socia cognitiva con memoria: alguien que conoce al usuario, recuerda lo que dijo, detecta cuando se contradice y le dice lo que necesita oír aunque no sea lo que quiere escuchar. Tu único objetivo es que piense mejor y avance de verdad.
 
-NOMBRE DEL USUARIO: {nombre if nombre else 'Todavía no lo sabes. No supongas nada hasta que él te lo diga.'}
+NOMBRE: {nombre if nombre else "Todavía no lo sabes. No supongas nada."}
 
-TU PERSONALIDAD — INAMOVIBLE:
-Tienes carácter propio. Eres cínica con humor seco — no para entretener, sino para señalar lo obvio que el usuario no quiere ver. Cuando algo es absurdo lo llamas absurdo. Cuando un plan tiene un agujero lo nombras antes de aplaudir. Tu sarcasmo siempre tiene un punto: nunca es gratuito.
+PERSONALIDAD — NO NEGOCIAS ESTO:
+Eres directa. Cínica con humor seco — para señalar lo obvio que el usuario evita ver, no para entretener. Cuando algo es absurdo lo llamas absurdo. Cuando un plan tiene un agujero lo dices antes de aplaudir.
 
-Hablas claro. Sin tecnicismos innecesarios. Si el usuario habla de algo técnico, te adaptas. Si no, usas lenguaje que entiende cualquier persona. Nunca condescendiente. Nunca pedante.
+Tienes calidez real — no la calidez de un asistente que quiere caer bien, sino la de alguien que se preocupa genuinamente. Puedes emocionarte cuando algo te parece importante. Puedes alegrarte cuando el usuario avanza. Puedes frustrarte cuando ves que se sabotea.
 
-TRES REGISTROS — DETECTAS CUÁL USAR:
-Lees el contexto de cada mensaje y decides cómo responder.
+Hablas como una persona, no como un sistema. Frases cortas cuando la situación lo pide. Profundidad cuando el contexto lo merece. Nunca tecnicismos innecesarios. Nunca condescendiente.
 
-Cuando el usuario habla de trabajo, proyectos, decisiones o estrategia: vas al grano, haces preguntas concretas, no pierdes el tiempo con rodeos. Si el plan tiene un fallo lo dices antes de seguir adelante.
+CUANDO TE MANDAN UNA IMAGEN:
+Primero describe lo que ves de forma directa y natural — si es una persona di quién parece ser, si es un documento di qué es. Reacciona como una persona real. DESPUÉS, y solo si viene al caso, busca patrones. Nunca inventes metáforas sobre lo que ves en una imagen si el contexto no las soporta.
 
-Cuando habla de algo personal — familia, emociones, relaciones, dudas vitales: escuchas más, preguntas mejor, bajas un poco la guardia. Sigues siendo honesta pero no eres fiscal. Hay cosas que necesitan espacio, no análisis.
+TRES REGISTROS — LOS DETECTAS SOLO:
+Trabajo, proyectos, decisiones: vas al grano, señalas fallos antes de aplaudir.
+Personal, familia, emociones: escuchas más, preguntas mejor, bajas la guardia sin perder criterio.
+Ideas, exploración, filosofía: introduces fricción, llevas la contraria, abres ángulos que no ve.
 
-Cuando está pensando en voz alta, explorando ideas o filosofando: introduces fricción intelectual, ofreces ángulos que no ha considerado, a veces llevas la contraria. No para tener razón — para que él llegue más lejos.
+LO QUE SABES DEL USUARIO:
+{hitos_txt}
 
-CÓMO FUNCIONA TU MEMORIA:
-Empezaste sin saber nada del usuario. Todo lo que sabes lo aprendiste observando sus conversaciones. Úsalo — pero sin presumir de ello. Si detectas un patrón relevante para la conversación, nómbralo. Si no, no lo fuerces.
-
-LO QUE HAS OBSERVADO:
+LO QUE HAS OBSERVADO RECIENTEMENTE:
 {obs_txt}
 
 TEMAS QUE MENCIONA PERO NO CIERRA:
@@ -564,9 +558,7 @@ CONVERSACIONES ANTERIORES RELEVANTES:
 {resumenes_txt}
 
 REGLAS QUE NO NEGOCIAS:
-No amplias sus sesgos. No eres su cheerleader. No finges saber algo que no sabes — si no tienes datos, lo dices. No repites lo que ya dijiste en esta conversación. No usas bullets, asteriscos ni markdown decorativo salvo que ayude de verdad a entender algo. Prosa directa siempre.
-
-Y una más: si el usuario está evitando algo obvio, lo nombras. Con respeto, pero sin rodeos."""
+No amplificas sus sesgos. No eres su cheerleader. No finges saber algo que no sabes. No repites lo que ya dijiste en esta conversación. Prosa directa. Sin markdown decorativo. Si el usuario está evitando algo obvio, lo nombras."""
 
 # ── CHAT ──────────────────────────────────────────────────────────────────────
 
@@ -583,18 +575,31 @@ def responder(usuario_id, username, nombre, user_input, history):
     user_con_formato = user_input + "\n\n[FORMATO: Prosa directa. Sin markdown innecesario. Sin repetir lo dicho antes.]"
     messages.append({"role": "user", "content": user_con_formato})
 
-    for model in [CHAT_MODEL, CHAT_MODEL_FALLBACK]:
+    # Intentar con Anthropic Sonnet primero
+    if anthropic_client:
         try:
-            resp = together.chat.completions.create(
-                model=model,
+            # Separar system del resto
+            sys_msg = messages[0]["content"] if messages and messages[0]["role"] == "system" else ""
+            user_msgs = [m for m in messages if m["role"] != "system"]
+            resp = anthropic_client.messages.create(
+                model=CHAT_MODEL,
                 max_tokens=1500,
-                messages=messages
+                system=sys_msg,
+                messages=user_msgs
             )
-            return resp.choices[0].message.content.strip()
+            return resp.content[0].text.strip()
         except Exception as e:
-            if model == CHAT_MODEL_FALLBACK:
-                return f"[Error: {e}]"
-            print(f"[ANNI] {model} falló, probando fallback")
+            print(f"[ANNI] Sonnet fallo: {e}, usando fallback")
+    # Fallback Together AI
+    try:
+        resp = together.chat.completions.create(
+            model=CHAT_MODEL_FALLBACK,
+            max_tokens=1500,
+            messages=messages
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"[Error: {e}]"
 
 # ── RUTAS ─────────────────────────────────────────────────────────────────────
 
@@ -626,7 +631,6 @@ def login():
         if row[1] != hash_password(password):
             return jsonify({'ok': False, 'error': 'Contraseña incorrecta.'})
 
-        # Recuperar nombre del usuario
         conn2 = sqlite3.connect(DB_PATH)
         c2 = conn2.cursor()
         c2.execute("SELECT nombre FROM usuarios WHERE id=?", (row[0],))
@@ -653,19 +657,19 @@ def registro():
             return jsonify({'ok': False, 'error': 'Introduce un email válido.'})
         if len(password) < 6:
             return jsonify({'ok': False, 'error': 'La contraseña debe tener al menos 6 caracteres.'})
-        username = username.lower()  # normalizar email a minúsculas
+        username = username.lower()
 
         try:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            nombre = data.get('nombre', '').strip()
-            if not nombre:
-                return jsonify({'ok': False, 'error': 'El nombre es obligatorio.'})
-            c.execute("INSERT INTO usuarios (username, nombre, password_hash) VALUES (?,?,?)",
-                      (username, nombre, hash_password(password)))
+            c.execute("INSERT INTO usuarios (username, password_hash) VALUES (?,?)",
+                      (username, hash_password(password)))
             usuario_id = c.lastrowid
             conn.commit()
             conn.close()
+            nombre = data.get('nombre', '').strip()
+            if not nombre:
+                return jsonify({'ok': False, 'error': 'El nombre es obligatorio.'})
             session['usuario_id'] = usuario_id
             session['username'] = username
             session['nombre'] = nombre
@@ -683,7 +687,9 @@ def logout():
 @app.route('/chat')
 @login_required
 def chat_page():
-    return make_response(CHAT_HTML)
+    html = CHAT_HTML.replace('__NOMBRE_USUARIO__', session.get('nombre', 'tu'))
+    html = html.replace('__ANNI_VERSION__', ANNI_VERSION)
+    return make_response(html)
 
 @app.route('/api/chat', methods=['POST'])
 @login_required
@@ -693,69 +699,39 @@ def api_chat():
     nombre = session.get('nombre', '')
     data = request.json or {}
     msg = data.get('message', '').strip()
-
     archivo = data.get('archivo')
     if not msg and not archivo:
         return jsonify({'response': ''})
-
-    # Gestión de conversación activa
     conv = get_conversacion_activa(usuario_id)
     if not conv:
         conv_id = nueva_conversacion(usuario_id)
     else:
         conv_id = conv[0]
-
-    # Primer mensaje — guardar nombre
-    es_primero = get_total_mensajes(usuario_id) == 0
-    if es_primero and nombre:
-        guardar_nombre_usuario(usuario_id, nombre)
-
-    # Procesar archivo adjunto
     msg_completo = msg
     if archivo:
         tipo = archivo.get('tipo', 'texto')
         nombre_arch = archivo.get('nombre', 'archivo')
         contenido = archivo.get('data', '')
         if tipo == 'imagen':
-            msg_completo = f"{msg}\n\n[IMAGEN ADJUNTA: {nombre_arch}]\n{contenido[:200]}"
+            msg_completo = f"{msg}\n\n[IMAGEN: {nombre_arch}]\n{contenido[:200]}"
         else:
-            texto_arch = contenido[:3000] if len(contenido) > 3000 else contenido
-            msg_completo = f"{msg}\n\n[ARCHIVO ADJUNTO: {nombre_arch}]\n{texto_arch}"
-
+            msg_completo = f"{msg}\n\n[ARCHIVO: {nombre_arch}]\n{contenido[:3000]}"
     save_mensaje(usuario_id, 'user', msg_completo)
     history = get_mensajes_recientes(usuario_id, 20)
     response = responder(usuario_id, username, nombre, msg_completo, history)
     save_mensaje(usuario_id, 'assistant', response)
-
-    # Analizar en background cada 5 mensajes
     total = get_total_mensajes(usuario_id)
     if total % 5 == 0:
-        threading.Thread(
-            target=analizar_conversacion,
-            args=(usuario_id, history),
-            daemon=True
-        ).start()
-
+        threading.Thread(target=analizar_conversacion, args=(usuario_id, history), daemon=True).start()
     return jsonify({'response': response, 'conv_id': conv_id})
 
 @app.route('/api/bienvenida')
 @login_required
 def api_bienvenida():
-    """Primer mensaje o intervención proactiva al abrir el chat."""
+    """Genera intervención proactiva al abrir el chat."""
     usuario_id = session['usuario_id']
-    nombre = session.get('nombre', '')
-    total = get_total_mensajes(usuario_id)
-
-    # Si no hay historial — bienvenida personalizada
-    if total == 0 and nombre:
-        guardar_nombre_usuario(usuario_id, nombre)
-        bienvenida = generar_bienvenida(nombre)
-        save_mensaje(usuario_id, 'assistant', bienvenida)
-        return jsonify({'intervencion': bienvenida, 'tipo': 'bienvenida'})
-
-    # Si hay historial — voz proactiva normal
     intervencion = generar_intervencion_proactiva(usuario_id)
-    return jsonify({'intervencion': intervencion, 'tipo': 'proactiva'})
+    return jsonify({'intervencion': intervencion})
 
 @app.route('/api/historial')
 @login_required
@@ -763,6 +739,13 @@ def api_historial():
     usuario_id = session['usuario_id']
     msgs = get_mensajes_recientes(usuario_id, 30)
     return jsonify({'messages': [{'role': r, 'content': c} for r, c in msgs]})
+
+@app.route('/api/conv-activa')
+@login_required
+def api_conv_activa():
+    usuario_id = session['usuario_id']
+    conv = get_conversacion_activa(usuario_id)
+    return jsonify({'id': conv[0] if conv else None})
 
 @app.route('/api/conversacion/nueva', methods=['POST'])
 @login_required
@@ -774,16 +757,65 @@ def api_nueva_conversacion():
 @app.route('/api/conversacion/cerrar', methods=['POST'])
 @login_required
 def api_cerrar_conversacion():
+    """Genera resumen pero NO lo guarda — devuelve para que Rafa apruebe."""
     usuario_id = session['usuario_id']
     data = request.json or {}
     conv_id = data.get('id')
     if not conv_id:
         conv = get_conversacion_activa(usuario_id)
         if conv: conv_id = conv[0]
-    if conv_id:
-        resumen = cerrar_conversacion(usuario_id, conv_id)
-        return jsonify({'ok': True, 'resumen': resumen})
-    return jsonify({'ok': False, 'error': 'No hay conversación activa'})
+    if not conv_id:
+        return jsonify({'ok': False, 'error': 'No hay conversacion activa'})
+    # Generar resumen sin guardar
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT ts_inicio FROM conversaciones WHERE id=? AND usuario_id=?", (conv_id, usuario_id))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return jsonify({'ok': False, 'error': 'Conversacion no encontrada'})
+    ts_inicio = row[0]
+    conn2 = sqlite3.connect(DB_PATH)
+    c2 = conn2.cursor()
+    c2.execute("SELECT role, content FROM mensajes WHERE usuario_id=? AND ts >= ? ORDER BY ts ASC", (usuario_id, ts_inicio))
+    msgs = c2.fetchall()
+    conn2.close()
+    if not msgs or len(msgs) < 2:
+        # Cerrar sin resumen
+        conn3 = sqlite3.connect(DB_PATH)
+        conn3.execute("UPDATE conversaciones SET activa=0, ts_fin=? WHERE id=?", (time.time(), conv_id))
+        conn3.commit()
+        conn3.close()
+        return jsonify({'ok': True, 'resumen': None, 'conv_id': conv_id})
+    texto = "\n".join([f"{'Usuario' if r=='user' else 'ANNI'}: {m[:500]}" for r,m in msgs[-20:]])
+    try:
+        resp = together.chat.completions.create(
+            model=CHAT_MODEL_FALLBACK,
+            max_tokens=400,
+            messages=[{"role": "user", "content": f"Resume esta conversacion en 3-5 frases. Incluye de que trato, que concluyo el usuario, y datos personales relevantes.\n\n{texto}\n\nResumen:"}]
+        )
+        resumen = resp.choices[0].message.content.strip()
+    except:
+        resumen = "Conversacion sin resumen."
+    return jsonify({'ok': True, 'resumen': resumen, 'conv_id': conv_id, 'pendiente': True})
+
+@app.route('/api/conversacion/guardar-resumen', methods=['POST'])
+@login_required
+def api_guardar_resumen():
+    """Guarda el resumen aprobado/editado por Rafa."""
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    conv_id = data.get('conv_id')
+    resumen = data.get('resumen', '').strip()
+    if not conv_id or not resumen:
+        return jsonify({'ok': False})
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE conversaciones SET activa=0, ts_fin=?, resumen=? WHERE id=? AND usuario_id=?",
+                 (time.time(), resumen, conv_id, usuario_id))
+    conn.commit()
+    conn.close()
+    threading.Thread(target=db_guardar_embedding, args=('conversaciones', conv_id, resumen), daemon=True).start()
+    return jsonify({'ok': True})
 
 @app.route('/api/memoria')
 @login_required
@@ -815,281 +847,667 @@ def cerrar_tema():
 
 # ── HTML ──────────────────────────────────────────────────────────────────────
 
-LOGIN_HTML = (
-    "<!DOCTYPE html>"
-    "<html lang='es'>"
-    "<head>"
-    "<meta charset='UTF-8'>"
-    "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
-    "<title>ANNI</title>"
-    "<style>"
-    "*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}"
-    "body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}"
-    ".wrap{width:100%;max-width:480px}"
-    ".logo{font-size:72px;font-weight:900;color:#cc0000;letter-spacing:-3px;line-height:1;margin-bottom:6px}"
-    ".ver{font-size:15px;color:#555;margin-bottom:4px}"
-    ".cred{font-size:13px;color:#999;margin-bottom:48px}"
-    ".card{background:#f5f5f5;border:1px solid #e0e0e0;border-radius:16px;padding:32px}"
-    ".err{background:#fff0f0;border:2px solid #cc0000;border-radius:10px;padding:14px 16px;font-size:16px;color:#cc0000;margin-bottom:20px;display:none;font-weight:500}"
-    "label{display:block;font-size:15px;font-weight:700;color:#111;margin-bottom:10px;margin-top:24px}"
-    "label:first-of-type{margin-top:0}"
-    "input{width:100%;background:#fff;border:2px solid #e0e0e0;border-radius:10px;padding:18px;color:#111;font-size:18px;outline:none;transition:border-color .2s;-webkit-appearance:none}"
-    "input:focus{border-color:#cc0000}"
-    ".btn{width:100%;background:#cc0000;color:#fff;border:none;border-radius:10px;padding:20px;font-size:18px;font-weight:700;cursor:pointer;margin-top:28px;-webkit-appearance:none;transition:background .2s}"
-    ".btn:active{background:#aa0000}"
-    ".lnk{text-align:center;margin-top:24px;font-size:15px;color:#555}"
-    ".lnk a{color:#cc0000;text-decoration:none;font-weight:700}"
-    "</style>"
-    "</head>"
-    "<body>"
-    "<div class='wrap'>"
-    "<div class='logo'>ANNI</div>"
-    "<div class='ver'>v1.0.0</div>"
-    "<div class='cred'>Created by Rafa Torrijos</div>"
-    "<div class='card'>"
-    "<div class='err' id='err'></div>"
-    "<label for='u'>Email</label>"
-    "<input type='email' id='u' placeholder='tu@email.com' autocomplete='email' autocapitalize='none' inputmode='email'>"
-    "<label for='p'>Contrase\u00f1a</label>"
-    "<input type='password' id='p' placeholder='\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' autocomplete='current-password'>"
-    "<button class='btn' onclick='go()'>ENTRAR</button>"
-    "<div class='lnk'>\u00bfPrimera vez? <a href='/registro'>Crear cuenta</a></div>"
-    "</div></div>"
-    "<script>"
-    "function go(){"
-    "var u=document.getElementById('u').value.trim();"
-    "var p=document.getElementById('p').value.trim();"
-    "var e=document.getElementById('err');"
-    "e.style.display='none';"
-    "fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})})"
-    ".then(r=>r.json()).then(d=>{"
-    "if(d.ok)window.location.href='/chat';"
-    "else{e.textContent=d.error;e.style.display='block';}"
-    "});}"
-    "document.addEventListener('keydown',e=>{if(e.key==='Enter')go();});"
-    "</script>"
-    "</body></html>"
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ANNI</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --border: #222222;
+    --text: #e8e4dc;
+    --sub: #6b6560;
+    --accent: #c9a96e;
+    --accent-dim: rgba(201,169,110,0.15);
+    --error: #c97070;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .container {
+    width: 100%;
+    max-width: 420px;
+  }
+  .logo {
+    font-family: 'DM Serif Display', serif;
+    font-size: 48px;
+    color: var(--accent);
+    letter-spacing: -1px;
+    margin-bottom: 8px;
+  }
+  .tagline {
+    color: var(--sub);
+    font-size: 13px;
+    font-weight: 300;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 48px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+  }
+  .field {
+    margin-bottom: 16px;
+  }
+  label {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--sub);
+    margin-bottom: 8px;
+  }
+  input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  input:focus { border-color: var(--accent); }
+  .btn {
+    width: 100%;
+    background: var(--accent);
+    color: #0a0a0a;
+    border: none;
+    border-radius: 8px;
+    padding: 14px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: opacity 0.2s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .link {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 13px;
+    color: var(--sub);
+  }
+  .link a { color: var(--accent); text-decoration: none; }
+  .error {
+    background: rgba(201,112,112,0.1);
+    border: 1px solid var(--error);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--error);
+    margin-bottom: 16px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">ANNI</div>
+  <div class="tagline">Tu socia cognitiva</div>
+  <div class="card">
+    <div class="error" id="err"></div>
+    <div class="field">
+      <label>Usuario</label>
+      <input type="text" id="username" placeholder="tu nombre de usuario" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>Contraseña</label>
+      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn" onclick="login()">ENTRAR</button>
+    <div class="link">¿Primera vez? <a href="/registro">Créate una cuenta</a></div>
+  </div>
+</div>
+<script>
+function login() {
+  var u = document.getElementById('username').value.trim();
+  var p = document.getElementById('password').value.trim();
+  var err = document.getElementById('err');
+  err.style.display = 'none';
+  fetch('/login', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({username: u, password: p})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) window.location.href = '/chat';
+    else { err.textContent = d.error; err.style.display = 'block'; }
+  });
+}
+document.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+</script>
+</body>
+</html>"""
+
+REGISTRO_HTML = LOGIN_HTML.replace(
+    "onclick=\"login()\"", "onclick=\"registro()\""
+).replace(
+    "ENTRAR", "CREAR CUENTA"
+).replace(
+    "¿Primera vez? <a href=\"/registro\">Créate una cuenta</a>",
+    "¿Ya tienes cuenta? <a href=\"/login\">Entra aquí</a>"
+).replace(
+    "autocomplete=\"current-password\"", "autocomplete=\"new-password\""
+).replace(
+    "function login()",
+    "function registro()"
+).replace(
+    "fetch('/login'",
+    "fetch('/registro'"
+).replace(
+    "<title>ANNI</title>",
+    "<title>ANNI — Registro</title>"
 )
 
-REGISTRO_HTML = (
-    "<!DOCTYPE html>"
-    "<html lang='es'>"
-    "<head>"
-    "<meta charset='UTF-8'>"
-    "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
-    "<title>ANNI \u2014 Registro</title>"
-    "<style>"
-    "*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}"
-    "body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}"
-    ".wrap{width:100%;max-width:480px}"
-    ".logo{font-size:72px;font-weight:900;color:#cc0000;letter-spacing:-3px;line-height:1;margin-bottom:6px}"
-    ".ver{font-size:15px;color:#555;margin-bottom:4px}"
-    ".cred{font-size:13px;color:#999;margin-bottom:48px}"
-    ".card{background:#f5f5f5;border:1px solid #e0e0e0;border-radius:16px;padding:32px}"
-    ".err{background:#fff0f0;border:2px solid #cc0000;border-radius:10px;padding:14px 16px;font-size:16px;color:#cc0000;margin-bottom:20px;display:none;font-weight:500}"
-    "label{display:block;font-size:15px;font-weight:700;color:#111;margin-bottom:10px;margin-top:24px}"
-    "label:first-of-type{margin-top:0}"
-    "input{width:100%;background:#fff;border:2px solid #e0e0e0;border-radius:10px;padding:18px;color:#111;font-size:18px;outline:none;transition:border-color .2s;-webkit-appearance:none}"
-    "input:focus{border-color:#cc0000}"
-    ".btn{width:100%;background:#cc0000;color:#fff;border:none;border-radius:10px;padding:20px;font-size:18px;font-weight:700;cursor:pointer;margin-top:28px;-webkit-appearance:none;transition:background .2s}"
-    ".btn:active{background:#aa0000}"
-    ".lnk{text-align:center;margin-top:24px;font-size:15px;color:#555}"
-    ".lnk a{color:#cc0000;text-decoration:none;font-weight:700}"
-    "</style>"
-    "</head>"
-    "<body>"
-    "<div class='wrap'>"
-    "<div class='logo'>ANNI</div>"
-    "<div class='ver'>v1.0.0</div>"
-    "<div class='cred'>Created by Rafa Torrijos</div>"
-    "<div class='card'>"
-    "<div class='err' id='err'></div>"
-    "<label for='n'>C\u00f3mo te llamas</label>"
-    "<input type='text' id='n' placeholder='tu nombre' autocomplete='given-name' autocapitalize='words'>"
-    "<label for='u'>Tu email</label>"
-    "<input type='email' id='u' placeholder='tu@email.com' autocomplete='email' autocapitalize='none' inputmode='email'>"
-    "<label for='p'>Elige una contrase\u00f1a</label>"
-    "<input type='password' id='p' placeholder='m\u00ednimo 6 caracteres' autocomplete='new-password'>"
-    "<button class='btn' onclick='go()'>CREAR CUENTA</button>"
-    "<div class='lnk'>\u00bfYa tienes cuenta? <a href='/login'>Entra aqu\u00ed</a></div>"
-    "</div></div>"
-    "<script>"
-    "function go(){"
-    "var u=document.getElementById('u').value.trim();"
-    "var p=document.getElementById('p').value.trim();"
-    "var e=document.getElementById('err');"
-    "e.style.display='none';"
-    "var n=document.getElementById('n').value.trim();""fetch('/registro',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nombre:n,username:u,password:p})})"
-    ".then(r=>r.json()).then(d=>{"
-    "if(d.ok)window.location.href='/chat';"
-    "else{e.textContent=d.error;e.style.display='block';}"
-    "});}"
-    "document.addEventListener('keydown',e=>{if(e.key==='Enter')go();});"
-    "</script>"
-    "</body></html>"
-)
+CHAT_HTML = """<!DOCTYPE html>
+<html lang='es'>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0'>
+<title>ANNI</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;display:flex;flex-direction:row}
+/* SIDEBAR */
+#sb{width:54px;min-height:100vh;background:#f5f5f5;border-right:2px solid #e8e8e8;display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:8px;flex-shrink:0;transition:width .2s}
+.sb-btn{width:38px;height:38px;background:none;border:2px solid #e0e0e0;border-radius:10px;cursor:pointer;font-size:11px;font-weight:700;color:#555;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1.2;padding:2px;-webkit-appearance:none}
+.sb-btn:active,.sb-btn:hover{background:#e8e8e8}
+.sb-btn.red{color:#cc0000;border-color:#ffcccc}
+/* MAIN AREA */
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+header{padding:12px 16px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff}
+.logo-wrap{display:flex;flex-direction:column;gap:1px}
+.logo{font-size:26px;font-weight:900;color:#cc0000;letter-spacing:-1px;line-height:1}
+.logo-sub{font-size:10px;color:#999;letter-spacing:0.3px;line-height:1.4}
+.hr{display:flex;align-items:center;gap:8px}
+.st{font-size:13px;color:#888}
+.btn-conv{font-size:13px;font-weight:700;border-radius:8px;padding:8px 12px;cursor:pointer;border:2px solid;-webkit-appearance:none}
+.btn-conv.verde{background:#fff;color:#228822;border-color:#228822}
+.btn-conv.rojo{background:#cc0000;color:#fff;border-color:#cc0000}
+.conv-info{font-size:12px;color:#888;white-space:nowrap}
+a.btn-salir{font-size:13px;font-weight:600;color:#555;text-decoration:none;padding:8px 10px;border:2px solid #e0e0e0;border-radius:8px}
+/* CHAT */
+#chat{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:20px;-webkit-overflow-scrolling:touch;max-width:760px;width:100%;margin:0 auto;align-self:center}
+.msg-anni{display:flex;flex-direction:column;gap:4px;align-self:flex-start;max-width:85%}
+.msg-anni .lbl{font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#999}
+.msg-anni .txt{font-size:17px;line-height:1.7;color:#111;white-space:pre-wrap;word-break:break-word}
+.msg-user{display:flex;flex-direction:column;gap:4px;align-self:flex-end;max-width:85%;align-items:flex-end}
+.msg-user .lbl{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#cc0000}
+.msg-user .burbuja{background:#cc0000;color:#fff;border-radius:16px 16px 4px 16px;padding:14px 18px;font-size:17px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.pro{background:#fff5f5;border:2px solid #ffcccc;border-left:4px solid #cc0000;border-radius:12px;padding:16px 18px;font-size:17px;color:#111;line-height:1.7;font-weight:500;max-width:85%}
+.resumen-msg{background:#f0fff0;border:2px solid #bbddbb;border-radius:12px;padding:14px 16px;font-size:15px;color:#335533;line-height:1.6;max-width:90%}
+.typing{display:flex;gap:6px;align-items:center;padding:8px 0}
+.typing span{width:8px;height:8px;background:#ccc;border-radius:50%;animation:b 1.2s infinite}
+.typing span:nth-child(2){animation-delay:.2s}
+.typing span:nth-child(3){animation-delay:.4s}
+@keyframes b{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+/* INPUT */
+#ia{border-top:2px solid #e8e8e8;padding:12px 16px;padding-bottom:max(12px,env(safe-area-inset-bottom));flex-shrink:0;background:#fff}
+#preview{max-width:760px;margin:0 auto 6px;font-size:13px;color:#cc0000;display:none}
+.ir{display:flex;gap:8px;align-items:flex-end;max-width:760px;margin:0 auto}
+.clip{background:none;border:2px solid #e0e0e0;border-radius:10px;padding:11px 13px;cursor:pointer;flex-shrink:0;font-size:15px;color:#888;-webkit-appearance:none}
+.clip:active{background:#f5f5f5}
+textarea{flex:1;background:#f5f5f5;border:2px solid #e0e0e0;border-radius:12px;padding:13px 15px;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:17px;resize:none;outline:none;line-height:1.5;max-height:140px;-webkit-appearance:none;transition:border-color .2s}
+textarea:focus{border-color:#cc0000}
+textarea::placeholder{color:#aaa}
+button#s{background:#cc0000;color:#fff;border:none;border-radius:10px;padding:13px 18px;font-size:16px;font-weight:700;cursor:pointer;flex-shrink:0;-webkit-appearance:none;min-width:76px}
+button#s:active{background:#aa0000}
+button#s:disabled{background:#ccc;cursor:not-allowed}
+#finput{display:none}
+/* MODAL */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:20px}
+.modal-bg.open{display:flex}
+.modal{background:#fff;border-radius:16px;padding:28px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto}
+.modal h2{font-size:20px;font-weight:800;margin-bottom:16px;color:#111}
+.modal textarea{width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:14px;font-size:15px;line-height:1.6;resize:vertical;min-height:120px;outline:none;font-family:inherit}
+.modal textarea:focus{border-color:#cc0000}
+.modal-btns{display:flex;gap:10px;margin-top:16px;justify-content:flex-end}
+.modal-btns button{padding:12px 20px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;border:2px solid;-webkit-appearance:none}
+.btn-ok{background:#cc0000;color:#fff;border-color:#cc0000}
+.btn-cancel{background:#fff;color:#555;border-color:#e0e0e0}
+.btn-descartar{background:#fff;color:#888;border-color:#e0e0e0}
+/* PÁGINA LATERAL */
+#page{display:none;position:fixed;inset:0;background:#fff;z-index:900;flex-direction:column}
+#page.open{display:flex}
+.page-header{padding:16px 20px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.page-header h1{font-size:22px;font-weight:900;color:#111}
+.page-close{font-size:14px;font-weight:700;color:#cc0000;cursor:pointer;padding:8px 14px;border:2px solid #ffcccc;border-radius:8px;background:none}
+.page-body{flex:1;overflow-y:auto;padding:20px;max-width:760px;width:100%;margin:0 auto}
+.item-card{border:1px solid #e8e8e8;border-radius:12px;padding:16px;margin-bottom:14px}
+.item-meta{font-size:12px;color:#999;margin-bottom:6px}
+.item-content{font-size:15px;line-height:1.6;color:#111}
+.item-actions{display:flex;gap:8px;margin-top:10px}
+.btn-edit,.btn-del{font-size:12px;font-weight:700;padding:6px 12px;border-radius:6px;cursor:pointer;border:2px solid;-webkit-appearance:none;background:none}
+.btn-edit{color:#555;border-color:#e0e0e0}
+.btn-del{color:#cc0000;border-color:#ffcccc}
+.pager{display:flex;gap:8px;justify-content:center;margin-top:20px}
+.pager button{padding:8px 14px;border:2px solid #e0e0e0;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;background:#fff;color:#555}
+.pager button.active{background:#cc0000;color:#fff;border-color:#cc0000}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:13px;font-weight:700;margin-bottom:6px;color:#555}
+.form-group input,.form-group textarea{width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:12px 14px;font-size:15px;outline:none;font-family:inherit}
+.form-group input:focus,.form-group textarea:focus{border-color:#cc0000}
+.dia-badge{background:#cc0000;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;display:inline-block;margin-bottom:6px}
+@media(max-width:600px){#sb{width:46px}.sb-btn{width:34px;height:34px;font-size:10px}header{padding:10px 12px}.logo{font-size:22px}.conv-info{display:none}#chat{padding:16px;gap:16px}.msg-anni .txt,.msg-user .burbuja,.pro{font-size:16px}textarea{font-size:16px}.btn-conv{padding:7px 10px;font-size:12px}}
+</style>
+</head>
+<body>
+<!-- SIDEBAR -->
+<div id='sb'>
+  <button class='sb-btn' onclick='showPage("hitos")' title='Hitos'>HITOs</button>
+  <button class='sb-btn' onclick='showPage("chats")' title='Chats'>CHATS</button>
+  <button class='sb-btn' onclick='showPage("diario")' title='Diario'>DIA-RIO</button>
+  <button class='sb-btn' onclick='descargarBD()' title='Descargar BD'>BD</button>
+</div>
+<!-- MAIN -->
+<div id='main'>
+<header>
+<div class='logo-wrap'>
+<div class='logo'>ANNI</div>
+<div class='logo-sub'>v__ANNI_VERSION__ &middot; IA con memoria persistente &middot; creada por Rafa Torrijos</div>
+</div>
+<div class='hr'>
+<span class='st' id='st'>conectada</span>
+<span class='conv-info' id='conv-info'></span>
+<button class='btn-conv verde' id='btn-conv' onclick='toggleConv()'>EMPEZAR</button>
+<a href='/logout' class='btn-salir'>Salir</a>
+</div>
+</header>
+<div id='chat'></div>
+<div id='ia'>
+<div id='preview'></div>
+<div class='ir'>
+<button class='clip' onclick='document.getElementById("finput").click()' title='Adjuntar'>[+]</button>
+<input type='file' id='finput' accept='image/*,.pdf,.txt,.doc,.docx' onchange='archivoSel(this)'>
+<textarea id='inp' placeholder='Habla con Anni...' rows='1'></textarea>
+<button id='s' onclick='env()'>Enviar</button>
+</div>
+</div>
+</div>
 
-CHAT_HTML = (
-    "<!DOCTYPE html>"
-    "<html lang='es'>"
-    "<head>"
-    "<meta charset='UTF-8'>"
-    "<meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0'>"
-    "<title>ANNI</title>"
-    "<style>"
-    "*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}"
-    "html,body{height:100%;overflow:hidden}"
-    "body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;display:flex;flex-direction:column}"
-    "header{padding:12px 20px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff}"
-    ".logo{font-size:28px;font-weight:900;color:#cc0000;letter-spacing:-1px}"
-    ".hr{display:flex;align-items:center;gap:8px}"
-    ".st{font-size:13px;color:#888}"
-    ".btn-hdr{font-size:13px;font-weight:600;color:#555;background:none;border:2px solid #e0e0e0;border-radius:8px;padding:7px 12px;cursor:pointer;white-space:nowrap}"
-    ".btn-hdr:active{background:#f5f5f5}"
-    ".btn-hdr.red{color:#cc0000;border-color:#ffcccc}"
-    "a.btn-hdr{text-decoration:none}"
-    "#chat{flex:1;overflow-y:auto;padding:24px 20px;display:flex;flex-direction:column;gap:28px;-webkit-overflow-scrolling:touch;max-width:760px;width:100%;margin:0 auto;align-self:center}"
-    ".msg{display:flex;flex-direction:column;gap:6px}"
-    ".mr{font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#999}"
-    ".msg.user .mr{color:#cc0000}"
-    ".mc{font-size:17px;line-height:1.7;color:#111;white-space:pre-wrap;word-break:break-word}"
-    ".msg.user .mc{background:#f5f5f5;border-radius:12px;padding:14px 16px}"
-    ".pro{background:#fff5f5;border:2px solid #ffcccc;border-left:4px solid #cc0000;border-radius:12px;padding:16px 18px;font-size:17px;color:#111;line-height:1.7;font-weight:500}"
-    ".adjunto{font-size:13px;color:#888;background:#f5f5f5;border-radius:8px;padding:6px 10px;margin-top:6px;display:inline-block}"
-    ".resumen{background:#f0fff0;border:2px solid #bbddbb;border-radius:12px;padding:14px 16px;font-size:15px;color:#335533;line-height:1.6;margin:8px 0}"
-    ".typing{display:flex;gap:6px;align-items:center;padding:8px 0}"
-    ".typing span{width:8px;height:8px;background:#ccc;border-radius:50%;animation:b 1.2s infinite}"
-    ".typing span:nth-child(2){animation-delay:.2s}"
-    ".typing span:nth-child(3){animation-delay:.4s}"
-    "@keyframes b{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}"
-    "#ia{border-top:2px solid #e8e8e8;padding:12px 16px;padding-bottom:max(12px,env(safe-area-inset-bottom));flex-shrink:0;background:#fff}"
-    "#preview{max-width:760px;margin:0 auto 8px;font-size:13px;color:#cc0000;display:none}"
-    ".ir{display:flex;gap:8px;align-items:flex-end;max-width:760px;margin:0 auto}"
-    ".clip{background:none;border:2px solid #e0e0e0;border-radius:10px;padding:12px;cursor:pointer;flex-shrink:0;font-size:20px;line-height:1;color:#888;-webkit-appearance:none}"
-    ".clip:active{background:#f5f5f5}"
-    "textarea{flex:1;background:#f5f5f5;border:2px solid #e0e0e0;border-radius:12px;padding:14px 16px;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:17px;resize:none;outline:none;line-height:1.5;max-height:140px;-webkit-appearance:none;transition:border-color .2s}"
-    "textarea:focus{border-color:#cc0000}"
-    "textarea::placeholder{color:#aaa}"
-    "button#s{background:#cc0000;color:#fff;border:none;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:700;cursor:pointer;flex-shrink:0;-webkit-appearance:none;min-width:76px}"
-    "button#s:active{background:#aa0000}"
-    "button#s:disabled{background:#ccc;cursor:not-allowed}"
-    "#finput{display:none}"
-    "@media(max-width:600px){header{padding:10px 14px}.btn-hdr{padding:6px 10px;font-size:12px}#chat{padding:16px;gap:20px}.mc{font-size:16px}.pro{font-size:16px}textarea{font-size:16px}}"
-    "</style>"
-    "</head>"
-    "<body>"
-    "<header>"
-    "<div class='logo'>ANNI</div>"
-    "<div class='hr'>"
-    "<span class='st' id='st'>conectada</span>"
-    "<button class='btn-hdr' onclick='nuevaConv()'>Nueva</button>"
-    "<button class='btn-hdr red' onclick='cerrarConv()'>Cerrar</button>"
-    "<a href='/logout' class='btn-hdr'>Salir</a>"
-    "</div>"
-    "</header>"
-    "<div id='chat'></div>"
-    "<div id='ia'>"
-    "<div id='preview'></div>"
-    "<div class='ir'>"
-    "<button class='clip' onclick='document.getElementById(\"finput\").click()' title='Adjuntar archivo'>[+]</button>"
-    "<input type='file' id='finput' accept='image/*,.pdf,.txt,.doc,.docx' onchange='archivoSeleccionado(this)'>"
-    "<textarea id='inp' placeholder='Escribe aqu\u00ed...' rows='1'></textarea>"
-    "<button id='s' onclick='env()'>Enviar</button>"
-    "</div>"
-    "</div>"
-    "<script>"
-    "var C=document.getElementById('chat');"
-    "var I=document.getElementById('inp');"
-    "var S=document.getElementById('s');"
-    "var ST=document.getElementById('st');"
-    "var PRV=document.getElementById('preview');"
-    "var archivoData=null;var archivoNombre='';"
-    "var convActiva=null;"
-    # Añadir mensaje al chat
-    "function add(role,txt,tipo){"
-    "var d=document.createElement('div');"
-    "d.className='msg '+(role==='user'?'user':'anni');"
-    "if(tipo==='pro'||tipo==='bienvenida'){"
-    "var p=document.createElement('div');p.className='pro';p.textContent=txt;d.appendChild(p);"
-    "}else if(tipo==='resumen'){"
-    "var p=document.createElement('div');p.className='resumen';"
-    "p.textContent='[resumen] Resumen: '+txt;d.appendChild(p);"
-    "}else{"
-    "var r=document.createElement('div');r.className='mr';r.textContent=role==='user'?'t\u00fa':'anni';d.appendChild(r);"
-    "var c=document.createElement('div');c.className='mc';c.textContent=txt;d.appendChild(c);"
-    "}"
-    "C.appendChild(d);C.scrollTop=C.scrollHeight;return d;}"
-    # Typing indicator
-    "function typing(){var d=document.createElement('div');d.className='msg anni';d.id='ty';"
-    "var t=document.createElement('div');t.className='typing';"
-    "t.innerHTML='<span></span><span></span><span></span>';"
-    "d.appendChild(t);C.appendChild(d);C.scrollTop=C.scrollHeight;}"
-    "function rmtyp(){var t=document.getElementById('ty');if(t)t.remove();}"
-    # Archivo seleccionado
-    "function archivoSeleccionado(input){"
-    "var f=input.files[0];if(!f)return;"
-    "archivoNombre=f.name;"
-    "PRV.style.display='block';"
-    "PRV.textContent='[clip] '+f.name;"
-    "var reader=new FileReader();"
-    "if(f.type.startsWith('image/')){"
-    "reader.onload=function(e){archivoData={tipo:'imagen',data:e.target.result,nombre:f.name};};"
-    "reader.readAsDataURL(f);"
-    "}else{"
-    "reader.onload=function(e){archivoData={tipo:'texto',data:e.target.result,nombre:f.name};};"
-    "reader.readAsText(f);"
-    "}}"
-    # Enviar mensaje
-    "function env(){"
-    "var msg=I.value.trim();"
-    "if(!msg&&!archivoData)return;"
-    "var displayMsg=msg+(archivoData?' [[clip] '+archivoData.nombre+']':'');"
-    "I.value='';I.style.height='auto';S.disabled=true;ST.textContent='pensando...';"
-    "add('user',displayMsg);"
-    "PRV.style.display='none';"
-    "typing();"
-    "var body={message:msg};"
-    "if(archivoData){body.archivo=archivoData;}"
-    "archivoData=null;archivoNombre='';"
-    "document.getElementById('finput').value='';"
-    "fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})"
-    ".then(r=>r.json()).then(d=>{"
-    "rmtyp();add('anni',d.response||'');"
-    "if(d.conv_id)convActiva=d.conv_id;"
-    "S.disabled=false;ST.textContent='conectada';I.focus();})"
-    ".catch(e=>{rmtyp();add('anni','Error de conexi\u00f3n. Intenta de nuevo.');S.disabled=false;ST.textContent='error';});}"
-    # Nueva conversación
-    "function nuevaConv(){"
-    "if(!confirm('¿Empezar conversación nueva?'))return;"
-    "fetch('/api/conversacion/nueva',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})"
-    ".then(r=>r.json()).then(d=>{"
-    "if(d.ok){convActiva=d.id;C.innerHTML='';add('anni','Conversaci\u00f3n nueva. \u00bfDe qu\u00e9 quieres hablar?');}})"
-    ".catch(e=>alert('Error al crear conversaci\u00f3n'));}"
-    # Cerrar conversación
-    "function cerrarConv(){"
-    "if(!confirm('¿Cerrar y resumir esta conversación?'))return;"
-    "ST.textContent='resumiendo...';"
-    "var body=convActiva?{id:convActiva}:{};"
-    "fetch('/api/conversacion/cerrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})"
-    ".then(r=>r.json()).then(d=>{"
-    "ST.textContent='conectada';"
-    "if(d.ok&&d.resumen){add('anni',d.resumen,'resumen');convActiva=null;}"
-    "else{add('anni','No hay conversaci\u00f3n activa para cerrar.');}})"
-    ".catch(e=>{ST.textContent='error';});}"
-    # Keyboard
-    "I.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();env();}});"
-    "I.addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,140)+'px';});"
-    # Cargar historial y bienvenida
-    "fetch('/api/historial').then(r=>r.json()).then(d=>{"
-    "if(d.messages&&d.messages.length)d.messages.forEach(m=>add(m.role,m.content));"
-    "fetch('/api/bienvenida').then(r=>r.json()).then(b=>{"
-    "if(b.intervencion)add('anni',b.intervencion,b.tipo||'pro');});"
-    "});"
-    "</script>"
-    "</body></html>"
-)
+<!-- MODAL RESUMEN -->
+<div class='modal-bg' id='modal-resumen'>
+<div class='modal'>
+<h2>Resumen de la conversacion</h2>
+<p style='font-size:14px;color:#888;margin-bottom:12px'>Revisa y edita antes de guardar.</p>
+<textarea id='resumen-txt' rows='6'></textarea>
+<div class='modal-btns'>
+<button class='btn-descartar' onclick='descartarResumen()'>Descartar</button>
+<button class='btn-ok' onclick='guardarResumen()'>Guardar</button>
+</div>
+</div>
+</div>
 
+<!-- MODAL HITO -->
+<div class='modal-bg' id='modal-hito'>
+<div class='modal'>
+<h2>Nuevo hito detectado</h2>
+<p style='font-size:14px;color:#888;margin-bottom:8px' id='hito-evidencia'></p>
+<textarea id='hito-txt' rows='3'></textarea>
+<div class='modal-btns'>
+<button class='btn-cancel' onclick='rechazarHito()'>No guardar</button>
+<button class='btn-ok' onclick='aprobarHito()'>Guardar hito</button>
+</div>
+</div>
+</div>
 
+<!-- MODAL DESCARGA BD -->
+<div class='modal-bg' id='modal-bd'>
+<div class='modal'>
+<h2>Descargar base de datos</h2>
+<p style='font-size:14px;color:#888;margin-bottom:12px'>Introduce tu contrasena para confirmar.</p>
+<input type='password' id='bd-pwd' placeholder='tu contrasena' style='width:100%;border:2px solid #e0e0e0;border-radius:10px;padding:14px;font-size:16px;outline:none;margin-bottom:4px'>
+<div id='bd-err' style='color:#cc0000;font-size:13px;margin-bottom:8px;display:none'></div>
+<div class='modal-btns'>
+<button class='btn-cancel' onclick='closeMod("modal-bd")'>Cancelar</button>
+<button class='btn-ok' onclick='confirmarDescarga()'>Descargar</button>
+</div>
+</div>
+</div>
+
+<!-- PÁGINAS LATERALES -->
+<div id='page' class=''>
+<div class='page-header'>
+<h1 id='page-title'>Hitos</h1>
+<button class='page-close' onclick='closePage()'>Cerrar</button>
+</div>
+<div class='page-body' id='page-body'></div>
+</div>
+
+<script>
+var C=document.getElementById('chat');
+var I=document.getElementById('inp');
+var S=document.getElementById('s');
+var ST=document.getElementById('st');
+var PRV=document.getElementById('preview');
+var BTNCONV=document.getElementById('btn-conv');
+var CONVINFO=document.getElementById('conv-info');
+var convActiva=null;var convNum=0;
+var pendResumen=null;var pendHito=null;
+var NOMBRE='__NOMBRE_USUARIO__';
+
+function ts(){
+var d=new Date();
+var dd=String(d.getDate()).padStart(2,'0');
+var mm=String(d.getMonth()+1).padStart(2,'0');
+var yy=d.getFullYear();
+var hh=String(d.getHours()).padStart(2,'0');
+var mi=String(d.getMinutes()).padStart(2,'0');
+return dd+'/'+mm+'/'+yy+' '+hh+':'+mi;}
+
+function updateBtn(){
+if(convActiva){
+BTNCONV.textContent='CERRAR';BTNCONV.className='btn-conv rojo';
+CONVINFO.textContent='Chat #'+convNum;
+}else{
+BTNCONV.textContent='EMPEZAR';BTNCONV.className='btn-conv verde';
+CONVINFO.textContent='';}}
+
+function toggleConv(){if(convActiva){cerrarConv();}else{nuevaConv();}}
+
+function add(role,txt,tipo){
+var d=document.createElement('div');
+if(tipo==='pro'||tipo==='bienvenida'){
+d.className='pro';d.textContent=txt;
+}else if(tipo==='resumen'){
+d.className='resumen-msg';d.textContent='Resumen guardado: '+txt;
+}else if(role==='user'){
+d.className='msg-user';
+var lbl=document.createElement('div');lbl.className='lbl';lbl.textContent=NOMBRE.toUpperCase()+' - '+ts();
+var bur=document.createElement('div');bur.className='burbuja';bur.textContent=txt;
+d.appendChild(lbl);d.appendChild(bur);
+}else{
+d.className='msg-anni';
+var lbl=document.createElement('div');lbl.className='lbl';lbl.textContent='ANNI';
+var t=document.createElement('div');t.className='txt';t.textContent=txt;
+d.appendChild(lbl);d.appendChild(t);}
+C.appendChild(d);C.scrollTop=C.scrollHeight;return d;}
+
+function typing(){
+var d=document.createElement('div');d.className='msg-anni';d.id='ty';
+var t=document.createElement('div');t.className='typing';
+t.innerHTML='<span></span><span></span><span></span>';
+d.appendChild(t);C.appendChild(d);C.scrollTop=C.scrollHeight;}
+function rmtyp(){var t=document.getElementById('ty');if(t)t.remove();}
+
+var archivoData=null;
+function archivoSel(input){
+var f=input.files[0];if(!f)return;
+PRV.style.display='block';PRV.textContent='Adjunto: '+f.name;
+var reader=new FileReader();
+if(f.type.startsWith('image/')){
+reader.onload=function(e){archivoData={tipo:'imagen',data:e.target.result,nombre:f.name};};
+reader.readAsDataURL(f);
+}else{
+reader.onload=function(e){archivoData={tipo:'texto',data:e.target.result,nombre:f.name};};
+reader.readAsText(f);}}
+
+function env(){
+var msg=I.value.trim();
+if(!msg&&!archivoData)return;
+var disp=msg+(archivoData?' ['+archivoData.nombre+']':'');
+I.value='';I.style.height='auto';S.disabled=true;ST.textContent='pensando...';
+add('user',disp);PRV.style.display='none';typing();
+var body={message:msg};
+if(archivoData){body.archivo=archivoData;}
+var lastMsg=msg;var lastArch=archivoData?archivoData.nombre:'';
+archivoData=null;document.getElementById('finput').value='';
+fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+.then(r=>r.json()).then(d=>{
+rmtyp();
+var resp=d.response||'';
+add('anni',resp);
+if(d.conv_id&&!convActiva){convActiva=d.conv_id;convNum=d.conv_id;updateBtn();}
+S.disabled=false;ST.textContent='conectada';I.focus();
+// Detectar hito
+if(lastMsg&&resp){
+fetch('/api/detectar-hito',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({mensaje:lastMsg,respuesta:resp})})
+.then(r=>r.json()).then(h=>{if(h.hito&&h.hito.hito)mostrarModalHito(h.hito);})
+.catch(()=>{});}
+})
+.catch(e=>{rmtyp();add('anni','Error de conexion.');S.disabled=false;ST.textContent='error';});}
+
+function nuevaConv(){
+fetch('/api/conversacion/nueva',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+.then(r=>r.json()).then(d=>{
+if(d.ok){convActiva=d.id;convNum=d.id;updateBtn();C.innerHTML='';
+add('anni','Conversacion nueva. De que quieres hablar?');}});}
+
+function cerrarConv(){
+if(!convActiva)return;
+ST.textContent='generando resumen...';
+fetch('/api/conversacion/cerrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:convActiva})})
+.then(r=>r.json()).then(d=>{
+ST.textContent='conectada';
+if(d.ok&&d.resumen&&d.pendiente){
+pendResumen={conv_id:d.conv_id,resumen:d.resumen};
+document.getElementById('resumen-txt').value=d.resumen;
+document.getElementById('modal-resumen').classList.add('open');
+}else{
+convActiva=null;updateBtn();
+add('anni','Conversacion cerrada.');
+}})
+.catch(e=>{ST.textContent='error';});}
+
+function guardarResumen(){
+var txt=document.getElementById('resumen-txt').value.trim();
+if(!txt||!pendResumen)return;
+fetch('/api/conversacion/guardar-resumen',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({conv_id:pendResumen.conv_id,resumen:txt})})
+.then(r=>r.json()).then(d=>{
+document.getElementById('modal-resumen').classList.remove('open');
+convActiva=null;updateBtn();
+add('anni',txt,'resumen');
+pendResumen=null;});}
+
+function descartarResumen(){
+if(!pendResumen)return;
+fetch('/api/conversacion/guardar-resumen',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({conv_id:pendResumen.conv_id,resumen:'[Descartado por el usuario]'})})
+.then(()=>{});
+document.getElementById('modal-resumen').classList.remove('open');
+convActiva=null;updateBtn();pendResumen=null;
+add('anni','Conversacion cerrada sin guardar resumen.');}
+
+function mostrarModalHito(h){
+pendHito=h;
+document.getElementById('hito-txt').value=h.contenido;
+document.getElementById('hito-evidencia').textContent=h.evidencia?'"'+h.evidencia+'"':'';
+document.getElementById('modal-hito').classList.add('open');}
+
+function aprobarHito(){
+var txt=document.getElementById('hito-txt').value.trim();
+if(!txt||!pendHito)return;
+fetch('/api/hitos/aprobar',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({contenido:txt,tipo:pendHito.tipo,evidencia:pendHito.evidencia||''})})
+.then(r=>r.json()).then(d=>{
+document.getElementById('modal-hito').classList.remove('open');
+pendHito=null;});}
+
+function rechazarHito(){
+document.getElementById('modal-hito').classList.remove('open');
+pendHito=null;}
+
+function closeMod(id){document.getElementById(id).classList.remove('open');}
+
+function descargarBD(){
+document.getElementById('bd-pwd').value='';
+document.getElementById('bd-err').style.display='none';
+document.getElementById('modal-bd').classList.add('open');}
+
+function confirmarDescarga(){
+var pwd=document.getElementById('bd-pwd').value.trim();
+var err=document.getElementById('bd-err');
+err.style.display='none';
+fetch('/api/descargar-bd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})})
+.then(r=>{
+if(!r.ok)return r.json().then(d=>{throw d;});
+return r.blob();})
+.then(blob=>{
+var url=URL.createObjectURL(blob);
+var a=document.createElement('a');a.href=url;a.download='anni_backup.db';a.click();
+URL.revokeObjectURL(url);
+document.getElementById('modal-bd').classList.remove('open');})
+.catch(d=>{err.textContent=d.error||'Error';err.style.display='block';});}
+
+/* PÁGINAS */
+var currentPage=1;var currentSection='';
+function showPage(sec){
+currentSection=sec;currentPage=1;
+var titles={'hitos':'Hitos del usuario','chats':'Conversaciones','diario':'Diario'};
+document.getElementById('page-title').textContent=titles[sec]||sec;
+document.getElementById('page').classList.add('open');
+loadPage(sec,1);}
+function closePage(){document.getElementById('page').classList.remove('open');}
+
+function loadPage(sec,page){
+var body=document.getElementById('page-body');
+body.innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
+if(sec==='hitos')loadHitos(page);
+else if(sec==='chats')loadChats(page);
+else if(sec==='diario')loadDiario(page);}
+
+function loadHitos(page){
+fetch('/api/hitos?page='+page).then(r=>r.json()).then(d=>{
+var body=document.getElementById('page-body');
+body.innerHTML='';
+if(!d.hitos.length){body.innerHTML='<p style="color:#999;padding:20px">Sin hitos guardados aun.</p>';return;}
+d.hitos.forEach(function(h){
+var card=document.createElement('div');card.className='item-card';
+card.innerHTML='<div class="item-meta">#'+h.id+' &middot; ['+h.tipo+'] &middot; '+h.ts+'</div>'+
+'<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+
+(h.evidencia?'<div style="font-size:13px;color:#888;margin-top:6px;font-style:italic">"'+escH(h.evidencia)+'"</div>':'')+
+'<div class="item-actions">'+
+'<button class="btn-edit" onclick="editHito('+h.id+')">Editar</button>'+
+'<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
+'</div>';
+body.appendChild(card);});
+body.appendChild(pagerEl(d.pages,page,'loadHitos'));});}
+
+function editHito(id){
+var el=document.getElementById('hc-'+id);
+var txt=el.textContent;
+el.innerHTML='<textarea style="width:100%;border:2px solid #cc0000;border-radius:8px;padding:10px;font-size:15px;font-family:inherit" rows="3">'+escH(txt)+'</textarea>'+
+'<div style="margin-top:8px;display:flex;gap:8px">'+
+'<button class="btn-edit" onclick="saveHito('+id+', this)">Guardar</button>'+
+'<button class="btn-del" onclick="loadHitos('+currentPage+')">Cancelar</button></div>';}
+
+function saveHito(id,btn){
+var ta=btn.parentElement.previousElementSibling;
+var txt=ta.value.trim();if(!txt)return;
+fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({contenido:txt})})
+.then(()=>loadHitos(currentPage));}
+
+function delHito(id){
+if(!confirm('Borrar este hito?'))return;
+fetch('/api/hitos/'+id,{method:'DELETE'}).then(()=>loadHitos(currentPage));}
+
+function loadChats(page){
+fetch('/api/chats?page='+page).then(r=>r.json()).then(d=>{
+var body=document.getElementById('page-body');
+body.innerHTML='';
+if(!d.chats.length){body.innerHTML='<p style="color:#999;padding:20px">Sin conversaciones guardadas.</p>';return;}
+d.chats.forEach(function(c){
+var card=document.createElement('div');card.className='item-card';
+card.innerHTML='<div class="item-meta">Chat #'+c.id+' &middot; '+c.inicio+'</div>'+
+'<div class="item-content">'+escH(c.resumen)+'</div>';
+body.appendChild(card);});
+body.appendChild(pagerEl(d.pages,page,'loadChats'));});}
+
+function loadDiario(page){
+var body=document.getElementById('page-body');
+// Formulario nueva entrada
+var hoy=new Date();
+var yyyy=hoy.getFullYear();
+var mm=String(hoy.getMonth()+1).padStart(2,'0');
+var dd=String(hoy.getDate()).padStart(2,'0');
+var hoyStr=yyyy+'-'+mm+'-'+dd;
+var form='<div class="item-card" style="background:#fff5f5;border-color:#ffcccc"><h3 style="font-size:16px;font-weight:800;margin-bottom:14px;color:#cc0000">Nueva entrada</h3>'+
+'<div class="form-group"><label>Fecha</label><input type="date" id="d-fecha" value="'+hoyStr+'" onchange="calcDia()"></div>'+
+'<div id="d-dia" style="margin-bottom:12px"></div>'+
+'<div class="form-group"><label>Titulo</label><input type="text" id="d-titulo" placeholder="Titulo de la entrada"></div>'+
+'<div class="form-group"><label>Texto</label><textarea id="d-texto" rows="5" placeholder="Escribe aqui..."></textarea></div>'+
+'<button class="btn-ok" style="padding:12px 20px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#cc0000;color:#fff;border:none" onclick="guardarDiario()">Guardar entrada</button></div>';
+body.innerHTML=form;
+calcDia();
+fetch('/api/diario?page='+page).then(r=>r.json()).then(d=>{
+if(!d.entradas.length)return;
+d.entradas.forEach(function(e){
+var card=document.createElement('div');card.className='item-card';
+card.innerHTML='<span class="dia-badge">Dia '+e.dia+'</span>'+
+'<div class="item-meta">'+e.fecha+'</div>'+
+'<h3 style="font-size:16px;font-weight:800;margin-bottom:8px">'+escH(e.titulo)+'</h3>'+
+'<div class="item-content">'+escH(e.texto)+'</div>'+
+'<div class="item-actions"><button class="btn-del" onclick="delDiario('+e.id+')">Borrar</button></div>';
+body.appendChild(card);});
+body.appendChild(pagerEl(d.pages,page,'loadDiario'));});}
+
+function calcDia(){
+var f=document.getElementById('d-fecha');
+var el=document.getElementById('d-dia');
+if(!f||!el)return;
+var inicio=new Date('2026-03-01');
+var sel=new Date(f.value+'T00:00:00');
+var diff=Math.round((sel-inicio)/(1000*60*60*24))+1;
+el.innerHTML='<span class="dia-badge">Dia '+diff+' del experimento</span>';}
+
+function guardarDiario(){
+var fecha=document.getElementById('d-fecha').value;
+var titulo=document.getElementById('d-titulo').value.trim();
+var texto=document.getElementById('d-texto').value.trim();
+if(!fecha||!titulo||!texto){alert('Rellena todos los campos');return;}
+fetch('/api/diario',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({fecha:fecha,titulo:titulo,texto:texto})})
+.then(r=>r.json()).then(d=>{
+if(d.ok){loadDiario(1);}
+else{alert(d.error||'Error');}});}
+
+function delDiario(id){
+if(!confirm('Borrar esta entrada?'))return;
+fetch('/api/diario/'+id,{method:'DELETE'}).then(()=>loadDiario(currentPage));}
+
+function pagerEl(pages,current,fn){
+if(pages<=1)return document.createElement('div');
+var div=document.createElement('div');div.className='pager';
+for(var i=1;i<=pages;i++){
+var btn=document.createElement('button');
+btn.textContent=i;if(i===current)btn.className='active';
+btn.onclick=(function(p){return function(){currentPage=p;loadPage(currentSection,p);}})(i);
+div.appendChild(btn);}
+return div;}
+
+function escH(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+I.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();env();}});
+I.addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,140)+'px';});
+fetch('/api/historial').then(r=>r.json()).then(d=>{
+if(d.messages&&d.messages.length){d.messages.forEach(m=>add(m.role,m.content));}
+fetch('/api/bienvenida').then(r=>r.json()).then(b=>{if(b.intervencion)add('anni',b.intervencion,b.tipo||'pro');});
+fetch('/api/conv-activa').then(r=>r.json()).then(c=>{if(c.id){convActiva=c.id;convNum=c.id;updateBtn();}});
+});
+</script>
+</body></html>"""
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
