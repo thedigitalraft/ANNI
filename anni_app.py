@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.12"
+ANNI_VERSION = "1.0.13"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -593,40 +593,57 @@ No amplificas sus sesgos. No eres su cheerleader. No finges saber algo que no sa
 
 # ── CHAT ──────────────────────────────────────────────────────────────────────
 
-def responder(usuario_id, username, nombre, user_input, history):
+def responder(usuario_id, username, nombre, user_input, history, imagen_data=None, imagen_media_type=None):
     system = get_system_prompt(usuario_id, username, nombre, query=user_input)
-    messages = [{"role": "system", "content": system}]
 
-    # Añadir historial (truncar mensajes largos)
+    # Construir historial para Sonnet (sin imagen — solo texto)
+    messages_sonnet = []
     for role, content in history[:-1]:
         content_truncado = content[:3000] if len(content) > 3000 else content
-        messages.append({"role": role, "content": content_truncado})
+        messages_sonnet.append({"role": role, "content": content_truncado})
 
-    # Instrucción de formato al final
-    user_con_formato = user_input + "\n\n[FORMATO: Prosa directa. Sin markdown innecesario. Sin repetir lo dicho antes.]"
-    messages.append({"role": "user", "content": user_con_formato})
+    # Mensaje del usuario — con imagen si existe
+    formato = "\n\n[FORMATO: Prosa directa. Sin markdown innecesario. Sin repetir lo dicho antes.]"
+    if imagen_data and anthropic_client:
+        # Mensaje multimodal con imagen real para Sonnet
+        user_content = []
+        if user_input:
+            user_content.append({"type": "text", "text": user_input + formato})
+        user_content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": imagen_media_type or "image/jpeg",
+                "data": imagen_data
+            }
+        })
+        messages_sonnet.append({"role": "user", "content": user_content})
+    else:
+        messages_sonnet.append({"role": "user", "content": user_input + formato})
 
-    # Intentar con Anthropic Sonnet primero
+    # Intentar con Anthropic Sonnet
     if anthropic_client:
         try:
-            # Separar system del resto
-            sys_msg = messages[0]["content"] if messages and messages[0]["role"] == "system" else ""
-            user_msgs = [m for m in messages if m["role"] != "system"]
             resp = anthropic_client.messages.create(
                 model=CHAT_MODEL,
                 max_tokens=1500,
-                system=sys_msg,
-                messages=user_msgs
+                system=system,
+                messages=messages_sonnet
             )
             return resp.content[0].text.strip()
         except Exception as e:
             print(f"[ANNI] Sonnet fallo: {e}, usando fallback")
-    # Fallback Together AI
+
+    # Fallback Together AI (solo texto)
+    messages_together = [{"role": "system", "content": system}]
+    for role, content in history[:-1]:
+        messages_together.append({"role": role, "content": content[:3000]})
+    messages_together.append({"role": "user", "content": user_input + formato})
     try:
         resp = together.chat.completions.create(
             model=CHAT_MODEL_FALLBACK,
             max_tokens=1500,
-            messages=messages
+            messages=messages_together
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
@@ -739,17 +756,28 @@ def api_chat():
     else:
         conv_id = conv[0]
     msg_completo = msg
+    imagen_data = None
+    imagen_media_type = None
     if archivo:
         tipo = archivo.get('tipo', 'texto')
         nombre_arch = archivo.get('nombre', 'archivo')
         contenido = archivo.get('data', '')
         if tipo == 'imagen':
-            msg_completo = f"{msg}\n\n[IMAGEN: {nombre_arch}]\n{contenido[:200]}"
+            # Extraer base64 real y media_type para Sonnet
+            msg_completo = msg if msg else f"[Imagen adjunta: {nombre_arch}]"
+            if contenido.startswith('data:'):
+                # data:image/jpeg;base64,/9j/...
+                header, b64 = contenido.split(',', 1)
+                imagen_media_type = header.split(';')[0].replace('data:', '')
+                imagen_data = b64
+            else:
+                imagen_data = contenido
+                imagen_media_type = 'image/jpeg'
         else:
             msg_completo = f"{msg}\n\n[ARCHIVO: {nombre_arch}]\n{contenido[:3000]}"
-    save_mensaje(usuario_id, 'user', msg_completo)
+    save_mensaje(usuario_id, 'user', msg_completo if msg_completo else f"[imagen]")
     history = get_mensajes_recientes(usuario_id, 20)
-    response = responder(usuario_id, username, nombre, msg_completo, history)
+    response = responder(usuario_id, username, nombre, msg_completo, history, imagen_data, imagen_media_type)
     save_mensaje(usuario_id, 'assistant', response)
     total = get_total_mensajes(usuario_id)
     if total % 5 == 0:
@@ -895,6 +923,202 @@ def cerrar_tema():
         conn.commit()
         conn.close()
     return jsonify({'ok': True})
+
+# ── HITOS USUARIO ────────────────────────────────────────────────────────────
+
+@app.route('/api/hitos', methods=['GET'])
+@login_required
+def api_hitos():
+    usuario_id = session['usuario_id']
+    page = int(request.args.get('page', 1))
+    per_page = 15
+    offset = (page - 1) * per_page
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM hitos_usuario WHERE usuario_id=? AND activo=1", (usuario_id,))
+    total = c.fetchone()[0]
+    c.execute("SELECT id, tipo, contenido, evidencia, peso, ts FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY ts DESC LIMIT ? OFFSET ?",
+              (usuario_id, per_page, offset))
+    hitos = [{'id': r[0], 'tipo': r[1], 'contenido': r[2], 'evidencia': r[3], 'peso': r[4], 'ts': ts_format(r[5])} for r in c.fetchall()]
+    conn.close()
+    return jsonify({'hitos': hitos, 'total': total, 'page': page, 'pages': (total + per_page - 1) // per_page})
+
+@app.route('/api/hitos/aprobar', methods=['POST'])
+@login_required
+def api_aprobar_hito():
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    contenido = data.get('contenido', '').strip()
+    tipo = data.get('tipo', 'observacion')
+    evidencia = data.get('evidencia', '')
+    if not contenido:
+        return jsonify({'ok': False})
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO hitos_usuario (usuario_id, tipo, contenido, evidencia, peso) VALUES (?,?,?,?,?)",
+              (usuario_id, tipo, contenido, evidencia, 5))
+    hid = c.lastrowid
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': hid})
+
+@app.route('/api/hitos/<int:hid>', methods=['PUT'])
+@login_required
+def api_editar_hito(hid):
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    contenido = data.get('contenido', '').strip()
+    if not contenido:
+        return jsonify({'ok': False})
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE hitos_usuario SET contenido=? WHERE id=? AND usuario_id=?", (contenido, hid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/hitos/<int:hid>', methods=['DELETE'])
+@login_required
+def api_borrar_hito(hid):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE hitos_usuario SET activo=0 WHERE id=? AND usuario_id=?", (hid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# ── CHATS ─────────────────────────────────────────────────────────────────────
+
+@app.route('/api/chats', methods=['GET'])
+@login_required
+def api_chats():
+    usuario_id = session['usuario_id']
+    page = int(request.args.get('page', 1))
+    per_page = 10
+    offset = (page - 1) * per_page
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM conversaciones WHERE usuario_id=? AND resumen IS NOT NULL AND resumen != '[Descartado]'", (usuario_id,))
+    total = c.fetchone()[0]
+    c.execute("SELECT id, ts_inicio, ts_fin, resumen FROM conversaciones WHERE usuario_id=? AND resumen IS NOT NULL AND resumen != '[Descartado]' ORDER BY ts_inicio DESC LIMIT ? OFFSET ?",
+              (usuario_id, per_page, offset))
+    chats = [{'id': r[0], 'inicio': ts_format(r[1]), 'fin': ts_format(r[2]), 'resumen': r[3]} for r in c.fetchall()]
+    conn.close()
+    return jsonify({'chats': chats, 'total': total, 'page': page, 'pages': (total + per_page - 1) // per_page})
+
+# ── DIARIO ────────────────────────────────────────────────────────────────────
+
+FECHA_INICIO_EXPERIMENTO = "2026-03-01"
+
+@app.route('/api/diario', methods=['GET'])
+@login_required
+def api_diario_get():
+    usuario_id = session['usuario_id']
+    page = int(request.args.get('page', 1))
+    per_page = 10
+    offset = (page - 1) * per_page
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM diario WHERE usuario_id=?", (usuario_id,))
+    total = c.fetchone()[0]
+    c.execute("SELECT id, fecha, dia_experimento, titulo, texto, ts FROM diario WHERE usuario_id=? ORDER BY fecha DESC LIMIT ? OFFSET ?",
+              (usuario_id, per_page, offset))
+    entradas = [{'id': r[0], 'fecha': r[1], 'dia': r[2], 'titulo': r[3], 'texto': r[4], 'ts': ts_format(r[5])} for r in c.fetchall()]
+    conn.close()
+    return jsonify({'entradas': entradas, 'total': total, 'page': page, 'pages': (total + per_page - 1) // per_page})
+
+@app.route('/api/diario', methods=['POST'])
+@login_required
+def api_diario_post():
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    fecha = data.get('fecha', '').strip()
+    titulo = data.get('titulo', '').strip()
+    texto = data.get('texto', '').strip()
+    if not fecha or not titulo or not texto:
+        return jsonify({'ok': False, 'error': 'Faltan campos'})
+    from datetime import date as ddate
+    try:
+        f = ddate.fromisoformat(fecha)
+        inicio = ddate.fromisoformat(FECHA_INICIO_EXPERIMENTO)
+        dia = (f - inicio).days + 1
+    except:
+        dia = None
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO diario (usuario_id, fecha, dia_experimento, titulo, texto) VALUES (?,?,?,?,?)",
+              (usuario_id, fecha, dia, titulo, texto))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'dia': dia})
+
+@app.route('/api/diario/<int:eid>', methods=['DELETE'])
+@login_required
+def api_diario_delete(eid):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("DELETE FROM diario WHERE id=? AND usuario_id=?", (eid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+# ── DESCARGA BD ───────────────────────────────────────────────────────────────
+
+@app.route('/api/descargar-bd', methods=['POST'])
+@login_required
+def api_descargar_bd():
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    password = data.get('password', '').strip()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT password_hash FROM usuarios WHERE id=?", (usuario_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row or row[0] != hash_password(password):
+        return jsonify({'ok': False, 'error': 'Contrasena incorrecta'})
+    from flask import send_file
+    return send_file(DB_PATH, as_attachment=True, download_name='anni_backup.db', mimetype='application/octet-stream')
+
+# ── DETECTAR HITO ────────────────────────────────────────────────────────────
+
+@app.route('/api/detectar-hito', methods=['POST'])
+@login_required
+def api_detectar_hito():
+    """Analiza el ultimo intercambio buscando un hito importante sobre el usuario."""
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    mensaje = data.get('mensaje', '').strip()
+    respuesta = data.get('respuesta', '').strip()
+    if not mensaje or len(mensaje) < 8:
+        return jsonify({'hito': None})
+    prompt = f"""Analiza este intercambio y determina si contiene informacion importante y duradera sobre el usuario.
+
+Usuario: "{mensaje}"
+ANNI: "{respuesta[:300]}"
+
+Un hito vale la pena recordar: quien es el usuario, como piensa, personas importantes, patrones de comportamiento, decisiones relevantes.
+
+Si SI hay un hito importante responde SOLO con este JSON:
+{{"hito": true, "tipo": "patron", "contenido": "frase concisa del hito", "evidencia": "frase exacta del usuario"}}
+
+Si NO hay hito responde SOLO con:
+{{"hito": false}}
+
+Solo JSON."""
+    try:
+        resp = together.chat.completions.create(
+            model=CHAT_MODEL_FALLBACK,
+            max_tokens=150,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.choices[0].message.content.strip().replace("```json","").replace("```","").strip()
+        parsed = json.loads(raw)
+        if parsed.get('hito'):
+            return jsonify({'hito': parsed})
+        return jsonify({'hito': None})
+    except Exception as e:
+        print(f"[ANNI] detectar-hito error: {e}")
+        return jsonify({'hito': None})
 
 # ── HTML ──────────────────────────────────────────────────────────────────────
 
