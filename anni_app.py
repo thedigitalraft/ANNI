@@ -1551,6 +1551,7 @@ textarea{font-size:16px}}
 <div id='nav'>
   <button class='nav-btn' onclick='showPage("hitos")'>HITOS</button>
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
+  <button class='nav-btn' onclick='showPage("memoria")'>MEMORIA</button>
   <button class='nav-btn' onclick='showPage("diario")'>DIARIO</button>
   <button class='nav-btn' onclick='descargarBD()'>BD</button>
   <a href='/logout' class='nav-btn salir'>SALIR</a>
@@ -1826,7 +1827,7 @@ document.getElementById('modal-bd').classList.remove('open');})
 
 function showPage(sec){
 currentSection=sec;currentPage=1;
-var titles={hitos:'Hitos del usuario',chats:'Conversaciones',diario:'Diario'};
+var titles={hitos:'Hitos del usuario',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
 document.getElementById('page-title').textContent=titles[sec]||sec;
 document.getElementById('page').classList.add('open');
 loadPage(sec,1);}
@@ -1835,8 +1836,58 @@ function loadPage(sec,page){
 document.getElementById('page-body').innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
 if(sec==='hitos')loadHitos(page);
 else if(sec==='chats')loadChats(page);
-else if(sec==='diario')loadDiario(page);}
+else if(sec==='diario')loadDiario(page);
+else if(sec==='memoria')loadMemoria();}
 
+
+function loadMemoria(){
+fetch('/api/memoria').then(r=>r.json()).then(d=>{
+var body=document.getElementById('page-body');body.innerHTML='';
+
+// Sección helper
+function seccion(titulo, items, renderFn, vacioMsg){
+  var wrap=document.createElement('div');
+  wrap.style.cssText='margin-bottom:28px';
+  var h=document.createElement('div');
+  h.style.cssText='font-size:11px;font-weight:900;letter-spacing:1px;color:#aaa;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #f0f0f0';
+  h.textContent=titulo+' ('+items.length+')';
+  wrap.appendChild(h);
+  if(!items.length){
+    var p=document.createElement('p');
+    p.style.cssText='color:#bbb;font-size:13px;font-style:italic';
+    p.textContent=vacioMsg;
+    wrap.appendChild(p);
+  } else {
+    items.forEach(function(item){ wrap.appendChild(renderFn(item)); });
+  }
+  body.appendChild(wrap);
+}
+
+function card(content){
+  var c=document.createElement('div');
+  c.className='item-card';
+  c.innerHTML=content;
+  return c;
+}
+
+seccion('Observaciones', d.observaciones, function(o){
+  return card('<div style="font-size:12px;background:#f5f5f5;border-radius:4px;padding:2px 8px;display:inline-block;margin-bottom:6px">'+escH(o.tipo)+'</div>'+
+    '<div style="font-size:15px;color:#222">'+escH(o.contenido)+'</div>'+
+    '<div style="font-size:12px;color:#aaa;margin-top:4px">'+o.ts+'</div>');
+}, 'Sin observaciones aún — cierra una conversación para generarlas.');
+
+seccion('Personas', d.personas, function(p){
+  return card('<div style="font-size:16px;font-weight:900;color:#111">'+escH(p.nombre)+'</div>'+
+    '<div style="font-size:13px;color:#666;margin-top:2px">'+escH(p.relacion)+' &middot; tono: '+escH(p.tono)+'</div>');
+}, 'Sin personas registradas aún.');
+
+seccion('Temas abiertos', d.temas_abiertos, function(t){
+  return card('<div style="font-size:15px;color:#222">'+escH(t.tema)+'</div>'+
+    '<div style="font-size:12px;color:#aaa;margin-top:4px">Mencionado '+t.veces+' vez/veces</div>');
+}, 'Sin temas abiertos.');
+
+});
+}
 function loadHitos(page){
 fetch('/api/hitos?page='+page).then(r=>r.json()).then(d=>{
 var body=document.getElementById('page-body');body.innerHTML='';
