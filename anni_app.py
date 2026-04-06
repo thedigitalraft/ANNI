@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.25"
+ANNI_VERSION = "1.0.27"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -204,7 +204,7 @@ def ahora():
     return datetime.now(TZ).strftime("%d/%m/%Y %H:%M")
 
 def ts_format(ts):
-    return datetime.fromtimestamp(ts, tz=TZ).strftime("%d/%m/%Y") if ts else "—"
+    return datetime.fromtimestamp(ts, tz=TZ).strftime("%d/%m/%Y %H:%M") if ts else "—"
 
 def login_required(f):
     from functools import wraps
@@ -669,7 +669,8 @@ TEMAS QUE MENCIONA PERO NO CIERRA:
 PERSONAS EN SU VIDA:
 {personas_txt}
 
-CONVERSACIONES ANTERIORES RELEVANTES:
+CONVERSACIONES ANTERIORES CON FECHA:
+Cada entrada incluye la fecha y hora en que ocurrió entre corchetes. Usa esta información para responder preguntas sobre cuándo ocurrió algo, cuánto tiempo pasó entre conversaciones, o a qué hora fue una conversación específica. SÍ tienes acceso a estas fechas — están en el contexto.
 {resumenes_txt}
 
 REGLAS QUE NO NEGOCIAS:
