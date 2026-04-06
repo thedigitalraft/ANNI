@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.32"
+ANNI_VERSION = "1.0.35"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -463,6 +463,33 @@ def db_guardar_embedding(tabla_origen, registro_id, texto):
 
 # ── ANÁLISIS POST-CONVERSACIÓN ────────────────────────────────────────────────
 
+
+def degradar_observaciones(usuario_id):
+    """Degrada el peso de observaciones que no se han reforzado en esta conversacion.
+    Peso inicial: 5. Resta 1 por conversacion sin refuerzo. A 0 se archivan."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        # Bajar peso a todas las observaciones activas que no fueron reforzadas hoy
+        c.execute("""UPDATE observaciones
+                     SET peso = peso - 0.4
+                     WHERE usuario_id=? AND activa=1
+                     AND ts_ultima_vez < (SELECT MIN(ts_inicio) FROM conversaciones
+                                          WHERE usuario_id=? AND activa=0
+                                          ORDER BY ts_fin DESC LIMIT 1)""",
+                  (usuario_id, usuario_id))
+        degradadas = c.rowcount
+        # Archivar las que llegan a 0 o menos
+        c.execute("""UPDATE observaciones SET activa=0
+                     WHERE usuario_id=? AND activa=1 AND peso <= 0""", (usuario_id,))
+        archivadas = c.rowcount
+        conn.commit()
+        conn.close()
+        if degradadas or archivadas:
+            print(f"[ANNI] Observaciones: {degradadas} degradadas, {archivadas} archivadas para usuario {usuario_id}")
+    except Exception as e:
+        print(f"[ANNI] Error degradando observaciones: {e}")
+
 def analizar_conversacion(usuario_id, ultimos_mensajes):
     """Analiza los últimos mensajes y extrae observaciones, personas y temas."""
     if not ultimos_mensajes:
@@ -515,13 +542,37 @@ Reglas:
         c = conn.cursor()
         ts_now = time.time()
 
-        # Guardar observaciones
+        # Degradar observaciones antes de añadir nuevas
+        degradar_observaciones(usuario_id)
+
+        # Guardar observaciones — reforzar si ya existe algo similar, crear si no
         for obs in data.get("observaciones", []):
             if obs.get("contenido"):
-                c.execute("""INSERT INTO observaciones (usuario_id, tipo, contenido, evidencia, ts)
-                             VALUES (?,?,?,?,?)""",
-                          (usuario_id, obs.get("tipo", "patron"), obs["contenido"],
-                           obs.get("evidencia", ""), ts_now))
+                contenido_nuevo = obs["contenido"].lower()
+                tipo_nuevo = obs.get("tipo", "patron")
+                # Buscar observacion similar por tipo + keywords (3+ palabras en común)
+                c.execute("SELECT id, contenido FROM observaciones WHERE usuario_id=? AND activa=1 AND tipo=?",
+                          (usuario_id, tipo_nuevo))
+                existentes = c.fetchall()
+                reforzada = False
+                palabras_nuevas = [w for w in contenido_nuevo.split() if len(w) > 4]
+                for obs_id, contenido_exist in existentes:
+                    matches = sum(1 for p in palabras_nuevas if p in contenido_exist.lower())
+                    if matches >= 2:
+                        # Reforzar: subir peso (máx 10) y actualizar timestamp
+                        c.execute("""UPDATE observaciones
+                                     SET peso = MIN(peso + 0.4, 10),
+                                         ts_ultima_vez = ?,
+                                         veces_confirmada = veces_confirmada + 1
+                                     WHERE id=?""", (ts_now, obs_id))
+                        reforzada = True
+                        print(f"[ANNI] Observación reforzada #{obs_id}: {contenido_exist[:40]}")
+                        break
+                if not reforzada:
+                    c.execute("""INSERT INTO observaciones (usuario_id, tipo, contenido, evidencia, peso, ts, ts_ultima_vez)
+                                 VALUES (?,?,?,?,5,?,?)""",
+                              (usuario_id, tipo_nuevo, obs["contenido"],
+                               obs.get("evidencia", ""), ts_now, ts_now))
 
         # Guardar/actualizar personas
         for p in data.get("personas", []):
@@ -766,6 +817,14 @@ Usa lo que sabes del usuario de forma natural — como lo haría un amigo que te
 
 # ── CHAT ──────────────────────────────────────────────────────────────────────
 
+def quiere_buscar_web(user_input):
+    """Detecta si el usuario pide explicitamente buscar en internet."""
+    triggers = ['busca en internet', 'busca en la web', 'busca online', 'busca en google',
+                'búsca en internet', 'búsca en la web', 'buscar en internet', 'buscar en la web',
+                'anni busca', 'anni búsca', 'busca esto', 'búsca esto', 'search']
+    texto = user_input.lower()
+    return any(t in texto for t in triggers)
+
 def responder(usuario_id, username, nombre, user_input, history, imagen_data=None, imagen_media_type=None):
     system = get_system_prompt(usuario_id, username, nombre, query=user_input)
 
@@ -797,13 +856,20 @@ def responder(usuario_id, username, nombre, user_input, history, imagen_data=Non
     # Intentar con Anthropic Sonnet
     if anthropic_client:
         try:
-            resp = anthropic_client.messages.create(
+            kwargs = dict(
                 model=CHAT_MODEL,
                 max_tokens=1500,
                 system=system,
                 messages=messages_sonnet
             )
-            return resp.content[0].text.strip()
+            # Web search si el usuario lo pide explicitamente
+            if quiere_buscar_web(user_input):
+                kwargs['tools'] = [{'type': 'web_search_20250305', 'name': 'web_search'}]
+                print(f"[ANNI] Web search activado para: {user_input[:60]}")
+            resp = anthropic_client.messages.create(**kwargs)
+            # Extraer texto — puede haber bloques de tool_use y text mezclados
+            texto = ' '.join(b.text for b in resp.content if hasattr(b, 'text') and b.text)
+            return texto.strip() if texto else resp.content[0].text.strip()
         except Exception as e:
             print(f"[ANNI] Sonnet fallo: {e}, usando fallback")
 
@@ -1108,7 +1174,7 @@ def api_memoria():
     temas = get_temas_abiertos(usuario_id)
     personas = get_personas(usuario_id)
     return jsonify({
-        'observaciones': [{'id': o[0], 'tipo': o[1], 'contenido': o[2], 'ts': ts_format(o[3])} for o in obs],
+        'observaciones': [{'id': o[0], 'tipo': o[1], 'contenido': o[2], 'ts': ts_format(o[3]), 'peso': o[4]} for o in obs],
         'temas_abiertos': [{'id': t[0], 'tema': t[1], 'veces': t[3]} for t in temas],
         'personas': [{'id': p[0], 'nombre': p[1], 'relacion': p[2], 'tono': p[3]} for p in personas]
     })
@@ -1999,7 +2065,7 @@ function card(content){
 seccion('Observaciones', d.observaciones, function(o){
   return card('<div style="font-size:12px;background:#f5f5f5;border-radius:4px;padding:2px 8px;display:inline-block;margin-bottom:6px">'+escH(o.tipo)+'</div>'+
     '<div style="font-size:15px;color:#222">'+escH(o.contenido)+'</div>'+
-    '<div style="font-size:12px;color:#aaa;margin-top:4px">'+o.ts+'</div>'+
+    '<div style="font-size:12px;color:#aaa;margin-top:4px">'+o.ts+' &middot; peso: '+o.peso+'</div>'+
     '<div class="item-actions"><button class="btn-del" onclick="delObservacion('+o.id+',this)">Borrar</button></div>');
 }, 'Sin observaciones aún — cierra una conversación para generarlas.');
 
