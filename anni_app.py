@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.24"
+ANNI_VERSION = "1.0.25"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -771,9 +771,13 @@ def login():
         c2.execute("SELECT nombre FROM usuarios WHERE id=?", (row[0],))
         nombre_row = c2.fetchone()
         conn2.close()
+        nombre_guardado = nombre_row[0] if nombre_row and nombre_row[0] else ''
+        # Si nombre vacío, extraer la parte antes del @ del email como fallback
+        if not nombre_guardado and '@' in username:
+            nombre_guardado = username.split('@')[0].capitalize()
         session['usuario_id'] = row[0]
         session['username'] = username
-        session['nombre'] = nombre_row[0] if nombre_row else ''
+        session['nombre'] = nombre_guardado
         return jsonify({'ok': True})
 
     return make_response(LOGIN_HTML)
@@ -822,7 +826,8 @@ def logout():
 @app.route('/chat')
 @login_required
 def chat_page():
-    html = CHAT_HTML.replace('__NOMBRE_USUARIO__', session.get('nombre', 'tu'))
+    nombre_display = session.get('nombre', '') or (session.get('username','').split('@')[0].capitalize())
+    html = CHAT_HTML.replace('__NOMBRE_USUARIO__', nombre_display or 'tu')
     html = html.replace('__ANNI_VERSION__', ANNI_VERSION)
     return make_response(html)
 
