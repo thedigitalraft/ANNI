@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.39"
+ANNI_VERSION = "1.0.40"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2326,8 +2326,8 @@ function loadTareas(page){
       var acciones='';
       if(tareasVista==='activas'){
         acciones='<button class="btn-edit" onclick="editTarea('+t.id+')">Editar</button>'+
-          (t.estado==='pendiente'?'<button class="btn-edit" onclick="cambiarEstadoTarea('+t.id+','en_progreso')">En progreso</button>':
-          '<button class="btn-edit" onclick="cambiarEstadoTarea('+t.id+','pendiente')">Pausar</button>')+
+          (t.estado==='pendiente'?'<button class="btn-edit" onclick="cambiarEstadoTarea('+t.id+',\"en_progreso\")">En progreso</button>':
+          '<button class="btn-edit" onclick="cambiarEstadoTarea('+t.id+',\"pendiente\")">Pausar</button>')+
           '<button class="btn-edit" style="background:#e8f5e9;border-color:#81c784;color:#2e7d32" onclick="completarTarea('+t.id+')">✓ Completar</button>'+
           '<button class="btn-del" onclick="borrarTarea('+t.id+')">Borrar</button>';
       } else {
@@ -2392,7 +2392,7 @@ function completarTarea(id){
 
 function reabrirTarea(id){
   fetch('/api/tareas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({estado:'pendiente',ts_completada:null})}).then(r=>r.json()).then(d=>{if(d.ok){tareasVista='activas';loadTareas(1);});
+    body:JSON.stringify({estado:'pendiente',ts_completada:null})}).then(r=>r.json()).then(d=>{if(d.ok){tareasVista='activas';loadTareas(1);}});
 }
 
 function borrarTarea(id){
