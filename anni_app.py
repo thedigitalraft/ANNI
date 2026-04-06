@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.23"
+ANNI_VERSION = "1.0.24"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1678,7 +1678,7 @@ archivoData=null;document.getElementById('finput').value='';
 fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
 .then(r=>r.json()).then(d=>{
 rmtyp();var resp=d.response||'';add('anni',resp);
-if(d.conv_id&&!convActiva){convActiva=d.conv_id;convNum=d.conv_id;updateBtn();}
+if(d.conv_id){if(!convActiva||convActiva!==d.conv_id){convActiva=d.conv_id;convNum=d.conv_id;updateBtn();}}
 S.disabled=false;I.focus();
 if(lastMsg&&resp){
 fetch('/api/detectar-hito',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1694,16 +1694,19 @@ if(d.ok){convActiva=d.id;convNum=d.id;updateBtn();C.innerHTML='';
 add('anni','Conversacion nueva. De que quieres hablar?');}});}
 
 function cerrarConv(){
-if(!convActiva)return;
-fetch('/api/conversacion/cerrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:convActiva})})
+// Si no tenemos conv_id local, mandamos sin id — el backend busca la activa
+var body=convActiva?{id:convActiva}:{};
+fetch('/api/conversacion/cerrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
 .then(r=>r.json()).then(d=>{
 if(d.ok&&d.resumen&&d.pendiente){
 var cid=d.conv_id||convActiva;
 pendResumen={conv_id:cid,resumen:d.resumen};
 document.getElementById('resumen-txt').value=d.resumen;
 document.getElementById('modal-resumen').classList.add('open');
-}else{convActiva=null;updateBtn();add('anni','Conversacion cerrada.');}})
-.catch(e=>{});}
+}else if(d.ok){
+convActiva=null;updateBtn();add('anni','Conversacion cerrada.');}
+else{add('anni','No hay conversacion activa para cerrar.');}})
+.catch(e=>{add('anni','Error al cerrar la conversacion.');});}
 
 function guardarResumen(){
 var txt=document.getElementById('resumen-txt').value.trim();
@@ -1909,7 +1912,9 @@ I.addEventListener('input',function(){this.style.height='auto';this.style.height
 fetch('/api/historial').then(r=>r.json()).then(d=>{
 if(d.messages&&d.messages.length){d.messages.forEach(m=>add(m.role,m.content));}
 fetch('/api/bienvenida').then(r=>r.json()).then(b=>{if(b.intervencion)add('anni',b.intervencion,b.tipo||'pro');});
-fetch('/api/conv-activa').then(r=>r.json()).then(c=>{if(c.id){convActiva=c.id;convNum=c.id;updateBtn();}});
+fetch('/api/conv-activa').then(r=>r.json()).then(c=>{
+if(c.id){convActiva=c.id;convNum=c.id;updateBtn();}
+else{convActiva=null;updateBtn();}});
 });
 </script>
 </body></html>"""
