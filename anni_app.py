@@ -448,7 +448,7 @@ Reglas:
 
     try:
         resp = together.chat.completions.create(
-            model=CHAT_MODEL,
+            model=CHAT_MODEL_FALLBACK,
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}]
         )
