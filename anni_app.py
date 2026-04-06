@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.41"
+ANNI_VERSION = "1.0.43"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1109,12 +1109,58 @@ def api_chat():
     if tarea_creada:
         response = f"Anotado. Tarea '{tarea_creada}' añadida a tu lista."
         save_mensaje(usuario_id, 'assistant', response)
-        return jsonify({'response': response, 'conv_id': conv_id})
+        return jsonify({'response': response, 'conv_id': conv_id, 'ts': time.time()})
 
     history = get_mensajes_recientes(usuario_id, 20)
     response = responder(usuario_id, username, nombre, msg_completo, history, imagen_data, imagen_media_type)
     save_mensaje(usuario_id, 'assistant', response)
     return jsonify({'response': response, 'conv_id': conv_id})
+
+
+def auto_cerrar_conversacion_inactiva(usuario_id):
+    """Cierra automaticamente conversaciones activas con mas de 4h sin mensajes."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""SELECT id, ts_inicio FROM conversaciones
+                     WHERE usuario_id=? AND activa=1""", (usuario_id,))
+        conv = c.fetchone()
+        if not conv:
+            conn.close()
+            return None
+        conv_id, ts_inicio = conv
+        # Check last message timestamp
+        c.execute("""SELECT MAX(ts) FROM mensajes
+                     WHERE usuario_id=? AND ts >= ?""", (usuario_id, ts_inicio))
+        last_msg = c.fetchone()[0]
+        conn.close()
+        if not last_msg:
+            return None
+        horas_inactiva = (time.time() - last_msg) / 3600
+        if horas_inactiva >= 4:
+            print(f"[ANNI] Auto-cerrando conv #{conv_id} — {horas_inactiva:.1f}h inactiva")
+            resumen = cerrar_conversacion(usuario_id, conv_id)
+            if resumen:
+                # Guardar resumen aprobado automaticamente y analizar
+                conn2 = sqlite3.connect(DB_PATH)
+                conn2.execute("UPDATE conversaciones SET activa=0, ts_fin=? WHERE id=?",
+                              (time.time(), conv_id))
+                conn2.commit()
+                conn2.close()
+                # Lanzar analisis en background
+                conn3 = sqlite3.connect(DB_PATH)
+                c3 = conn3.cursor()
+                c3.execute("SELECT role, content FROM mensajes WHERE usuario_id=? AND ts >= ? ORDER BY ts ASC",
+                           (usuario_id, ts_inicio))
+                msgs_conv = c3.fetchall()
+                conn3.close()
+                if msgs_conv:
+                    threading.Thread(target=analizar_conversacion, args=(usuario_id, msgs_conv), daemon=True).start()
+            return conv_id
+        return None
+    except Exception as e:
+        print(f"[ANNI] Error auto-cierre: {e}")
+        return None
 
 @app.route('/api/bienvenida')
 @login_required
@@ -1123,6 +1169,11 @@ def api_bienvenida():
     usuario_id = session['usuario_id']
     nombre = session.get('nombre', '')
     total = get_total_mensajes(usuario_id)
+
+    # Auto-cerrar conversacion inactiva si lleva mas de 4h sin mensajes
+    cerrada = auto_cerrar_conversacion_inactiva(usuario_id)
+    if cerrada:
+        print(f"[ANNI] Conversacion #{cerrada} auto-cerrada al abrir chat")
 
     if total == 0:
         # Primer acceso — ANNI se presenta y pregunta el nombre
@@ -2038,8 +2089,19 @@ CONVINFO.textContent='';}}
 
 function toggleConv(){if(convActiva){cerrarConv();}else{nuevaConv();}}
 
-function add(role,txt,tipo){
+function tsFromServer(serverTs){
+if(!serverTs) return ts();
+var d=new Date(serverTs*1000);
+var dd=String(d.getDate()).padStart(2,'0');
+var mm=String(d.getMonth()+1).padStart(2,'0');
+var yy=d.getFullYear();
+var hh=String(d.getHours()).padStart(2,'0');
+var mi=String(d.getMinutes()).padStart(2,'0');
+return dd+'/'+mm+'/'+yy+' '+hh+':'+mi;}
+
+function add(role,txt,tipo,serverTs){
 var d=document.createElement('div');
+var hora=serverTs?tsFromServer(serverTs):ts();
 if(tipo==='pro'||tipo==='bienvenida'){
 d.className='pro';d.textContent=txt;
 }else if(tipo==='resumen'){
@@ -2047,12 +2109,12 @@ d.className='resumen-msg';d.textContent='Resumen: '+txt;
 }else if(role==='user'){
 d.className='msg-user';
 var lbl=document.createElement('div');lbl.className='lbl';
-lbl.textContent=NOMBRE.toUpperCase()+' - '+ts();
+lbl.textContent=NOMBRE.toUpperCase()+' - '+hora;
 var bur=document.createElement('div');bur.className='burbuja';bur.textContent=txt;
 d.appendChild(lbl);d.appendChild(bur);
 }else{
 d.className='msg-anni';
-var lbl=document.createElement('div');lbl.className='lbl';lbl.textContent='ANNI - '+ts();
+var lbl=document.createElement('div');lbl.className='lbl';lbl.textContent='ANNI - '+hora;
 var t=document.createElement('div');t.className='txt';t.textContent=txt;
 d.appendChild(lbl);d.appendChild(t);}
 C.appendChild(d);C.scrollTop=C.scrollHeight;return d;}
@@ -2081,14 +2143,14 @@ var msg=I.value.trim();
 if(!msg&&!archivoData)return;
 var disp=msg+(archivoData?' ['+archivoData.nombre+']':'');
 I.value='';I.style.height='auto';S.disabled=true;
-add('user',disp);PRV.style.display='none';typing();
+var userTs=Math.floor(Date.now()/1000);add('user',disp,null,userTs);PRV.style.display='none';typing();
 var body={message:msg};
 if(archivoData){body.archivo=archivoData;}
 var lastMsg=msg;
 archivoData=null;document.getElementById('finput').value='';
 fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
 .then(r=>r.json()).then(d=>{
-rmtyp();var resp=d.response||'';add('anni',resp);
+rmtyp();var resp=d.response||'';add('anni',resp,null,d.ts);
 if(d.conv_id){if(!convActiva||convActiva!==d.conv_id){convActiva=d.conv_id;convNum=d.conv_id;updateBtn();}}
 S.disabled=false;I.focus();
 if(lastMsg&&resp){
