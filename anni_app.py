@@ -366,6 +366,61 @@ def get_resumenes_relevantes(usuario_id, query, n=3):
         except: pass
     return resultados
 
+
+def get_hitos_relevantes(usuario_id, query, n=8):
+    """Trae los hitos mas relevantes semanticamente al query actual.
+    Fallback: los N mas recientes si no hay embeddings suficientes."""
+    import struct, math
+    resultados = []
+    ids_vistos = set()
+    try:
+        resp = together.embeddings.create(model=EMBED_MODEL, input=[query[:1600]])
+        vec_query = resp.data[0].embedding
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""SELECT h.id, h.tipo, h.contenido, h.cuando_activarlo, e.embedding
+            FROM hitos_usuario h
+            JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
+            WHERE h.usuario_id=? AND h.activo=1""", (usuario_id,))
+        rows = c.fetchall()
+        conn.close()
+        if rows:
+            scores = []
+            for hid, tipo, contenido, cuando, blob in rows:
+                nv = len(blob) // 4
+                vec = struct.unpack(f"{nv}f", blob)
+                dot = sum(a*b for a,b in zip(vec_query, vec))
+                mag1 = math.sqrt(sum(a*a for a in vec_query))
+                mag2 = math.sqrt(sum(b*b for b in vec))
+                sim = dot / (mag1 * mag2) if mag1 and mag2 else 0
+                scores.append((hid, tipo, contenido, cuando, sim))
+            scores.sort(key=lambda x: -x[4])
+            for hid, tipo, contenido, cuando, sim in scores[:n]:
+                linea = f"[{tipo}] {contenido}"
+                if cuando: linea += f" | Activar: {cuando}"
+                resultados.append(linea)
+                ids_vistos.add(hid)
+    except Exception as e:
+        print(f"[ANNI] RAG hitos fallo: {e}")
+    # Fallback: hitos sin embedding — siempre incluir identidad core
+    try:
+        conn2 = sqlite3.connect(DB_PATH)
+        c2 = conn2.cursor()
+        placeholders = ','.join(['?' for _ in ids_vistos]) if ids_vistos else '0'
+        needed = max(0, n - len(resultados))
+        if needed > 0:
+            params = [usuario_id] + list(ids_vistos)
+            c2.execute(f"""SELECT tipo, contenido, cuando_activarlo FROM hitos_usuario
+                WHERE usuario_id=? AND activo=1 AND id NOT IN ({placeholders})
+                ORDER BY peso DESC, ts DESC LIMIT {needed}""", params)
+            for tipo, contenido, cuando in c2.fetchall():
+                linea = f"[{tipo}] {contenido}"
+                if cuando: linea += f" | Activar: {cuando}"
+                resultados.append(linea)
+        conn2.close()
+    except: pass
+    return resultados
+
 def get_total_mensajes(usuario_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -1297,22 +1352,44 @@ Solo JSON."""
 
                 conn_dup = sqlite3.connect(DB_PATH)
                 c_dup = conn_dup.cursor()
+                # Hitos CON embedding
                 c_dup.execute("""SELECT h.contenido, e.embedding
                     FROM hitos_usuario h
                     JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
                     WHERE h.usuario_id=? AND h.activo=1""", (usuario_id,))
-                existentes = c_dup.fetchall()
+                existentes_con_emb = c_dup.fetchall()
+                # Hitos SIN embedding (fallback textual)
+                c_dup.execute("""SELECT h.titulo, h.contenido FROM hitos_usuario h
+                    WHERE h.usuario_id=? AND h.activo=1
+                    AND h.id NOT IN (
+                        SELECT registro_id FROM embeddings WHERE tabla_origen='hitos_usuario'
+                    )""", (usuario_id,))
+                existentes_sin_emb = c_dup.fetchall()
                 conn_dup.close()
 
-                for contenido_existente, blob in existentes:
+                titulo_nuevo = parsed.get('titulo', '').lower()
+
+                # Fallback textual: comparar titulo y keywords del contenido
+                for titulo_exist, contenido_exist in existentes_sin_emb:
+                    t = (titulo_exist or '').lower()
+                    c = (contenido_exist or '').lower()
+                    # Extraer palabras clave del nuevo (>4 chars)
+                    palabras = [w for w in contenido_nuevo.lower().split() if len(w) > 4]
+                    matches = sum(1 for p in palabras if p in c or p in t)
+                    if matches >= 3 or (titulo_nuevo and titulo_nuevo[:20] in t):
+                        print(f"[ANNI] Hito duplicado textual descartado: {contenido_nuevo[:50]}")
+                        return jsonify({'hito': None})
+
+                # Comparacion por embeddings
+                for contenido_existente, blob in existentes_con_emb:
                     nv = len(blob) // 4
                     vec_exist = struct.unpack(f"{nv}f", blob)
                     dot = sum(a*b for a,b in zip(vec_nuevo, vec_exist))
                     mag1 = math.sqrt(sum(a*a for a in vec_nuevo))
                     mag2 = math.sqrt(sum(b*b for b in vec_exist))
                     sim = dot / (mag1 * mag2) if mag1 and mag2 else 0
-                    if sim > 0.85:
-                        print(f"[ANNI] Hito duplicado descartado (sim={sim:.2f}): {contenido_nuevo[:50]}")
+                    if sim > 0.78:
+                        print(f"[ANNI] Hito duplicado por embedding descartado (sim={sim:.2f}): {contenido_nuevo[:50]}")
                         return jsonify({'hito': None})
             except Exception as e_dup:
                 print(f"[ANNI] Error verificando duplicados: {e_dup}")
