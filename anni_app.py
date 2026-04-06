@@ -503,7 +503,9 @@ Reglas:
         print(f"[ANNI] Análisis completado para usuario {usuario_id}")
 
     except Exception as e:
+        import traceback
         print(f"[ANNI] Error en análisis: {e}")
+        print(traceback.format_exc())
 
 # ── VOZ PROACTIVA ─────────────────────────────────────────────────────────────
 
@@ -872,9 +874,6 @@ def api_chat():
     history = get_mensajes_recientes(usuario_id, 20)
     response = responder(usuario_id, username, nombre, msg_completo, history, imagen_data, imagen_media_type)
     save_mensaje(usuario_id, 'assistant', response)
-    total = get_total_mensajes(usuario_id)
-    if total % 5 == 0:
-        threading.Thread(target=analizar_conversacion, args=(usuario_id, history), daemon=True).start()
     return jsonify({'response': response, 'conv_id': conv_id})
 
 @app.route('/api/bienvenida')
@@ -999,6 +998,22 @@ def api_guardar_resumen():
         print(f"[ANNI] Embedding conversacion #{conv_id} guardado")
     except Exception as e:
         print(f"[ANNI] Error embedding conv #{conv_id}: {e}")
+    # Analizar conversacion completa: extraer observaciones, personas y temas
+    conn3 = sqlite3.connect(DB_PATH)
+    c3 = conn3.cursor()
+    c3.execute("SELECT ts_inicio FROM conversaciones WHERE id=?", (conv_id,))
+    row3 = c3.fetchone()
+    conn3.close()
+    if row3:
+        conn4 = sqlite3.connect(DB_PATH)
+        c4 = conn4.cursor()
+        c4.execute("SELECT role, content FROM mensajes WHERE usuario_id=? AND ts >= ? ORDER BY ts ASC",
+                   (usuario_id, row3[0]))
+        msgs_conv = c4.fetchall()
+        conn4.close()
+        if msgs_conv:
+            threading.Thread(target=analizar_conversacion, args=(usuario_id, msgs_conv), daemon=True).start()
+            print(f"[ANNI] analizar_conversacion disparado para conv #{conv_id} ({len(msgs_conv)} msgs)")
     return jsonify({'ok': True})
 
 @app.route('/api/memoria')
