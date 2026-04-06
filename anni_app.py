@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.27"
+ANNI_VERSION = "1.0.28"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1269,9 +1269,41 @@ Solo JSON."""
         )
         raw = resp.choices[0].message.content.strip().replace("```json","").replace("```","").strip()
         parsed = json.loads(raw)
-        if parsed.get('hito'):
-            return jsonify({'hito': parsed})
-        return jsonify({'hito': None})
+        if not parsed.get('hito'):
+            return jsonify({'hito': None})
+
+        # Verificar duplicados con embeddings antes de proponer
+        contenido_nuevo = parsed.get('contenido', '')
+        if contenido_nuevo:
+            try:
+                import struct, math
+                resp_emb = together.embeddings.create(model=EMBED_MODEL, input=[contenido_nuevo[:1600]])
+                vec_nuevo = resp_emb.data[0].embedding
+
+                conn_dup = sqlite3.connect(DB_PATH)
+                c_dup = conn_dup.cursor()
+                c_dup.execute("""SELECT h.contenido, e.embedding
+                    FROM hitos_usuario h
+                    JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
+                    WHERE h.usuario_id=? AND h.activo=1""", (usuario_id,))
+                existentes = c_dup.fetchall()
+                conn_dup.close()
+
+                for contenido_existente, blob in existentes:
+                    nv = len(blob) // 4
+                    vec_exist = struct.unpack(f"{nv}f", blob)
+                    dot = sum(a*b for a,b in zip(vec_nuevo, vec_exist))
+                    mag1 = math.sqrt(sum(a*a for a in vec_nuevo))
+                    mag2 = math.sqrt(sum(b*b for b in vec_exist))
+                    sim = dot / (mag1 * mag2) if mag1 and mag2 else 0
+                    if sim > 0.85:
+                        print(f"[ANNI] Hito duplicado descartado (sim={sim:.2f}): {contenido_nuevo[:50]}")
+                        return jsonify({'hito': None})
+            except Exception as e_dup:
+                print(f"[ANNI] Error verificando duplicados: {e_dup}")
+                # Si falla la verificación, proponer igualmente
+
+        return jsonify({'hito': parsed})
     except Exception as e:
         print(f"[ANNI] detectar-hito error: {e}")
         return jsonify({'hito': None})
