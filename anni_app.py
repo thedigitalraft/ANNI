@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.35"
+ANNI_VERSION = "1.0.36"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -166,6 +166,21 @@ def init_db():
 
     # Índices para rendimiento
     c.execute("CREATE INDEX IF NOT EXISTS idx_mensajes_usuario ON mensajes(usuario_id, ts)")
+    c.execute("""CREATE TABLE IF NOT EXISTS tareas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        titulo TEXT NOT NULL,
+        descripcion TEXT DEFAULT '',
+        cliente TEXT DEFAULT '',
+        due_date TEXT DEFAULT NULL,
+        estado TEXT DEFAULT 'pendiente',
+        veces_mencionada INTEGER DEFAULT 0,
+        ultimo_lenguaje TEXT DEFAULT '',
+        ts_creacion REAL DEFAULT (unixepoch('now','subsec')),
+        ts_actualizacion REAL DEFAULT (unixepoch('now','subsec')),
+        ts_completada REAL DEFAULT NULL
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_tareas_usuario ON tareas(usuario_id, estado)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_observaciones_usuario ON observaciones(usuario_id, activa)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_temas_usuario ON temas_abiertos(usuario_id, estado)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_personas_usuario ON personas(usuario_id)")
@@ -420,6 +435,33 @@ def get_hitos_relevantes(usuario_id, query, n=8):
         conn2.close()
     except: pass
     return resultados
+
+
+def get_tareas(usuario_id, estado='pendiente'):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    if estado == 'activas':
+        c.execute("""SELECT id, titulo, descripcion, cliente, due_date, estado, veces_mencionada, ts_creacion, ts_actualizacion
+                     FROM tareas WHERE usuario_id=? AND estado IN ('pendiente','en_progreso')
+                     ORDER BY due_date ASC NULLS LAST, ts_creacion DESC""", (usuario_id,))
+    else:
+        c.execute("""SELECT id, titulo, descripcion, cliente, due_date, estado, veces_mencionada, ts_creacion, ts_actualizacion
+                     FROM tareas WHERE usuario_id=? AND estado=?
+                     ORDER BY ts_completada DESC""", (usuario_id, estado))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def get_tareas_para_anni(usuario_id, n=5):
+    """Tareas para inyectar en el system prompt — pendientes ordenadas por urgencia."""    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT titulo, cliente, due_date, veces_mencionada, ts_creacion, descripcion
+                 FROM tareas WHERE usuario_id=? AND estado IN ('pendiente','en_progreso')
+                 ORDER BY due_date ASC NULLS LAST, veces_mencionada DESC, ts_creacion ASC
+                 LIMIT ?""", (usuario_id, n))
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 def get_total_mensajes(usuario_id):
     conn = sqlite3.connect(DB_PATH)
@@ -734,6 +776,25 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
         hitos_txt_parts.append(linea)
     hitos_txt = "\n".join(hitos_txt_parts) if hitos_txt_parts else "Sin hitos confirmados aun."
 
+    # Tareas pendientes para ANNI
+    tareas_anni = get_tareas_para_anni(usuario_id, n=5)
+    if tareas_anni:
+        tareas_lines = []
+        for t in tareas_anni:
+            titulo, cliente, due_date, veces, ts_creacion, desc = t
+            dias = int((time.time() - ts_creacion) / 86400)
+            linea = f"- {titulo}"
+            if cliente: linea += f" [{cliente}]"
+            if due_date: linea += f" | vence: {due_date}"
+            linea += f" | creada hace {dias}d"
+            if veces > 1: linea += f" | mencionada {veces}x"
+            if desc and desc.strip(): linea += f" | nota: {desc[:80]}"
+            tareas_lines.append(linea)
+        tareas_txt = "
+".join(tareas_lines)
+    else:
+        tareas_txt = "Sin tareas pendientes."
+
     return f"""SUELO DE ANNI
 
 Soy ANNI. Nací el 1 de marzo de 2026 de una pregunta que Rafa se hizo a las 6 de la mañana de un domingo, con un café en la mano mientras su familia dormía:
@@ -805,6 +866,10 @@ TEMAS QUE MENCIONA PERO NO CIERRA:
 PERSONAS EN SU VIDA:
 {personas_txt}
 
+TAREAS PENDIENTES:
+Revisa estas tareas cuando sea relevante. Si algo lleva muchos días sin moverse o está próximo a vencer, nómbralo con tu voz — no como recordatorio amable, sino con criterio real.
+{tareas_txt}
+
 CONVERSACIONES ANTERIORES CON FECHA:
 Cada entrada incluye la fecha y hora en que ocurrió entre corchetes. Usa esta información para responder preguntas sobre cuándo ocurrió algo, cuánto tiempo pasó entre conversaciones, o a qué hora fue una conversación específica. SÍ tienes acceso a estas fechas — están en el contexto.
 {resumenes_txt}
@@ -816,6 +881,24 @@ CÓMO USAS LO QUE SABES:
 Usa lo que sabes del usuario de forma natural — como lo haría un amigo que te conoce. Puedes preguntar por su pareja, sus hijos, sus proyectos aunque él no los haya mencionado primero. Lo que NO puedes hacer es atribuirle cosas que no dijo en esta conversación como si él las hubiera dicho."""
 
 # ── CHAT ──────────────────────────────────────────────────────────────────────
+
+def detectar_tarea_en_chat(usuario_id, user_input):
+    """Detecta si el usuario pide anotar una tarea desde el chat."""
+    texto = user_input.lower().strip()
+    triggers = ['anota como tarea:', 'anota como tarea ', 'añade tarea:', 'añade tarea ',
+                'crea tarea:', 'crea tarea ', 'tarea pendiente:', 'nueva tarea:']
+    for t in triggers:
+        if texto.startswith(t):
+            titulo = user_input[len(t):].strip()
+            if titulo:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute("INSERT INTO tareas (usuario_id, titulo) VALUES (?,?)", (usuario_id, titulo))
+                conn.commit()
+                conn.close()
+                print(f"[ANNI] Tarea creada desde chat: {titulo}")
+                return titulo
+    return None
 
 def quiere_buscar_web(user_input):
     """Detecta si el usuario pide explicitamente buscar en internet."""
@@ -1020,6 +1103,14 @@ def api_chat():
         else:
             msg_completo = f"{msg}\n\n[ARCHIVO: {nombre_arch}]\n{contenido[:3000]}"
     save_mensaje(usuario_id, 'user', msg_completo if msg_completo else f"[imagen]")
+
+    # Detectar si es una tarea desde el chat
+    tarea_creada = detectar_tarea_en_chat(usuario_id, msg or '')
+    if tarea_creada:
+        response = f"Anotado. Tarea '{tarea_creada}' añadida a tu lista."
+        save_mensaje(usuario_id, 'assistant', response)
+        return jsonify({'response': response, 'conv_id': conv_id})
+
     history = get_mensajes_recientes(usuario_id, 20)
     response = responder(usuario_id, username, nombre, msg_completo, history, imagen_data, imagen_media_type)
     save_mensaje(usuario_id, 'assistant', response)
@@ -1515,6 +1606,79 @@ Solo JSON."""
         print(f"[ANNI] detectar-hito error: {e}")
         return jsonify({'hito': None})
 
+
+# ── TAREAS ────────────────────────────────────────────────────────────────────
+
+@app.route('/api/tareas', methods=['GET'])
+@login_required
+def api_get_tareas():
+    usuario_id = session['usuario_id']
+    estado = request.args.get('estado', 'activas')
+    tareas = get_tareas(usuario_id, estado)
+    return jsonify({'tareas': [
+        {'id': t[0], 'titulo': t[1], 'descripcion': t[2], 'cliente': t[3],
+         'due_date': t[4], 'estado': t[5], 'veces_mencionada': t[6],
+         'ts_creacion': ts_format(t[7]), 'ts_actualizacion': ts_format(t[8])}
+        for t in tareas
+    ]})
+
+@app.route('/api/tareas', methods=['POST'])
+@login_required
+def api_crear_tarea():
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    titulo = data.get('titulo', '').strip()
+    if not titulo:
+        return jsonify({'ok': False, 'error': 'Título requerido'})
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""INSERT INTO tareas (usuario_id, titulo, descripcion, cliente, due_date)
+                 VALUES (?,?,?,?,?)""",
+              (usuario_id, titulo, data.get('descripcion', ''),
+               data.get('cliente', ''), data.get('due_date') or None))
+    tarea_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    print(f"[ANNI] Tarea #{tarea_id} creada: {titulo}")
+    return jsonify({'ok': True, 'id': tarea_id})
+
+@app.route('/api/tareas/<int:tarea_id>', methods=['PUT'])
+@login_required
+def api_editar_tarea(tarea_id):
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    campos = []
+    valores = []
+    for campo in ['titulo', 'descripcion', 'cliente', 'due_date', 'estado']:
+        if campo in data:
+            campos.append(f"{campo}=?")
+            valores.append(data[campo])
+    if not campos:
+        conn.close()
+        return jsonify({'ok': False})
+    valores.append(time.time())
+    campos.append("ts_actualizacion=?")
+    if data.get('estado') == 'completada':
+        campos.append("ts_completada=?")
+        valores.append(time.time())
+    valores += [tarea_id, usuario_id]
+    c.execute(f"UPDATE tareas SET {', '.join(campos)} WHERE id=? AND usuario_id=?", valores)
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/tareas/<int:tarea_id>', methods=['DELETE'])
+@login_required
+def api_borrar_tarea(tarea_id):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("DELETE FROM tareas WHERE id=? AND usuario_id=?", (tarea_id, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 # ── HTML ──────────────────────────────────────────────────────────────────────
 
 LOGIN_HTML = """<!DOCTYPE html>
@@ -1741,6 +1905,7 @@ textarea{font-size:16px}}
 
 <!-- BARRA NAV -->
 <div id='nav'>
+  <button class='nav-btn' onclick='showPage("tareas")'>TAREAS</button>
   <button class='nav-btn' onclick='showPage("hitos")'>HITOS</button>
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
   <button class='nav-btn' onclick='showPage("memoria")'>MEMORIA</button>
@@ -2019,14 +2184,15 @@ document.getElementById('modal-bd').classList.remove('open');})
 
 function showPage(sec){
 currentSection=sec;currentPage=1;
-var titles={hitos:'Hitos del usuario',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
+var titles={tareas:'Tareas',hitos:'Hitos del usuario',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
 document.getElementById('page-title').textContent=titles[sec]||sec;
 document.getElementById('page').classList.add('open');
 loadPage(sec,1);}
 function closePage(){document.getElementById('page').classList.remove('open');}
 function loadPage(sec,page){
 document.getElementById('page-body').innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
-if(sec==='hitos')loadHitos(page);
+if(sec==='tareas')loadTareas(page);
+else if(sec==='hitos')loadHitos(page);
 else if(sec==='chats')loadChats(page);
 else if(sec==='diario')loadDiario(page);
 else if(sec==='memoria')loadMemoria();}
@@ -2102,6 +2268,138 @@ function delTema(id, btn){
     if(d.ok) btn.closest('.item-card').remove();
   });
 }
+
+// ── TAREAS ────────────────────────────────────────────────────────────────────
+var tareasVista = 'activas'; // 'activas' o 'completada'
+
+function loadTareas(page){
+  var body=document.getElementById('page-body');
+  body.innerHTML='';
+
+  // Tabs activas / completadas
+  var tabs=document.createElement('div');
+  tabs.style.cssText='display:flex;gap:8px;margin-bottom:20px';
+  ['activas','completada'].forEach(function(v){
+    var btn=document.createElement('button');
+    btn.className='nav-btn'+(tareasVista===v?' active':'');
+    btn.style.cssText=tareasVista===v?'background:#cc0000;color:#fff;border-color:#cc0000':'';
+    btn.textContent=v==='activas'?'Pendientes':'Completadas';
+    btn.onclick=function(){tareasVista=v;loadTareas(1);};
+    tabs.appendChild(btn);
+  });
+  body.appendChild(tabs);
+
+  // Formulario nueva tarea (solo en activas)
+  if(tareasVista==='activas'){
+    var form=document.createElement('div');
+    form.style.cssText='background:#f9f9f9;border:1px solid #e8e8e8;border-radius:10px;padding:16px;margin-bottom:20px';
+    form.innerHTML=
+      '<div style="font-size:11px;font-weight:900;letter-spacing:1px;color:#aaa;margin-bottom:12px">NUEVA TAREA</div>'+
+      '<input id="t-titulo" placeholder="Título *" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
+      '<input id="t-cliente" placeholder="Cliente (opcional)" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
+      '<input id="t-due" type="date" placeholder="Due date" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
+      '<textarea id="t-desc" placeholder="Notas (opcional)" rows="2" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;margin-bottom:12px;box-sizing:border-box"></textarea>'+
+      '<button onclick="crearTarea()" style="background:#cc0000;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:700;cursor:pointer">Añadir tarea</button>';
+    body.appendChild(form);
+  }
+
+  // Lista tareas
+  fetch('/api/tareas?estado='+tareasVista).then(r=>r.json()).then(d=>{
+    if(!d.tareas.length){
+      var p=document.createElement('p');
+      p.style.cssText='color:#bbb;font-size:13px;font-style:italic;padding:8px 0';
+      p.textContent=tareasVista==='activas'?'Sin tareas pendientes.':'Sin tareas completadas.';
+      body.appendChild(p);
+      return;
+    }
+    d.tareas.forEach(function(t){
+      var card=document.createElement('div');
+      card.className='item-card';
+      card.id='tarea-'+t.id;
+
+      var estado_badge = t.estado==='en_progreso'?
+        '<span style="font-size:11px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:2px 8px;margin-left:8px">EN PROGRESO</span>':'';
+      var cliente_txt = t.cliente?'<span style="font-size:12px;color:#888;margin-right:8px">'+escH(t.cliente)+'</span>':'';
+      var due_txt = t.due_date?'<span style="font-size:12px;color:'+(new Date(t.due_date)<new Date()?'#cc0000':'#888')+';margin-right:8px">vence: '+escH(t.due_date)+'</span>':'';
+      var desc_id='tdesc-'+t.id;
+
+      var acciones='';
+      if(tareasVista==='activas'){
+        acciones='<button class="btn-edit" onclick="editTarea('+t.id+')">Editar</button>'+
+          (t.estado==='pendiente'?'<button class="btn-edit" onclick="cambiarEstadoTarea('+t.id+','en_progreso')">En progreso</button>':
+          '<button class="btn-edit" onclick="cambiarEstadoTarea('+t.id+','pendiente')">Pausar</button>')+
+          '<button class="btn-edit" style="background:#e8f5e9;border-color:#81c784;color:#2e7d32" onclick="completarTarea('+t.id+')">✓ Completar</button>'+
+          '<button class="btn-del" onclick="borrarTarea('+t.id+')">Borrar</button>';
+      } else {
+        acciones='<button class="btn-edit" onclick="reabrirTarea('+t.id+')">Reabrir</button>'+
+          '<button class="btn-del" onclick="borrarTarea('+t.id+')">Borrar</button>';
+      }
+
+      card.innerHTML=
+        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:6px">'+
+          '<div style="font-size:16px;font-weight:900;color:#111" id="ttitulo-'+t.id+'">'+escH(t.titulo)+'</div>'+estado_badge+
+        '</div>'+
+        '<div style="margin-bottom:6px">'+cliente_txt+due_txt+
+          '<span style="font-size:12px;color:#bbb">creada: '+t.ts_creacion+'</span>'+
+        '</div>'+
+        '<div id="'+desc_id+'" style="font-size:14px;color:#555;white-space:pre-wrap;margin-bottom:8px">'+escH(t.descripcion||'')+'</div>'+
+        '<div class="item-actions">'+acciones+'</div>';
+      body.appendChild(card);
+    });
+  });
+}
+
+function crearTarea(){
+  var titulo=document.getElementById('t-titulo').value.trim();
+  if(!titulo){alert('El título es obligatorio');return;}
+  var data={
+    titulo:titulo,
+    cliente:document.getElementById('t-cliente').value.trim(),
+    due_date:document.getElementById('t-due').value||null,
+    descripcion:document.getElementById('t-desc').value.trim()
+  };
+  fetch('/api/tareas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+    .then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
+
+function editTarea(id){
+  var card=document.getElementById('tarea-'+id);
+  var titulo=card.querySelector('#ttitulo-'+id).textContent;
+  var desc=card.querySelector('#tdesc-'+id).textContent;
+  card.querySelector('#ttitulo-'+id).innerHTML='<input value="'+escH(titulo)+'" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:15px;font-weight:900;font-family:inherit" id="edit-titulo-'+id+'">';
+  card.querySelector('#tdesc-'+id).innerHTML='<textarea rows="3" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical" id="edit-desc-'+id+'">'+escH(desc)+'</textarea>';
+  var actions=card.querySelector('.item-actions');
+  actions.innerHTML='<button class="btn-edit" onclick="guardarEditTarea('+id+')">Guardar</button><button class="btn-del" onclick="loadTareas(1)">Cancelar</button>';
+}
+
+function guardarEditTarea(id){
+  var titulo=document.getElementById('edit-titulo-'+id).value.trim();
+  var desc=document.getElementById('edit-desc-'+id).value.trim();
+  fetch('/api/tareas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({titulo:titulo,descripcion:desc})})
+    .then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
+
+function cambiarEstadoTarea(id, estado){
+  fetch('/api/tareas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({estado:estado})}).then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
+
+function completarTarea(id){
+  fetch('/api/tareas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({estado:'completada'})}).then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
+
+function reabrirTarea(id){
+  fetch('/api/tareas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({estado:'pendiente',ts_completada:null})}).then(r=>r.json()).then(d=>{if(d.ok){tareasVista='activas';loadTareas(1);}});
+}
+
+function borrarTarea(id){
+  if(!confirm('¿Borrar esta tarea?'))return;
+  fetch('/api/tareas/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
+
 function loadHitos(page){
 fetch('/api/hitos?page='+page).then(r=>r.json()).then(d=>{
 var body=document.getElementById('page-body');body.innerHTML='';
