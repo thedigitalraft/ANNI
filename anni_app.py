@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.19"
+ANNI_VERSION = "1.0.20"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1093,6 +1093,21 @@ def api_borrar_hito(hid):
 
 # ── CHATS ─────────────────────────────────────────────────────────────────────
 
+@app.route('/api/chats/<int:cid>', methods=['PUT'])
+@login_required
+def api_editar_chat(cid):
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    resumen = data.get('resumen', '').strip()
+    if not resumen:
+        return jsonify({'ok': False})
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE conversaciones SET resumen=? WHERE id=? AND usuario_id=?",
+                 (resumen, cid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 @app.route('/api/chats', methods=['GET'])
 @login_required
 def api_chats():
@@ -1431,9 +1446,9 @@ button#s:disabled{background:#ddd;cursor:not-allowed}
 /* PÁGINA */
 #page{display:none;position:fixed;inset:0;background:#fff;z-index:900;flex-direction:column}
 #page.open{display:flex}
-.page-header{padding:16px 20px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
-.page-header h1{font-size:22px;font-weight:900;color:#111}
-.page-close{font-size:14px;font-weight:700;color:#cc0000;cursor:pointer;padding:8px 14px;border:2px solid #ffcccc;border-radius:8px;background:none}
+.page-header{padding:16px 20px;border-bottom:2px solid #e8e8e8;display:flex;align-items:center;gap:16px;flex-shrink:0}
+.page-header h1{font-size:22px;font-weight:900;color:#111;flex:1}
+.page-close{font-size:14px;font-weight:700;color:#cc0000;cursor:pointer;padding:8px 14px;border:2px solid #ffcccc;border-radius:8px;background:none;flex-shrink:0;order:-1}
 .page-body{flex:1;overflow-y:auto;padding:20px;max-width:760px;width:100%;margin:0 auto}
 .item-card{border:1px solid #e8e8e8;border-radius:12px;padding:16px;margin-bottom:14px}
 .item-meta{font-size:12px;color:#999;margin-bottom:6px}
@@ -1761,9 +1776,26 @@ var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Ac
 var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</b> '+escH(h.como)+'</div>':'';
 card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
 '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+
-'<div class="item-actions"><button class="btn-del" onclick="delHito('+h.id+')">Borrar</button></div>';
+'<div class="item-actions">'+
+'<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
+'<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
+'</div>';
 body.appendChild(card);});
 body.appendChild(pagerEl(d.pages,page,'loadHitos'));});}
+
+function editHito(id,btn){
+var card=btn.closest('.item-card');
+var contentEl=card.querySelector('[id="hc-'+id+'"]');
+if(!contentEl)return;
+var orig=contentEl.textContent;
+contentEl.innerHTML='<textarea style="width:100%;border:2px solid #cc0000;border-radius:8px;padding:10px;font-size:15px;font-family:inherit;resize:vertical" rows="4">'+escH(orig)+'</textarea>';
+btn.textContent='Guardar';
+btn.onclick=function(){
+var txt=contentEl.querySelector('textarea').value.trim();
+if(!txt)return;
+fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({contenido:txt})})
+.then(()=>loadHitos(currentPage));};
+}
 
 function delHito(id){
 if(!confirm('Borrar este hito?'))return;
@@ -1776,9 +1808,25 @@ if(!d.chats.length){body.innerHTML='<p style="color:#999;padding:20px">Sin conve
 d.chats.forEach(function(c){
 var card=document.createElement('div');card.className='item-card';
 card.innerHTML='<div class="item-meta">Chat #'+c.id+' &middot; '+c.inicio+'</div>'+
-'<div class="item-content">'+escH(c.resumen)+'</div>';
+'<div class="item-content" id="cc-'+c.id+'">'+escH(c.resumen)+'</div>'+
+'<div class="item-actions">'+
+'<button class="btn-edit" onclick="editChat('+c.id+',this)">Editar</button>'+
+'</div>';
 body.appendChild(card);});
 body.appendChild(pagerEl(d.pages,page,'loadChats'));});}
+
+function editChat(id,btn){
+var contentEl=document.getElementById('cc-'+id);
+if(!contentEl)return;
+var orig=contentEl.textContent;
+contentEl.innerHTML='<textarea style="width:100%;border:2px solid #cc0000;border-radius:8px;padding:10px;font-size:15px;font-family:inherit;resize:vertical" rows="5">'+escH(orig)+'</textarea>';
+btn.textContent='Guardar';
+btn.onclick=function(){
+var txt=contentEl.querySelector('textarea').value.trim();
+if(!txt)return;
+fetch('/api/chats/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({resumen:txt})})
+.then(r=>r.json()).then(()=>loadChats(currentPage));};
+}
 
 function loadDiario(page){
 var body=document.getElementById('page-body');
