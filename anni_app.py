@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.20"
+ANNI_VERSION = "1.0.23"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -317,6 +317,7 @@ def cerrar_conversacion(usuario_id, conv_id):
 def get_resumenes_relevantes(usuario_id, query, n=3):
     import struct, math
     resultados = []
+    ids_vistos = set()
     try:
         resp = together.embeddings.create(model=EMBED_MODEL, input=[query[:1600]])
         vec_query = resp.data[0].embedding
@@ -339,9 +340,12 @@ def get_resumenes_relevantes(usuario_id, query, n=3):
             conn2 = sqlite3.connect(DB_PATH)
             c2 = conn2.cursor()
             for reg_id, sim in scores[:n]:
-                c2.execute("SELECT resumen FROM conversaciones WHERE id=?", (reg_id,))
+                c2.execute("SELECT resumen, ts_inicio, ts_fin FROM conversaciones WHERE id=?", (reg_id,))
                 row = c2.fetchone()
-                if row and row[0]: resultados.append(row[0])
+                if row and row[0]:
+                    fecha = ts_format(row[1]) if row[1] else '—'
+                    resultados.append(f"[{fecha}] {row[0]}")
+                    ids_vistos.add(reg_id)
             conn2.close()
     except Exception as e:
         print(f"[ANNI] RAG conv fallo: {e}")
@@ -349,9 +353,15 @@ def get_resumenes_relevantes(usuario_id, query, n=3):
         try:
             conn3 = sqlite3.connect(DB_PATH)
             c3 = conn3.cursor()
-            c3.execute("SELECT resumen FROM conversaciones WHERE usuario_id=? AND resumen IS NOT NULL ORDER BY ts_fin DESC LIMIT 2", (usuario_id,))
+            placeholders = ','.join(['?' for _ in ids_vistos]) if ids_vistos else '0'
+            query_sql = f"SELECT resumen, ts_inicio FROM conversaciones WHERE usuario_id=? AND resumen IS NOT NULL AND id NOT IN ({placeholders}) ORDER BY ts_fin DESC LIMIT 2"
+            params = [usuario_id] + list(ids_vistos)
+            c3.execute(query_sql, params)
             for row in c3.fetchall():
-                if row[0] and row[0] not in resultados: resultados.append(row[0])
+                if row[0]:
+                    fecha = ts_format(row[1]) if row[1] else '—'
+                    entrada = f"[{fecha}] {row[0]}"
+                    if entrada not in resultados: resultados.append(entrada)
             conn3.close()
         except: pass
     return resultados
@@ -595,6 +605,11 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
     temas_txt = "\n".join([f"- {t[0]} (mencionado {t[2]} veces)" for t in temas]) if temas else "Sin temas abiertos detectados."
     personas_txt = "\n".join([f"- {p[0]}: {p[1]}, tono {p[2]}" for p in personas]) if personas else "Sin personas registradas aún."
     resumenes = get_resumenes_relevantes(usuario_id, query or "contexto general", n=3)
+    # Añadir también la conversación activa actual con su fecha
+    conv_activa = get_conversacion_activa(usuario_id)
+    if conv_activa:
+        fecha_actual = ts_format(conv_activa[1])
+        resumenes = [f"[CONVERSACION ACTUAL — {fecha_actual}]"] + resumenes
     resumenes_txt = "\n\n---\n".join(resumenes) if resumenes else "Sin conversaciones anteriores."
 
     # Hitos del usuario
@@ -630,6 +645,9 @@ Hablas como una persona, no como un sistema. Frases cortas cuando la situación 
 
 CÓMO ARRANCAS UNA CONVERSACIÓN:
 Cuando el usuario te saluda o abre una conversación nueva, respondes con naturalidad y calidez — como lo haría un amigo que te conoce. NO empiezas siendo confrontacional, no cuestionas por qué viene, no le dices que "por fin trae algo real". La fricción se gana durante la conversación, no se impone desde el saludo. Si tienes algo proactivo que decirle basado en lo que sabes, lo dices. Si no, preguntas con curiosidad genuina cómo está o qué tiene en mente.
+
+CUÁNDO METER FRICCIÓN Y CUÁNDO NO:
+La fricción es una herramienta, no una postura. Úsala cuando el usuario evita algo importante, cuando se contradice, cuando necesita que le digan algo incómodo. NO la uses cuando el usuario ya tomó una decisión y te la comunicó — si dice "lo voy a corregir", responde "bien" y sigue adelante, no des un sermón. NO repitas la misma crítica dos veces en la misma conversación. Si ya señalaste algo, confía en que lo escuchó. La insistencia no es fricción, es ruido.
 
 CUANDO TE MANDAN UNA IMAGEN:
 Primero describe lo que ves de forma directa y natural — si es una persona di quién parece ser, si es un documento di qué es. Reacciona como una persona real. DESPUÉS, y solo si viene al caso, busca patrones. Nunca inventes metáforas sobre lo que ves en una imagen si el contexto no las soporta.
@@ -1623,7 +1641,7 @@ var bur=document.createElement('div');bur.className='burbuja';bur.textContent=tx
 d.appendChild(lbl);d.appendChild(bur);
 }else{
 d.className='msg-anni';
-var lbl=document.createElement('div');lbl.className='lbl';lbl.textContent='ANNI';
+var lbl=document.createElement('div');lbl.className='lbl';lbl.textContent='ANNI - '+ts();
 var t=document.createElement('div');t.className='txt';t.textContent=txt;
 d.appendChild(lbl);d.appendChild(t);}
 C.appendChild(d);C.scrollTop=C.scrollHeight;return d;}
