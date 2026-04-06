@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.36"
+ANNI_VERSION = "1.0.37"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -453,7 +453,8 @@ def get_tareas(usuario_id, estado='pendiente'):
     return rows
 
 def get_tareas_para_anni(usuario_id, n=5):
-    """Tareas para inyectar en el system prompt — pendientes ordenadas por urgencia."""    conn = sqlite3.connect(DB_PATH)
+    """Tareas para inyectar en el system prompt — pendientes ordenadas por urgencia."""
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""SELECT titulo, cliente, due_date, veces_mencionada, ts_creacion, descripcion
                  FROM tareas WHERE usuario_id=? AND estado IN ('pendiente','en_progreso')
@@ -790,8 +791,7 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
             if veces > 1: linea += f" | mencionada {veces}x"
             if desc and desc.strip(): linea += f" | nota: {desc[:80]}"
             tareas_lines.append(linea)
-        tareas_txt = "
-".join(tareas_lines)
+        tareas_txt = '\n'.join(tareas_lines)
     else:
         tareas_txt = "Sin tareas pendientes."
 
