@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.31"
+ANNI_VERSION = "1.0.32"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -238,7 +238,7 @@ def save_mensaje(usuario_id, role, content):
 def get_observaciones_activas(usuario_id, limit=15):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT tipo, contenido, ts FROM observaciones
+    c.execute("""SELECT id, tipo, contenido, ts FROM observaciones
                  WHERE usuario_id=? AND activa=1
                  ORDER BY peso DESC, ts DESC LIMIT ?""", (usuario_id, limit))
     rows = c.fetchall()
@@ -248,7 +248,7 @@ def get_observaciones_activas(usuario_id, limit=15):
 def get_temas_abiertos(usuario_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT tema, primera_mencion, veces_mencionado FROM temas_abiertos
+    c.execute("""SELECT id, tema, primera_mencion, veces_mencionado FROM temas_abiertos
                  WHERE usuario_id=? AND estado='abierto'
                  ORDER BY veces_mencionado DESC, ultima_mencion DESC LIMIT 10""", (usuario_id,))
     rows = c.fetchall()
@@ -258,7 +258,7 @@ def get_temas_abiertos(usuario_id):
 def get_personas(usuario_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT nombre, relacion, tono_predominante, ultima_mencion FROM personas
+    c.execute("""SELECT id, nombre, relacion, tono_predominante, ultima_mencion FROM personas
                  WHERE usuario_id=? ORDER BY ultima_mencion DESC LIMIT 10""", (usuario_id,))
     rows = c.fetchall()
     conn.close()
@@ -497,8 +497,8 @@ Responde SOLO con este JSON exacto, sin nada más:
 Reglas:
 - Solo incluir lo que sea concreto y observable, no inferencias débiles
 - Observaciones: máximo 3, solo las más significativas
-- Personas: solo las mencionadas explícitamente
-- Temas abiertos: decisiones mencionadas pero sin cierre claro
+- Personas: solo terceras personas mencionadas explícitamente — NUNCA incluir al propio usuario (Rafa) ni a ANNI/ANI en esta lista
+- Temas abiertos: decisiones o situaciones reales de la vida del usuario mencionadas pero sin cierre claro — NUNCA incluir temas sobre el funcionamiento del sistema, cierres de conversación, o aspectos técnicos de ANNI
 - Si no hay nada relevante en alguna categoría, dejar el array vacío"""
 
     try:
@@ -606,9 +606,9 @@ def generar_intervencion_proactiva(usuario_id):
     if total_msgs < 10:
         return None
 
-    contexto_obs = "\n".join([f"- [{o[0]}] {o[1]} (detectado {ts_format(o[2])})" for o in observaciones]) if observaciones else "Sin observaciones aún."
-    contexto_temas = "\n".join([f"- '{t[0]}' (mencionado {t[2]} veces desde {ts_format(t[1])})" for t in temas]) if temas else "Sin temas abiertos."
-    contexto_personas = "\n".join([f"- {p[0]} ({p[1]}, tono: {p[2]}, última mención: {ts_format(p[3])})" for p in personas]) if personas else "Sin personas registradas."
+    contexto_obs = "\n".join([f"- [{o[1]}] {o[2]} (detectado {ts_format(o[3])})" for o in observaciones]) if observaciones else "Sin observaciones aún."
+    contexto_temas = "\n".join([f"- '{t[1]}' (mencionado {t[3]} veces desde {ts_format(t[2])})" for t in temas]) if temas else "Sin temas abiertos."
+    contexto_personas = "\n".join([f"- {p[1]} ({p[2]}, tono: {p[3]}, última mención: {ts_format(p[4])})" for p in personas]) if personas else "Sin personas registradas."
 
     prompt = f"""Eres ANNI, una IA que conoce profundamente a este usuario a través de sus conversaciones.
 
@@ -658,9 +658,9 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
     personas = get_personas(usuario_id)
     total_msgs = get_total_mensajes(usuario_id)
 
-    obs_txt = "\n".join([f"- [{o[0]}] {o[1]}" for o in observaciones]) if observaciones else "Aún sin observaciones — conversación temprana."
-    temas_txt = "\n".join([f"- {t[0]} (mencionado {t[2]} veces)" for t in temas]) if temas else "Sin temas abiertos detectados."
-    personas_txt = "\n".join([f"- {p[0]}: {p[1]}, tono {p[2]}" for p in personas]) if personas else "Sin personas registradas aún."
+    obs_txt = "\n".join([f"- [{o[1]}] {o[2]}" for o in observaciones]) if observaciones else "Aún sin observaciones — conversación temprana."
+    temas_txt = "\n".join([f"- {t[1]} (mencionado {t[3]} veces)" for t in temas]) if temas else "Sin temas abiertos detectados."
+    personas_txt = "\n".join([f"- {p[1]}: {p[2]}, tono {p[3]}" for p in personas]) if personas else "Sin personas registradas aún."
     resumenes = get_resumenes_relevantes(usuario_id, query or "contexto general", n=3)
     # Añadir también la conversación activa actual con su fecha
     conv_activa = get_conversacion_activa(usuario_id)
@@ -1108,9 +1108,9 @@ def api_memoria():
     temas = get_temas_abiertos(usuario_id)
     personas = get_personas(usuario_id)
     return jsonify({
-        'observaciones': [{'tipo': o[0], 'contenido': o[1], 'ts': ts_format(o[2])} for o in obs],
-        'temas_abiertos': [{'tema': t[0], 'veces': t[2]} for t in temas],
-        'personas': [{'nombre': p[0], 'relacion': p[1], 'tono': p[2]} for p in personas]
+        'observaciones': [{'id': o[0], 'tipo': o[1], 'contenido': o[2], 'ts': ts_format(o[3])} for o in obs],
+        'temas_abiertos': [{'id': t[0], 'tema': t[1], 'veces': t[3]} for t in temas],
+        'personas': [{'id': p[0], 'nombre': p[1], 'relacion': p[2], 'tono': p[3]} for p in personas]
     })
 
 @app.route('/api/cerrar-tema', methods=['POST'])
@@ -1125,6 +1125,27 @@ def cerrar_tema():
                      (tema_id, usuario_id))
         conn.commit()
         conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/observacion/<int:obs_id>', methods=['DELETE'])
+@login_required
+def delete_observacion(obs_id):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute('UPDATE observaciones SET activa=0 WHERE id=? AND usuario_id=?', (obs_id, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/persona/<int:persona_id>', methods=['DELETE'])
+@login_required
+def delete_persona(persona_id):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute('DELETE FROM personas WHERE id=? AND usuario_id=?', (persona_id, usuario_id))
+    conn.commit()
+    conn.close()
     return jsonify({'ok': True})
 
 # ── HITOS USUARIO ────────────────────────────────────────────────────────────
@@ -1978,20 +1999,42 @@ function card(content){
 seccion('Observaciones', d.observaciones, function(o){
   return card('<div style="font-size:12px;background:#f5f5f5;border-radius:4px;padding:2px 8px;display:inline-block;margin-bottom:6px">'+escH(o.tipo)+'</div>'+
     '<div style="font-size:15px;color:#222">'+escH(o.contenido)+'</div>'+
-    '<div style="font-size:12px;color:#aaa;margin-top:4px">'+o.ts+'</div>');
+    '<div style="font-size:12px;color:#aaa;margin-top:4px">'+o.ts+'</div>'+
+    '<div class="item-actions"><button class="btn-del" onclick="delObservacion('+o.id+',this)">Borrar</button></div>');
 }, 'Sin observaciones aún — cierra una conversación para generarlas.');
 
 seccion('Personas', d.personas, function(p){
   return card('<div style="font-size:16px;font-weight:900;color:#111">'+escH(p.nombre)+'</div>'+
-    '<div style="font-size:13px;color:#666;margin-top:2px">'+escH(p.relacion)+' &middot; tono: '+escH(p.tono)+'</div>');
+    '<div style="font-size:13px;color:#666;margin-top:2px">'+escH(p.relacion)+' &middot; tono: '+escH(p.tono)+'</div>'+
+    '<div class="item-actions"><button class="btn-del" onclick="delPersona('+p.id+',this)">Borrar</button></div>');
 }, 'Sin personas registradas aún.');
 
 seccion('Temas abiertos', d.temas_abiertos, function(t){
   return card('<div style="font-size:15px;color:#222">'+escH(t.tema)+'</div>'+
-    '<div style="font-size:12px;color:#aaa;margin-top:4px">Mencionado '+t.veces+' vez/veces</div>');
+    '<div style="font-size:12px;color:#aaa;margin-top:4px">Mencionado '+t.veces+' vez/veces</div>'+
+    '<div class="item-actions"><button class="btn-del" onclick="delTema('+t.id+',this)">Borrar</button></div>');
 }, 'Sin temas abiertos.');
 
 });
+}
+
+function delObservacion(id, btn){
+  if(!confirm('¿Borrar esta observación?')) return;
+  fetch('/api/observacion/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{
+    if(d.ok) btn.closest('.item-card').remove();
+  });
+}
+function delPersona(id, btn){
+  if(!confirm('¿Borrar esta persona?')) return;
+  fetch('/api/persona/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{
+    if(d.ok) btn.closest('.item-card').remove();
+  });
+}
+function delTema(id, btn){
+  if(!confirm('¿Borrar este tema?')) return;
+  fetch('/api/cerrar-tema',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})}).then(r=>r.json()).then(d=>{
+    if(d.ok) btn.closest('.item-card').remove();
+  });
 }
 function loadHitos(page){
 fetch('/api/hitos?page='+page).then(r=>r.json()).then(d=>{
