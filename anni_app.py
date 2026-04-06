@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.40"
+ANNI_VERSION = "1.0.41"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2366,8 +2366,11 @@ function editTarea(id){
   var card=document.getElementById('tarea-'+id);
   var titulo=card.querySelector('#ttitulo-'+id).textContent;
   var desc=card.querySelector('#tdesc-'+id).textContent;
+  var due=card.dataset.due||'';
   card.querySelector('#ttitulo-'+id).innerHTML='<input value="'+escH(titulo)+'" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:15px;font-weight:900;font-family:inherit" id="edit-titulo-'+id+'">';
-  card.querySelector('#tdesc-'+id).innerHTML='<textarea rows="3" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical" id="edit-desc-'+id+'">'+escH(desc)+'</textarea>';
+  card.querySelector('#tdesc-'+id).innerHTML=
+    '<input type="date" value="'+escH(due)+'" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit;margin-bottom:6px" id="edit-due-'+id+'">'+
+    '<textarea rows="3" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical" id="edit-desc-'+id+'">'+escH(desc)+'</textarea>';
   var actions=card.querySelector('.item-actions');
   actions.innerHTML='<button class="btn-edit" onclick="guardarEditTarea('+id+')">Guardar</button><button class="btn-del" onclick="loadTareas(1)">Cancelar</button>';
 }
@@ -2375,8 +2378,9 @@ function editTarea(id){
 function guardarEditTarea(id){
   var titulo=document.getElementById('edit-titulo-'+id).value.trim();
   var desc=document.getElementById('edit-desc-'+id).value.trim();
+  var due=document.getElementById('edit-due-'+id).value||null;
   fetch('/api/tareas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({titulo:titulo,descripcion:desc})})
+    body:JSON.stringify({titulo:titulo,descripcion:desc,due_date:due})})
     .then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
 }
 
