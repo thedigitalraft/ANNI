@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.38"
+ANNI_VERSION = "1.0.39"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2272,25 +2272,25 @@ function delTema(id, btn){
 // ── TAREAS ────────────────────────────────────────────────────────────────────
 var tareasVista = 'activas'; // 'activas' o 'completada'
 
-function loadTareas(page){{
+function loadTareas(page){
   var body=document.getElementById('page-body');
   body.innerHTML='';
 
   // Tabs activas / completadas
   var tabs=document.createElement('div');
   tabs.style.cssText='display:flex;gap:8px;margin-bottom:20px';
-  ['activas','completada'].forEach(function(v){{
+  ['activas','completada'].forEach(function(v){
     var btn=document.createElement('button');
     btn.className='nav-btn'+(tareasVista===v?' active':'');
     btn.style.cssText=tareasVista===v?'background:#cc0000;color:#fff;border-color:#cc0000':'';
     btn.textContent=v==='activas'?'Pendientes':'Completadas';
-    btn.onclick=function(){{tareasVista=v;loadTareas(1);}};
+    btn.onclick=function(){tareasVista=v;loadTareas(1);};
     tabs.appendChild(btn);
-  }});
+  });
   body.appendChild(tabs);
 
   // Formulario nueva tarea (solo en activas)
-  if(tareasVista==='activas'){{
+  if(tareasVista==='activas'){
     var form=document.createElement('div');
     form.style.cssText='background:#f9f9f9;border:1px solid #e8e8e8;border-radius:10px;padding:16px;margin-bottom:20px';
     form.innerHTML=
@@ -2301,18 +2301,18 @@ function loadTareas(page){{
       '<textarea id="t-desc" placeholder="Notas (opcional)" rows="2" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;margin-bottom:12px;box-sizing:border-box"></textarea>'+
       '<button onclick="crearTarea()" style="background:#cc0000;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:700;cursor:pointer">Añadir tarea</button>';
     body.appendChild(form);
-  }}
+  }
 
   // Lista tareas
-  fetch('/api/tareas?estado='+tareasVista).then(r=>r.json()).then(d=>{{
-    if(!d.tareas.length){{
+  fetch('/api/tareas?estado='+tareasVista).then(r=>r.json()).then(d=>{
+    if(!d.tareas.length){
       var p=document.createElement('p');
       p.style.cssText='color:#bbb;font-size:13px;font-style:italic;padding:8px 0';
       p.textContent=tareasVista==='activas'?'Sin tareas pendientes.':'Sin tareas completadas.';
       body.appendChild(p);
       return;
-    }}
-    d.tareas.forEach(function(t){{
+    }
+    d.tareas.forEach(function(t){
       var card=document.createElement('div');
       card.className='item-card';
       card.id='tarea-'+t.id;
@@ -2324,16 +2324,16 @@ function loadTareas(page){{
       var desc_id='tdesc-'+t.id;
 
       var acciones='';
-      if(tareasVista==='activas'){{
+      if(tareasVista==='activas'){
         acciones='<button class="btn-edit" onclick="editTarea('+t.id+')">Editar</button>'+
           (t.estado==='pendiente'?'<button class="btn-edit" onclick="cambiarEstadoTarea('+t.id+','en_progreso')">En progreso</button>':
           '<button class="btn-edit" onclick="cambiarEstadoTarea('+t.id+','pendiente')">Pausar</button>')+
           '<button class="btn-edit" style="background:#e8f5e9;border-color:#81c784;color:#2e7d32" onclick="completarTarea('+t.id+')">✓ Completar</button>'+
           '<button class="btn-del" onclick="borrarTarea('+t.id+')">Borrar</button>';
-      }} else {{
+      } else {
         acciones='<button class="btn-edit" onclick="reabrirTarea('+t.id+')">Reabrir</button>'+
           '<button class="btn-del" onclick="borrarTarea('+t.id+')">Borrar</button>';
-      }}
+      }
 
       card.innerHTML=
         '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:6px">'+
@@ -2345,24 +2345,24 @@ function loadTareas(page){{
         '<div id="'+desc_id+'" style="font-size:14px;color:#555;white-space:pre-wrap;margin-bottom:8px">'+escH(t.descripcion||'')+'</div>'+
         '<div class="item-actions">'+acciones+'</div>';
       body.appendChild(card);
-    }});
-  }});
-}}
+    });
+  });
+}
 
-function crearTarea(){{
+function crearTarea(){
   var titulo=document.getElementById('t-titulo').value.trim();
-  if(!titulo){{alert('El título es obligatorio');return;}}
-  var data={{
+  if(!titulo){alert('El título es obligatorio');return;}
+  var data={
     titulo:titulo,
     cliente:document.getElementById('t-cliente').value.trim(),
     due_date:document.getElementById('t-due').value||null,
     descripcion:document.getElementById('t-desc').value.trim()
-  }};
-  fetch('/api/tareas',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(data)}})
-    .then(r=>r.json()).then(d=>{{if(d.ok)loadTareas(1);}});
-}}
+  };
+  fetch('/api/tareas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+    .then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
 
-function editTarea(id){{
+function editTarea(id){
   var card=document.getElementById('tarea-'+id);
   var titulo=card.querySelector('#ttitulo-'+id).textContent;
   var desc=card.querySelector('#tdesc-'+id).textContent;
@@ -2370,35 +2370,35 @@ function editTarea(id){{
   card.querySelector('#tdesc-'+id).innerHTML='<textarea rows="3" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical" id="edit-desc-'+id+'">'+escH(desc)+'</textarea>';
   var actions=card.querySelector('.item-actions');
   actions.innerHTML='<button class="btn-edit" onclick="guardarEditTarea('+id+')">Guardar</button><button class="btn-del" onclick="loadTareas(1)">Cancelar</button>';
-}}
+}
 
-function guardarEditTarea(id){{
+function guardarEditTarea(id){
   var titulo=document.getElementById('edit-titulo-'+id).value.trim();
   var desc=document.getElementById('edit-desc-'+id).value.trim();
-  fetch('/api/tareas/'+id,{{method:'PUT',headers:{{'Content-Type':'application/json'}},
-    body:JSON.stringify({{titulo:titulo,descripcion:desc}})}})
-    .then(r=>r.json()).then(d=>{{if(d.ok)loadTareas(1);}});
-}}
+  fetch('/api/tareas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({titulo:titulo,descripcion:desc})})
+    .then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
 
-function cambiarEstadoTarea(id, estado){{
-  fetch('/api/tareas/'+id,{{method:'PUT',headers:{{'Content-Type':'application/json'}},
-    body:JSON.stringify({{estado:estado}})}}).then(r=>r.json()).then(d=>{{if(d.ok)loadTareas(1);}});
-}}
+function cambiarEstadoTarea(id, estado){
+  fetch('/api/tareas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({estado:estado})}).then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
 
-function completarTarea(id){{
-  fetch('/api/tareas/'+id,{{method:'PUT',headers:{{'Content-Type':'application/json'}},
-    body:JSON.stringify({{estado:'completada'}})}}).then(r=>r.json()).then(d=>{{if(d.ok)loadTareas(1);}});
-}}
+function completarTarea(id){
+  fetch('/api/tareas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({estado:'completada'})}).then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
 
-function reabrirTarea(id){{
-  fetch('/api/tareas/'+id,{{method:'PUT',headers:{{'Content-Type':'application/json'}},
-    body:JSON.stringify({{estado:'pendiente',ts_completada:null}})}}).then(r=>r.json()).then(d=>{{if(d.ok){{tareasVista='activas';loadTareas(1);}});
-}}
+function reabrirTarea(id){
+  fetch('/api/tareas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({estado:'pendiente',ts_completada:null})}).then(r=>r.json()).then(d=>{if(d.ok){tareasVista='activas';loadTareas(1);});
+}
 
-function borrarTarea(id){{
+function borrarTarea(id){
   if(!confirm('¿Borrar esta tarea?'))return;
-  fetch('/api/tareas/'+id,{{method:'DELETE'}}).then(r=>r.json()).then(d=>{{if(d.ok)loadTareas(1);}});
-}}
+  fetch('/api/tareas/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
 
 function loadHitos(page){
 fetch('/api/hitos?page='+page).then(r=>r.json()).then(d=>{
