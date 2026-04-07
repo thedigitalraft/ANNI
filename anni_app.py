@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.55"
+ANNI_VERSION = "1.0.56"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1704,6 +1704,15 @@ def api_bienvenida():
 
     # Auto-cerrar conversacion inactiva si lleva mas de 4h sin mensajes
     cerrada = auto_cerrar_conversacion_inactiva(usuario_id)
+
+    # Precalcular universo en background si no hay cache
+    conn_pre = sqlite3.connect(DB_PATH)
+    c_pre = conn_pre.cursor()
+    c_pre.execute("SELECT COUNT(*) FROM universo_cache WHERE usuario_id=?", (usuario_id,))
+    has_cache = c_pre.fetchone()[0] > 0
+    conn_pre.close()
+    if not has_cache:
+        threading.Thread(target=recalcular_universo, args=(usuario_id,), daemon=True).start()
     if cerrada:
         print(f"[ANNI] Conversacion #{cerrada} auto-cerrada al abrir chat")
 
