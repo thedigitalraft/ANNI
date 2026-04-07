@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.58"
+ANNI_VERSION = "1.0.59"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3510,6 +3510,12 @@ fetch('/api/chats/'+id,{method:'PUT',headers:{'Content-Type':'application/json'}
 }
 
 
+function forceTick(){
+  fetch('/api/curiosa/tick',{method:'POST'}).then(r=>r.json()).then(function(d){
+    if(d.ok){setTimeout(function(){loadMundo(1);},4000);}
+  });
+}
+
 function loadMundo(page){
 var body=document.getElementById('page-body');
 body.innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
@@ -3520,7 +3526,7 @@ fetch('/api/mundo/estado').then(r=>r.json()).then(est=>{
   estadoEl.style.cssText='background:#f9f9f9;border:1px solid #e8e8e8;border-radius:10px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#555';
   if(est.activo){
     estadoEl.innerHTML='<span style="color:#cc0000;font-weight:900">● </span>Explorando: <b>'+escH(est.dominio)+'</b> — '+escH(est.subtema)+
-      '<span style="float:right;color:#aaa">P'+est.pulso+'/12 · siguiente en ~'+est.mins_siguiente+'min</span>';
+      '<span style="float:right;color:#aaa">P'+est.pulso+'/12 · siguiente en ~'+est.mins_siguiente+'min &nbsp;<button onclick="forceTick()" style="font-size:9px;padding:2px 6px;background:none;border:1px solid #ccc;cursor:pointer;font-family:monospace">↻</button></span>';
   } else {
     estadoEl.innerHTML='<span style="color:#aaa;font-weight:900">○ </span>Sin ciclo activo — el siguiente arrancará pronto.';
   }
