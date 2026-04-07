@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.50"
+ANNI_VERSION = "1.0.51"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -212,11 +212,20 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_temas_usuario ON temas_abiertos(usuario_id, estado)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_personas_usuario ON personas(usuario_id)")
 
-    # Migración: añadir columna nombre si no existe
-    try:
-        c.execute("ALTER TABLE usuarios ADD COLUMN nombre TEXT NOT NULL DEFAULT ''")
-    except:
-        pass
+    # Migraciones defensivas
+    migraciones = [
+        "ALTER TABLE usuarios ADD COLUMN nombre TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE tareas ADD COLUMN ts_completada REAL DEFAULT NULL",
+        "ALTER TABLE tareas ADD COLUMN veces_mencionada INTEGER DEFAULT 0",
+        "ALTER TABLE tareas ADD COLUMN ultimo_lenguaje TEXT DEFAULT ''",
+        "ALTER TABLE ciclos_curiosa ADD COLUMN pregunta_abierta TEXT DEFAULT ''",
+        "ALTER TABLE ciclos_curiosa ADD COLUMN fuentes_usadas TEXT DEFAULT ''",
+    ]
+    for sql in migraciones:
+        try:
+            c.execute(sql)
+        except:
+            pass
     # Seed dominios CURIOSA si no existen
     c.execute("SELECT COUNT(*) FROM dominios_curiosa")
     if c.fetchone()[0] == 0:
@@ -2230,9 +2239,6 @@ def api_crear_tarea():
     print(f"[ANNI] Tarea #{tarea_id} creada: {titulo}")
     return jsonify({'ok': True, 'id': tarea_id})
 
-@app.route('/api/tareas/<int:tarea_id>', methods=['PUT'])
-@login_required
-
 def analizar_tarea_completada(usuario_id, tarea_id):
     """Analiza una tarea completada y actualiza el modelo de ejecución del usuario."""
     try:
@@ -2322,6 +2328,8 @@ Solo es notable si hay algo genuinamente significativo. No fuerces patrones dond
     except Exception as e:
         print(f"[ANNI] Error analizando tarea completada: {e}")
 
+@app.route('/api/tareas/<int:tarea_id>', methods=['PUT'])
+@login_required
 def api_editar_tarea(tarea_id):
     usuario_id = session['usuario_id']
     data = request.json or {}
