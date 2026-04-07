@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.46"
+ANNI_VERSION = "1.0.47"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2580,7 +2580,7 @@ card.innerHTML='<span class="dia-badge">Dia '+e.dia+'</span>'+
 '<h3 style="font-size:16px;font-weight:800;margin-bottom:8px" id="dtitulo-'+e.id+'">'+escH(e.titulo)+'</h3>'+
 '<div class="item-content" id="dtexto-'+e.id+'">'+escH(e.texto)+'</div>'+
 '<div class="item-actions">'+
-'<button class="btn-edit" onclick="editDiario('+e.id+','+JSON.stringify(e.fecha)+')">Editar</button>'+
+'<button class="btn-edit" data-fecha="'+e.fecha+'" data-id="'+e.id+'" onclick="editDiario(this.dataset.id,this.dataset.fecha)">Editar</button>'+
 '<button class="btn-del" onclick="delDiario('+e.id+')">Borrar</button>'+
 '</div>';
 body.appendChild(card);});
