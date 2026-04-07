@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.49"
+ANNI_VERSION = "1.0.50"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2232,6 +2232,96 @@ def api_crear_tarea():
 
 @app.route('/api/tareas/<int:tarea_id>', methods=['PUT'])
 @login_required
+
+def analizar_tarea_completada(usuario_id, tarea_id):
+    """Analiza una tarea completada y actualiza el modelo de ejecución del usuario."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""SELECT titulo, descripcion, cliente, due_date, estado,
+                            ts_creacion, ts_completada, veces_mencionada
+                     FROM tareas WHERE id=? AND usuario_id=?""", (tarea_id, usuario_id))
+        t = c.fetchone()
+        if not t:
+            conn.close()
+            return
+
+        titulo, desc, cliente, due_date, estado, ts_creacion, ts_completada, veces = t
+
+        # Calcular días que tardó
+        dias_tardados = int((ts_completada - ts_creacion) / 86400) if ts_completada else 0
+
+        # Obtener historial de tareas completadas para comparar
+        c.execute("""SELECT titulo, cliente, ts_creacion, ts_completada,
+                            CAST((ts_completada - ts_creacion) / 86400 AS INTEGER) as dias
+                     FROM tareas WHERE usuario_id=? AND estado='completada'
+                     AND id != ? ORDER BY ts_completada DESC LIMIT 20""",
+                  (usuario_id, tarea_id))
+        historial = c.fetchall()
+        conn.close()
+
+        if not historial:
+            return  # Sin historial suficiente para comparar
+
+        # Calcular promedio días por tipo
+        dias_lista = [h[4] for h in historial if h[4] and h[4] > 0]
+        promedio = sum(dias_lista) / len(dias_lista) if dias_lista else 0
+
+        historial_txt = chr(10).join([f"- {h[0]}{' ['+h[1]+']' if h[1] else ''}: {h[4]} dias" for h in historial[:10]])
+
+        prompt = f"""Eres ANNI analizando el patrón de ejecución de Rafa.
+
+Tarea recién completada:
+- Título: {titulo}
+- Cliente: {cliente or 'ninguno'}
+- Días tardados: {dias_tardados}
+- Veces mencionada en conversación: {veces}
+- Due date: {due_date or 'sin fecha'}
+
+Historial reciente de tareas completadas:
+{historial_txt}
+
+Promedio de días en completar tareas: {promedio:.1f}
+
+Analiza si hay algo notable en esta tarea:
+- ¿Tardó mucho más o mucho menos de lo habitual?
+- ¿Hay un patrón en qué tipo de tareas completa rápido vs cuáles se demoran?
+- ¿La mencionó muchas veces antes de cerrarla (posible evitación)?
+
+Responde SOLO con JSON:
+{{
+  "notable": true/false,
+  "observacion": "descripción concreta del patrón detectado, o null si no hay nada notable",
+  "tipo_patron": "velocidad|evitacion|cliente|general|null"
+}}
+
+Solo es notable si hay algo genuinamente significativo. No fuerces patrones donde no los hay."""
+
+        resp = together.chat.completions.create(
+            model=CHAT_MODEL_FALLBACK,
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.choices[0].message.content.strip().replace("```json","").replace("```","").strip()
+        data = json.loads(raw)
+
+        if data.get("notable") and data.get("observacion"):
+            # Guardar como observación
+            conn2 = sqlite3.connect(DB_PATH)
+            c2 = conn2.cursor()
+            c2.execute("""INSERT INTO observaciones (usuario_id, tipo, contenido, evidencia, peso, ts, ts_ultima_vez)
+                         VALUES (?,?,?,?,5,?,?)""",
+                      (usuario_id, data.get("tipo_patron", "patron"),
+                       data["observacion"],
+                       f"Tarea '{titulo}' completada en {dias_tardados} días",
+                       time.time(), time.time()))
+            conn2.commit()
+            conn2.close()
+            print(f"[ANNI] Patrón de tarea detectado: {data['observacion'][:60]}")
+
+    except Exception as e:
+        print(f"[ANNI] Error analizando tarea completada: {e}")
+
 def api_editar_tarea(tarea_id):
     usuario_id = session['usuario_id']
     data = request.json or {}
@@ -2248,13 +2338,16 @@ def api_editar_tarea(tarea_id):
         return jsonify({'ok': False})
     valores.append(time.time())
     campos.append("ts_actualizacion=?")
-    if data.get('estado') == 'completada':
+    es_completada = data.get('estado') == 'completada'
+    if es_completada:
         campos.append("ts_completada=?")
         valores.append(time.time())
     valores += [tarea_id, usuario_id]
     c.execute(f"UPDATE tareas SET {', '.join(campos)} WHERE id=? AND usuario_id=?", valores)
     conn.commit()
     conn.close()
+    if es_completada:
+        threading.Thread(target=analizar_tarea_completada, args=(usuario_id, tarea_id), daemon=True).start()
     return jsonify({'ok': True})
 
 @app.route('/api/tareas/<int:tarea_id>', methods=['DELETE'])
