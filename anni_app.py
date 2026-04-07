@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.54"
+ANNI_VERSION = "1.0.55"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -208,6 +208,16 @@ def init_db():
         pulso_actual INTEGER DEFAULT 0
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_ciclos_usuario ON ciclos_curiosa(usuario_id, estado)")
+
+    # Cache de coordenadas 3D del universo
+    c.execute("""CREATE TABLE IF NOT EXISTS universo_cache (
+        id INTEGER PRIMARY KEY,
+        usuario_id INTEGER NOT NULL UNIQUE,
+        puntos_json TEXT NOT NULL,
+        estrellas_json TEXT NOT NULL,
+        n_hitos INTEGER DEFAULT 0,
+        ts REAL DEFAULT (unixepoch('now','subsec'))
+    )""")
 
     # Tabla constelaciones — temas centrales detectados por ANNI
     c.execute("""CREATE TABLE IF NOT EXISTS constelaciones (
@@ -2206,57 +2216,94 @@ Solo JSON."""
 @app.route('/api/universo', methods=['GET'])
 @login_required
 def api_universo():
-    """Devuelve hitos y constelaciones para la visualización 3D."""
+    """Devuelve hitos y constelaciones para la visualización 3D — con cache."""
     import struct, json as json_mod
-    import numpy as np
-    import math as math_mod
     usuario_id = session['usuario_id']
+    recalc = request.args.get('recalc', '0') == '1'
 
+    # Count current hitos with embeddings
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT h.id, COALESCE(h.titulo, SUBSTR(h.contenido,1,60)) as label,
-                        h.peso, h.tipo, e.embedding
-                 FROM hitos_usuario h
+    c.execute("""SELECT COUNT(*) FROM hitos_usuario h
                  JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
-                 WHERE h.usuario_id=? AND h.activo=1
-                 ORDER BY h.peso DESC""", (usuario_id,))
-    rows = c.fetchall()
+                 WHERE h.usuario_id=? AND h.activo=1""", (usuario_id,))
+    n_hitos = c.fetchone()[0]
 
-    # Check/calculate constelaciones
+    # Check cache
+    c.execute("SELECT puntos_json, estrellas_json, n_hitos FROM universo_cache WHERE usuario_id=?", (usuario_id,))
+    cache = c.fetchone()
     c.execute("SELECT COUNT(*) FROM constelaciones WHERE usuario_id=?", (usuario_id,))
     n_cons = c.fetchone()[0]
     conn.close()
 
-    if len(rows) < 3:
-        return jsonify({'ok': False, 'error': 'insuficientes_embeddings', 'count': len(rows)})
+    if n_hitos < 3:
+        return jsonify({'ok': False, 'error': 'insuficientes_embeddings', 'count': n_hitos})
 
-    # Recalculate if no constelaciones or forced
-    recalc = request.args.get('recalc', '0') == '1'
-    if n_cons == 0 or recalc:
-        calcular_constelaciones(usuario_id)
+    # Return cache if valid and not forced recalc
+    cache_valid = cache and cache[2] == n_hitos and n_cons > 0 and not recalc
+    if cache_valid:
+        return jsonify({'ok': True, 'points': json_mod.loads(cache[0]),
+                        'stars': json_mod.loads(cache[1]), 'cached': True})
 
-    # Load constelaciones
-    conn3 = sqlite3.connect(DB_PATH)
-    c3 = conn3.cursor()
-    c3.execute("SELECT id, nombre, descripcion, hitos_ids FROM constelaciones WHERE usuario_id=? ORDER BY id",
-               (usuario_id,))
-    cons_rows = c3.fetchall()
-    conn3.close()
+    # Need recalc — launch in background, return loading state if first time
+    if not cache:
+        threading.Thread(target=recalcular_universo, args=(usuario_id,), daemon=True).start()
+        return jsonify({'ok': False, 'error': 'calculando', 'msg': 'Calculando universo por primera vez...'})
 
-    # Build constelacion map: hito_id -> constelacion
-    hito_to_con = {}
-    constelaciones = []
-    con_colors = ['#cc0000','#ff8800','#ffcc00','#00aaff','#aa44ff','#00cc88']
-    for idx, (cid, nombre, desc, hitos_ids_json) in enumerate(cons_rows):
-        hids = json_mod.loads(hitos_ids_json)
-        constelaciones.append({'id': cid, 'nombre': nombre, 'descripcion': desc,
-                               'hitos_ids': hids, 'color': con_colors[idx % len(con_colors)]})
-        for hid in hids:
-            hito_to_con[hid] = idx
+    # Has old cache — return it while recalculating in background
+    threading.Thread(target=recalcular_universo, args=(usuario_id,), daemon=True).start()
+    return jsonify({'ok': True, 'points': json_mod.loads(cache[0]),
+                    'stars': json_mod.loads(cache[1]), 'cached': True, 'recalculating': True})
 
+    return  # old code removed — now handled by recalcular_universo
+
+def recalcular_universo(usuario_id):
+    """Calcula UMAP + constelaciones y guarda en cache. Corre en background."""
+    import struct, json as json_mod
     try:
+        import numpy as np
         import umap as umap_lib
 
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""SELECT h.id, COALESCE(h.titulo, SUBSTR(h.contenido,1,60)) as label,
+                            h.peso, h.tipo, e.embedding
+                     FROM hitos_usuario h
+                     JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
+                     WHERE h.usuario_id=? AND h.activo=1
+                     ORDER BY h.peso DESC""", (usuario_id,))
+        rows = c.fetchall()
+        c.execute("SELECT COUNT(*) FROM constelaciones WHERE usuario_id=?", (usuario_id,))
+        n_cons = c.fetchone()[0]
+        conn.close()
+
+        if len(rows) < 3:
+            return
+
+        # Recalculate constelaciones if needed
+        if n_cons == 0:
+            calcular_constelaciones(usuario_id)
+
+        # Load constelaciones
+        conn2 = sqlite3.connect(DB_PATH)
+        c2 = conn2.cursor()
+        c2.execute("SELECT id, nombre, descripcion, hitos_ids FROM constelaciones WHERE usuario_id=? ORDER BY id",
+                   (usuario_id,))
+        cons_rows = c2.fetchall()
+        conn2.close()
+
+        # Build constelacion map
+        hito_to_con = {}
+        constelaciones = []
+        con_colors = ['#cc0000','#ff8800','#ffcc00','#00aaff','#aa44ff','#00cc88']
+        for idx, (cid, nombre, desc, hitos_ids_json) in enumerate(cons_rows):
+            hids = json_mod.loads(hitos_ids_json)
+            constelaciones.append({'id': cid, 'nombre': nombre, 'descripcion': desc,
+                                   'hitos_ids': hids, 'color': con_colors[idx % len(con_colors)]})
+            for hid in hids:
+                hito_to_con[hid] = idx
+
+        # UMAP
         vecs = []
         for hid, label, peso, tipo, blob in rows:
             nv = len(blob) // 4
@@ -2267,13 +2314,11 @@ def api_universo():
                                 min_dist=0.15, random_state=42)
         raw_coords = reducer.fit_transform(vecs_np)
 
-        # Normalize
         for axis in range(3):
             mn, mx = raw_coords[:,axis].min(), raw_coords[:,axis].max()
             if mx > mn:
                 raw_coords[:,axis] = (raw_coords[:,axis] - mn) / (mx - mn) * 200 - 100
 
-        # Build hito points
         hid_to_idx = {rows[i][0]: i for i in range(len(rows))}
         points = []
         for i, (hid, label, peso, tipo, blob) in enumerate(rows):
@@ -2281,18 +2326,12 @@ def api_universo():
             con_color = constelaciones[con_idx]['color'] if constelaciones else '#cc0000'
             con_nombre = constelaciones[con_idx]['nombre'] if constelaciones else 'GENERAL'
             points.append({
-                'x': float(raw_coords[i,0]),
-                'y': float(raw_coords[i,1]),
-                'z': float(raw_coords[i,2]),
-                'label': str(label)[:60],
-                'peso': float(peso),
-                'tipo': tipo,
-                'id': hid,
-                'constelacion': con_nombre,
-                'color': con_color
+                'x': float(raw_coords[i,0]), 'y': float(raw_coords[i,1]), 'z': float(raw_coords[i,2]),
+                'label': str(label)[:60], 'peso': float(peso), 'tipo': tipo,
+                'id': hid, 'constelacion': con_nombre, 'color': con_color
             })
 
-        # Calculate star positions (centroids of each constelacion)
+        # Stars (centroids)
         stars = []
         for con in constelaciones:
             hids = con['hitos_ids']
@@ -2302,18 +2341,29 @@ def api_universo():
             cx = float(np.mean([raw_coords[i,0] for i in idxs]))
             cy = float(np.mean([raw_coords[i,1] for i in idxs]))
             cz = float(np.mean([raw_coords[i,2] for i in idxs]))
-            stars.append({
-                'x': cx, 'y': cy, 'z': cz,
-                'nombre': con['nombre'],
-                'descripcion': con['descripcion'],
-                'color': con['color'],
-                'n_planetas': len(idxs)
-            })
+            stars.append({'x': cx, 'y': cy, 'z': cz, 'nombre': con['nombre'],
+                          'descripcion': con['descripcion'], 'color': con['color'],
+                          'n_planetas': len(idxs)})
 
-        return jsonify({'ok': True, 'points': points, 'stars': stars,
-                        'constelaciones': [c['nombre'] for c in constelaciones]})
+        # Save to cache
+        conn3 = sqlite3.connect(DB_PATH)
+        conn3.execute("""INSERT OR REPLACE INTO universo_cache (usuario_id, puntos_json, estrellas_json, n_hitos, ts)
+                         VALUES (?,?,?,?,?)""",
+                      (usuario_id, json_mod.dumps(points), json_mod.dumps(stars), len(rows), time.time()))
+        conn3.commit()
+        conn3.close()
+        print(f"[ANNI] Universo calculado y cacheado para usuario {usuario_id} — {len(points)} puntos, {len(stars)} estrellas")
+
     except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)})
+        print(f"[ANNI] Error calculando universo: {e}")
+        import traceback; print(traceback.format_exc())
+
+    # Trigger recalc when new hito is saved
+    # (hook into api_guardar_resumen is already there for conversations)
+
+# Remove old duplicated code block (was inside the old api_universo)
+
+
 
 # ── EL MUNDO DE ANNI ─────────────────────────────────────────────────────────
 
@@ -3480,6 +3530,8 @@ fetch('/api/universo').then(r=>r.json()).then(function(d){
   if(!d.ok){
     if(d.error==='insuficientes_embeddings'){
       body.innerHTML='<p style="color:#666;padding:20px;font-family:monospace">ANNI necesita al menos 3 hitos con embeddings para generar el universo.<br><br>Hitos disponibles: '+(d.count||0)+'</p>';
+    } else if(d.error==='calculando'){
+      body.innerHTML='<div style="color:#444;padding:40px;font-family:monospace;text-align:center"><div style="font-size:32px;margin-bottom:16px;animation:spin 2s linear infinite;display:inline-block">✦</div><br><br>'+escH(d.msg||'Calculando...')+'<br><br><span style="font-size:11px;color:#333">Esto solo ocurre la primera vez.<br>Vuelve a pulsar UNIVERSO en 30 segundos.</span></div><style>@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>';
     } else {
       body.innerHTML='<p style="color:#cc0000;padding:20px;font-family:monospace">Error: '+escH(d.error)+'</p>';
     }
