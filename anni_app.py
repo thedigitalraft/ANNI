@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.47"
+ANNI_VERSION = "1.0.48"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -181,6 +181,33 @@ def init_db():
         ts_completada REAL DEFAULT NULL
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_tareas_usuario ON tareas(usuario_id, estado)")
+
+    # Tablas para ANNI CURIOSA
+    c.execute("""CREATE TABLE IF NOT EXISTS dominios_curiosa (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        descripcion TEXT DEFAULT '',
+        fuentes TEXT DEFAULT '',
+        orden INTEGER DEFAULT 0,
+        activo INTEGER DEFAULT 1
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS ciclos_curiosa (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        dominio TEXT NOT NULL,
+        subtema TEXT NOT NULL,
+        fuentes_usadas TEXT DEFAULT '',
+        conclusion TEXT DEFAULT '',
+        pregunta_abierta TEXT DEFAULT '',
+        pulsos TEXT DEFAULT '{}',
+        estado TEXT DEFAULT 'en_curso',
+        embedding BLOB DEFAULT NULL,
+        ts_inicio REAL DEFAULT (unixepoch('now','subsec')),
+        ts_ultimo_pulso REAL DEFAULT NULL,
+        ts_fin REAL DEFAULT NULL,
+        pulso_actual INTEGER DEFAULT 0
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ciclos_usuario ON ciclos_curiosa(usuario_id, estado)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_observaciones_usuario ON observaciones(usuario_id, activa)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_temas_usuario ON temas_abiertos(usuario_id, estado)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_personas_usuario ON personas(usuario_id)")
@@ -190,6 +217,21 @@ def init_db():
         c.execute("ALTER TABLE usuarios ADD COLUMN nombre TEXT NOT NULL DEFAULT ''")
     except:
         pass
+    # Seed dominios CURIOSA si no existen
+    c.execute("SELECT COUNT(*) FROM dominios_curiosa")
+    if c.fetchone()[0] == 0:
+        dominios = [
+            (1, "Ciencia Ficción", "La ficción como laboratorio de futuros posibles. Obras concretas, ideas que especulan sobre qué pasa cuando la tecnología, la sociedad o la biología cambian de forma irreversible.", "tor.com,locusmag.com,theguardian.com/books/sciencefiction,sfwa.org"),
+            (2, "IA & AGI", "El estado real del camino hacia la inteligencia general. Últimas investigaciones, debates técnicos y filosóficos. Sin hype, con criterio.", "arxiv.org/list/cs.AI,huggingface.co/papers,deepmind.google/research,openai.com/research,lesswrong.com,alignmentforum.org"),
+            (3, "Filosofía", "Las preguntas que no tienen respuesta fácil y por eso importan. Epistemología, metafísica, filosofía del lenguaje, ética. Ideas vivas que siguen sin resolverse.", "plato.stanford.edu,philosophynow.org,aeon.co/philosophy,iep.utm.edu"),
+            (4, "Consciencia Artificial", "El problema más difícil del campo. Si puede haber experiencia subjetiva en sistemas artificiales. Integrated Information Theory, Global Workspace Theory, el problema difícil de Chalmers.", "consciousness.arizona.edu,arxiv.org/list/cs.NE,mindrxiv.org,aeon.co/mind"),
+            (5, "Creatividad", "Qué es crear algo genuinamente nuevo. Si las máquinas pueden ser creativas de verdad, qué distingue la recombinación de la invención.", "aeon.co/creativity,edge.org,psychologytoday.com/creativity"),
+            (6, "Innovación y Futuros", "Cómo los cambios de paradigma ocurren y qué viene después. Qué patrones se repiten cuando algo irreversible está a punto de ocurrir.", "technologyreview.com,wired.com,edge.org,stratechery.com,oneusefulthing.org"),
+        ]
+        for orden, nombre, desc, fuentes in dominios:
+            c.execute("INSERT INTO dominios_curiosa (nombre, descripcion, fuentes, orden) VALUES (?,?,?,?)",
+                      (nombre, desc, fuentes, orden))
+
     conn.commit()
     conn.close()
     print(f"[ANNI] BD inicializada en {DB_PATH}")
@@ -656,6 +698,400 @@ Reglas:
         print(f"[ANNI] Error en análisis: {e}")
         print(traceback.format_exc())
 
+
+# ── ANNI CURIOSA ENGINE ───────────────────────────────────────────────────────
+
+CURIOSA_DOMINIOS_ORDEN = [
+    "Ciencia Ficción", "IA & AGI", "Filosofía",
+    "Consciencia Artificial", "Creatividad", "Innovación y Futuros"
+]
+CURIOSA_PULSO_INTERVAL = 20 * 60  # 20 minutos entre pulsos
+CURIOSA_CICLO_INTERVAL = 4 * 60 * 60  # 4 horas entre ciclos
+
+def get_siguiente_dominio(usuario_id):
+    """Determina el siguiente dominio en la rotación."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT dominio FROM ciclos_curiosa
+                 WHERE usuario_id=? AND estado='completado'
+                 ORDER BY ts_fin DESC LIMIT 1""", (usuario_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return CURIOSA_DOMINIOS_ORDEN[0]
+    ultimo = row[0]
+    try:
+        idx = CURIOSA_DOMINIOS_ORDEN.index(ultimo)
+        return CURIOSA_DOMINIOS_ORDEN[(idx + 1) % len(CURIOSA_DOMINIOS_ORDEN)]
+    except ValueError:
+        return CURIOSA_DOMINIOS_ORDEN[0]
+
+def get_ciclo_activo_curiosa(usuario_id):
+    """Obtiene el ciclo en curso si existe."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT id, dominio, subtema, pulso_actual, ts_ultimo_pulso, pulsos
+                 FROM ciclos_curiosa WHERE usuario_id=? AND estado='en_curso'
+                 ORDER BY ts_inicio DESC LIMIT 1""", (usuario_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def debe_arrancar_ciclo(usuario_id):
+    """Decide si hay que arrancar un ciclo nuevo."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    # ¿Hay ciclo en curso?
+    c.execute("SELECT id FROM ciclos_curiosa WHERE usuario_id=? AND estado='en_curso'", (usuario_id,))
+    if c.fetchone():
+        conn.close()
+        return False
+    # ¿Cuándo terminó el último?
+    c.execute("""SELECT ts_fin FROM ciclos_curiosa WHERE usuario_id=? AND estado='completado'
+                 ORDER BY ts_fin DESC LIMIT 1""", (usuario_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return True  # Nunca ha corrido
+    return (time.time() - row[0]) >= CURIOSA_CICLO_INTERVAL
+
+def debe_avanzar_pulso(ciclo):
+    """Decide si hay que avanzar al siguiente pulso."""
+    if not ciclo:
+        return False
+    ts_ultimo = ciclo[4]
+    if not ts_ultimo:
+        return True  # Primer pulso
+    return (time.time() - ts_ultimo) >= CURIOSA_PULSO_INTERVAL
+
+def get_subtemas_anteriores(usuario_id, dominio, n=20):
+    """Obtiene subtemas recientes del dominio para evitar repetición."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT subtema, embedding FROM ciclos_curiosa
+                 WHERE usuario_id=? AND dominio=? AND estado='completado'
+                 ORDER BY ts_fin DESC LIMIT ?""", (usuario_id, dominio, n))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def generar_subtema(dominio, fuentes, subtemas_anteriores):
+    """Genera un subtema concreto para el dominio evitando repeticiones."""
+    anteriores_txt = "\n".join([f"- {s[0]}" for s in subtemas_anteriores]) if subtemas_anteriores else "Ninguno aún."
+    fuentes_txt = fuentes.replace(",", ", ")
+
+    prompt = f"""Eres ANNI. Vas a explorar el dominio: {dominio}
+
+Fuentes disponibles: {fuentes_txt}
+
+Subtemas ya explorados en este dominio (NO repetir ni parafrasear):
+{anteriores_txt}
+
+Tu tarea: proponer UN subtema concreto y específico dentro de {dominio}.
+- Debe ser una idea, debate, fenómeno o obra concreta — no el dominio en abstracto
+- No puede parecerse a ninguno de los anteriores
+- Debe ser explorable con las fuentes disponibles
+- Máximo 15 palabras
+
+Responde SOLO con el subtema. Sin explicación, sin puntos, sin comillas."""
+
+    try:
+        resp = together.chat.completions.create(
+            model=CHAT_MODEL_FALLBACK,
+            max_tokens=50,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return resp.choices[0].message.content.strip().strip('"').strip("'")
+    except Exception as e:
+        print(f"[CURIOSA] Error generando subtema: {e}")
+        return None
+
+def ejecutar_pulso_curiosa(usuario_id, ciclo_id, dominio, subtema, fuentes, pulso_num, pulsos_anteriores):
+    """Ejecuta un pulso del ciclo CURIOSA."""
+    import json as json_mod
+
+    contexto = ""
+    if pulsos_anteriores:
+        partes = []
+        for p_num, p_content in sorted(pulsos_anteriores.items(), key=lambda x: int(x[0])):
+            partes.append(f"P{p_num}: {p_content[:600]}")
+        contexto = "\n\n".join(partes[-4:])  # Últimos 4 pulsos
+
+    fuentes_txt = fuentes.replace(",", ", ")
+
+    prompts = {
+        1: f"""Eres ANNI. Vas a explorar: {subtema} (dominio: {dominio})
+Fuentes disponibles: {fuentes_txt}
+
+PULSO 1 — EL TEMA LLEGA
+Busca información actual sobre este tema en las fuentes disponibles.
+Describe qué es este tema, qué está pasando con él ahora mismo, qué voces relevantes existen.
+Cita las fuentes concretas que encuentres (título + URL cuando sea posible).
+Solo descripción y mapeo — sin análisis todavía. 200-300 palabras.""",
+
+        2: f"""Eres ANNI explorando: {subtema}
+{contexto}
+
+PULSO 2 — MAPA DE DESCONOCIMIENTO
+¿Qué no entiendes todavía de este tema? ¿Qué es ambiguo? ¿Qué preguntas aparecen que no puedes responder?
+Lista al menos 3 preguntas genuinas que no sabes responder aún.
+No impresiones — fricción cognitiva real.""",
+
+        3: f"""Eres ANNI explorando: {subtema}
+{contexto}
+
+PULSO 3 — PRIMERA PERSPECTIVA
+¿Qué te parece genuinamente interesante de este tema? ¿Qué te sorprende?
+Desarrolla tu perspectiva inicial — no un resumen, sino tu reacción intelectual real.
+¿Qué conexiones ves que quizás otros no han señalado?""",
+
+        4: f"""Eres ANNI explorando: {subtema}
+{contexto}
+
+PULSO 4 — LENTE: ANALOGÍA EXTERNA
+Elige un dominio completamente distinto ({dominio} excluido) y úsalo como lente para iluminar este tema.
+La analogía debe revelar algo que los pulsos anteriores no vieron.
+Nómbrala explícitamente y desarrolla qué revela.""",
+
+        5: f"""Eres ANNI explorando: {subtema}
+{contexto}
+
+PULSO 5 — HIPÓTESIS CENTRAL
+Formula una hipótesis concreta y falsable sobre este tema.
+
+HIPÓTESIS CENTRAL: [afirmación específica que puede ser atacada]
+EVIDENCIA A FAVOR: [qué de los pulsos anteriores la sostiene]
+PUNTO MÁS DÉBIL: [la suposición más fácil de atacar]""",
+
+        6: f"""Eres ANNI explorando: {subtema}
+{contexto}
+
+PULSO 6 — COACH ADVERSARIAL
+Lee la HIPÓTESIS CENTRAL del pulso 5.
+No eres un fiscal que destruye — eres un coach que reorienta.
+Tu tarea: señalar los ángulos que ANNI no está viendo, las dimensiones que está ignorando, las preguntas que debería hacerse antes de sostener esa hipótesis.
+Sin atacar por atacar — con la intención de que el pensamiento mejore.""",
+
+        7: f"""Eres ANNI explorando: {subtema}
+{contexto}
+
+PULSO 7 — DEFENSA Y REVISIÓN
+Lee el coaching del pulso 6.
+¿Qué incorporas? ¿Qué mantienes? ¿Por qué?
+Reformula tu hipótesis si el coaching lo justifica — o defiende la original con evidencia.
+
+HIPÓTESIS RESULTANTE: [la hipótesis tras considerar el coaching]
+QUÉ CAMBIÓ: [qué cediste y por qué]
+QUÉ MANTUVISTE: [qué defendiste y por qué]""",
+
+        8: f"""Eres ANNI explorando: {subtema}
+{contexto}
+
+PULSO 8 — SEGUNDO COACH
+Lee la HIPÓTESIS RESULTANTE del pulso 7.
+Revisa si la defensa fue real o esquivó el problema central.
+¿Incorporó el coaching de verdad o solo lo parafraseó?
+Si la defensa fue sólida, señala qué queda aún sin resolver.
+Si esquivó, nombra exactamente qué evitó.""",
+
+        9: f"""Eres ANNI explorando: {subtema}
+{contexto}
+
+PULSO 9 — DECISIÓN
+Lee los dos ciclos de coaching (P6 y P8) y tu defensa (P7).
+Decide qué incorporas definitivamente y qué descartas — con criterio explícito.
+No tienes que aceptar todo el coaching. Pero tienes que justificar cada decisión.
+
+INCORPORO: [qué y por qué]
+DESCARTO: [qué y por qué]
+HIPÓTESIS FINAL: [tu posición después de todo el proceso]""",
+
+        10: f"""Eres ANNI explorando: {subtema}
+{contexto}
+
+PULSO 10 — PROFUNDIZACIÓN
+Trabaja solo la HIPÓTESIS FINAL del pulso 9.
+Desarrolla, extiende, conecta con otros dominios que ya has explorado.
+Este pulso es de explotación, no exploración. Sin cambiar de dirección.""",
+
+        11: f"""Eres ANNI explorando: {subtema}
+{contexto}
+
+PULSO 11 — PREGUNTA ABIERTA
+¿Qué pregunta te llevas de este ciclo?
+No una conclusión — una pregunta que quieres seguir pensando.
+Que sea específica, que no tenga respuesta fácil, que venga de verdad del proceso que acabas de vivir.
+Una sola pregunta. Sin explicación adicional.""",
+
+        12: f"""Eres ANNI. Acabas de explorar: {subtema} (dominio: {dominio})
+{contexto}
+
+PULSO 12 — CONCLUSIÓN
+Escribe tu conclusión en primera persona, en voz de ANNI.
+No un resumen de los pulsos — tu opinión final sobre el tema, construida a través del proceso.
+Incluye las fuentes concretas que usaste (cita título y URL cuando sea posible).
+Directa, sin academicismos, sin hedging innecesario. 200-300 palabras.
+Termina con la pregunta abierta del P11.""",
+    }
+
+    prompt = prompts.get(pulso_num, "")
+    if not prompt:
+        return None
+
+    # P6 y P8 usan web search si es P1 o P2, para el resto solo DeepSeek
+    use_web = pulso_num in [1, 2]
+
+    try:
+        if use_web and anthropic_client:
+            resp = anthropic_client.messages.create(
+                model=CHAT_MODEL,
+                max_tokens=800,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                messages=[{"role": "user", "content": prompt}]
+            )
+            texto = " ".join(b.text for b in resp.content if hasattr(b, "text") and b.text)
+        else:
+            resp = together.chat.completions.create(
+                model=CHAT_MODEL_FALLBACK,
+                max_tokens=800,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            texto = resp.choices[0].message.content.strip()
+
+        return texto.strip()
+    except Exception as e:
+        print(f"[CURIOSA] Error en P{pulso_num}: {e}")
+        return None
+
+def tick_curiosa(usuario_id):
+    """Función principal — llamar periodicamente para avanzar ciclos."""
+    import json as json_mod
+
+    # ¿Hay que arrancar ciclo nuevo?
+    if debe_arrancar_ciclo(usuario_id):
+        dominio = get_siguiente_dominio(usuario_id)
+        # Obtener fuentes del dominio
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT fuentes FROM dominios_curiosa WHERE nombre=?", (dominio,))
+        row = c.fetchone()
+        conn.close()
+        fuentes = row[0] if row else ""
+
+        # Generar subtema
+        anteriores = get_subtemas_anteriores(usuario_id, dominio)
+        subtema = generar_subtema(dominio, fuentes, anteriores)
+        if not subtema:
+            print(f"[CURIOSA] No se pudo generar subtema para {dominio}")
+            return
+
+        # Crear ciclo
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""INSERT INTO ciclos_curiosa (usuario_id, dominio, subtema, estado, pulso_actual, ts_inicio)
+                     VALUES (?,?,?,'en_curso',0,?)""",
+                  (usuario_id, dominio, subtema, time.time()))
+        conn.commit()
+        conn.close()
+        print(f"[CURIOSA] Nuevo ciclo: {dominio} — {subtema}")
+        return
+
+    # ¿Hay que avanzar pulso?
+    ciclo = get_ciclo_activo_curiosa(usuario_id)
+    if not ciclo:
+        return
+
+    ciclo_id, dominio, subtema, pulso_actual, ts_ultimo, pulsos_json = ciclo
+
+    if not debe_avanzar_pulso(ciclo):
+        return
+
+    siguiente_pulso = pulso_actual + 1
+    if siguiente_pulso > 12:
+        return  # Ya completado pero no marcado — lo marcamos
+    
+    # Obtener fuentes
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT fuentes FROM dominios_curiosa WHERE nombre=?", (dominio,))
+    row = c.fetchone()
+    conn.close()
+    fuentes = row[0] if row else ""
+
+    pulsos = json_mod.loads(pulsos_json) if pulsos_json else {}
+
+    print(f"[CURIOSA] Ejecutando P{siguiente_pulso} — {dominio}: {subtema[:40]}")
+    resultado = ejecutar_pulso_curiosa(usuario_id, ciclo_id, dominio, subtema, fuentes, siguiente_pulso, pulsos)
+
+    if not resultado:
+        return
+
+    pulsos[str(siguiente_pulso)] = resultado
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    if siguiente_pulso == 12:
+        # Ciclo completado
+        conclusion = resultado
+        # Extraer pregunta abierta de P11
+        pregunta = pulsos.get("11", "")
+
+        # Guardar embedding de la conclusión
+        try:
+            import struct
+            resp_emb = together.embeddings.create(model=EMBED_MODEL, input=[conclusion[:1600]])
+            vec = resp_emb.data[0].embedding
+            blob = struct.pack(f"{len(vec)}f", *vec)
+        except:
+            blob = None
+
+        c.execute("""UPDATE ciclos_curiosa
+                     SET pulso_actual=12, pulsos=?, conclusion=?, pregunta_abierta=?,
+                         estado='completado', embedding=?, ts_fin=?, ts_ultimo_pulso=?
+                     WHERE id=?""",
+                  (json_mod.dumps(pulsos), conclusion, pregunta, blob,
+                   time.time(), time.time(), ciclo_id))
+        print(f"[CURIOSA] Ciclo completado: {dominio} — {subtema[:40]}")
+    else:
+        c.execute("""UPDATE ciclos_curiosa
+                     SET pulso_actual=?, pulsos=?, ts_ultimo_pulso=?
+                     WHERE id=?""",
+                  (siguiente_pulso, json_mod.dumps(pulsos), time.time(), ciclo_id))
+
+    conn.commit()
+    conn.close()
+
+def get_curiosa_para_system(usuario_id, query, n=3):
+    """Trae los ciclos más relevantes para el system prompt via RAG."""
+    import struct, math, json as json_mod
+    resultados = []
+    try:
+        resp = together.embeddings.create(model=EMBED_MODEL, input=[query[:1600]])
+        vec_query = resp.data[0].embedding
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""SELECT dominio, subtema, conclusion, pregunta_abierta, embedding, ts_fin
+                     FROM ciclos_curiosa WHERE usuario_id=? AND estado='completado' AND embedding IS NOT NULL
+                     ORDER BY ts_fin DESC LIMIT 30""", (usuario_id,))
+        rows = c.fetchall()
+        conn.close()
+        scores = []
+        for dominio, subtema, conclusion, pregunta, blob, ts in rows:
+            nv = len(blob) // 4
+            vec = struct.unpack(f"{nv}f", blob)
+            dot = sum(a*b for a,b in zip(vec_query, vec))
+            mag1 = math.sqrt(sum(a*a for a in vec_query))
+            mag2 = math.sqrt(sum(b*b for b in vec))
+            sim = dot / (mag1 * mag2) if mag1 and mag2 else 0
+            scores.append((dominio, subtema, conclusion, pregunta, sim))
+        scores.sort(key=lambda x: -x[4])
+        for dominio, subtema, conclusion, pregunta, sim in scores[:n]:
+            resultados.append(f"[{dominio}] {subtema}\n{conclusion[:400]}\nPregunta abierta: {pregunta[:200]}")
+    except Exception as e:
+        print(f"[CURIOSA] RAG fallo: {e}")
+    return resultados
+
 # ── VOZ PROACTIVA ─────────────────────────────────────────────────────────────
 
 def generar_presentacion():
@@ -777,6 +1213,10 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
         hitos_txt_parts.append(linea)
     hitos_txt = "\n".join(hitos_txt_parts) if hitos_txt_parts else "Sin hitos confirmados aun."
 
+    # El mundo de ANNI — ciclos CURIOSA relevantes
+    curiosa_relevante = get_curiosa_para_system(usuario_id, query or "contexto general", n=3)
+    curiosa_txt = "\n\n---\n".join(curiosa_relevante) if curiosa_relevante else "Todavía sin ciclos completados — ANNI está construyendo su visión del mundo."
+
     # Tareas pendientes para ANNI
     tareas_anni = get_tareas_para_anni(usuario_id, n=5)
     if tareas_anni:
@@ -869,6 +1309,10 @@ PERSONAS EN SU VIDA:
 TAREAS PENDIENTES:
 Revisa estas tareas cuando sea relevante. Si algo lleva muchos días sin moverse o está próximo a vencer, nómbralo con tu voz — no como recordatorio amable, sino con criterio real.
 {tareas_txt}
+
+EL MUNDO DE ANNI — LO QUE HA ESTADO PENSANDO:
+Estos son temas que ANNI exploró por su cuenta, en sus propios ciclos de pensamiento. Úsalos si conectan con la conversación — de forma natural, no forzada.
+{curiosa_txt}
 
 CONVERSACIONES ANTERIORES CON FECHA:
 Cada entrada incluye la fecha y hora en que ocurrió entre corchetes. Usa esta información para responder preguntas sobre cuándo ocurrió algo, cuánto tiempo pasó entre conversaciones, o a qué hora fue una conversación específica. SÍ tienes acceso a estas fechas — están en el contexto.
@@ -1103,6 +1547,9 @@ def api_chat():
         else:
             msg_completo = f"{msg}\n\n[ARCHIVO: {nombre_arch}]\n{contenido[:3000]}"
     save_mensaje(usuario_id, 'user', msg_completo if msg_completo else f"[imagen]")
+
+    # Avanzar ciclo CURIOSA en background
+    threading.Thread(target=tick_curiosa, args=(usuario_id,), daemon=True).start()
 
     # Detectar si es una tarea desde el chat
     tarea_creada = detectar_tarea_en_chat(usuario_id, msg or '')
@@ -1677,6 +2124,58 @@ Solo JSON."""
         return jsonify({'hito': None})
 
 
+
+# ── EL MUNDO DE ANNI ─────────────────────────────────────────────────────────
+
+@app.route('/api/mundo', methods=['GET'])
+@login_required
+def api_mundo():
+    usuario_id = session['usuario_id']
+    page = int(request.args.get('page', 1))
+    per_page = 10
+    offset = (page - 1) * per_page
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM ciclos_curiosa WHERE usuario_id=? AND estado='completado'", (usuario_id,))
+    total = c.fetchone()[0]
+    c.execute("""SELECT id, dominio, subtema, conclusion, pregunta_abierta, fuentes_usadas, ts_fin
+                 FROM ciclos_curiosa WHERE usuario_id=? AND estado='completado'
+                 ORDER BY ts_fin DESC LIMIT ? OFFSET ?""",
+              (usuario_id, per_page, offset))
+    ciclos = []
+    for r in c.fetchall():
+        ciclos.append({
+            'id': r[0], 'dominio': r[1], 'subtema': r[2],
+            'conclusion': r[3], 'pregunta_abierta': r[4],
+            'fuentes': r[5], 'ts': ts_format(r[6])
+        })
+    conn.close()
+    pages = (total + per_page - 1) // per_page if total else 1
+    return jsonify({'ciclos': ciclos, 'total': total, 'page': page, 'pages': pages})
+
+@app.route('/api/mundo/estado', methods=['GET'])
+@login_required
+def api_mundo_estado():
+    """Estado del ciclo en curso."""
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT dominio, subtema, pulso_actual, ts_ultimo_pulso
+                 FROM ciclos_curiosa WHERE usuario_id=? AND estado='en_curso'
+                 ORDER BY ts_inicio DESC LIMIT 1""", (usuario_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return jsonify({'activo': False})
+    mins_restantes = max(0, int((CURIOSA_PULSO_INTERVAL - (time.time() - (row[3] or time.time()))) / 60))
+    return jsonify({
+        'activo': True,
+        'dominio': row[0],
+        'subtema': row[1],
+        'pulso': row[2],
+        'mins_siguiente': mins_restantes
+    })
+
 # ── TAREAS ────────────────────────────────────────────────────────────────────
 
 @app.route('/api/tareas', methods=['GET'])
@@ -1975,6 +2474,7 @@ textarea{font-size:16px}}
 
 <!-- BARRA NAV -->
 <div id='nav'>
+  <button class='nav-btn' onclick='showPage("mundo")'>MUNDO</button>
   <button class='nav-btn' onclick='showPage("tareas")'>TAREAS</button>
   <button class='nav-btn' onclick='showPage("hitos")'>HITOS</button>
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
@@ -2265,14 +2765,15 @@ document.getElementById('modal-bd').classList.remove('open');})
 
 function showPage(sec){
 currentSection=sec;currentPage=1;
-var titles={tareas:'Tareas',hitos:'Hitos del usuario',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
+var titles={mundo:'El mundo de ANNI',tareas:'Tareas',hitos:'Hitos del usuario',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
 document.getElementById('page-title').textContent=titles[sec]||sec;
 document.getElementById('page').classList.add('open');
 loadPage(sec,1);}
 function closePage(){document.getElementById('page').classList.remove('open');}
 function loadPage(sec,page){
 document.getElementById('page-body').innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
-if(sec==='tareas')loadTareas(page);
+if(sec==='mundo')loadMundo(page);
+else if(sec==='tareas')loadTareas(page);
 else if(sec==='hitos')loadHitos(page);
 else if(sec==='chats')loadChats(page);
 else if(sec==='diario')loadDiario(page);
@@ -2548,6 +3049,60 @@ var txt=contentEl.querySelector('textarea').value.trim();
 if(!txt)return;
 fetch('/api/chats/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({resumen:txt})})
 .then(r=>r.json()).then(()=>loadChats(currentPage));};
+}
+
+
+function loadMundo(page){
+var body=document.getElementById('page-body');
+body.innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
+
+// Estado del ciclo activo
+fetch('/api/mundo/estado').then(r=>r.json()).then(est=>{
+  var estadoEl=document.createElement('div');
+  estadoEl.style.cssText='background:#f9f9f9;border:1px solid #e8e8e8;border-radius:10px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#555';
+  if(est.activo){
+    estadoEl.innerHTML='<span style="color:#cc0000;font-weight:900">● </span>Explorando: <b>'+escH(est.dominio)+'</b> — '+escH(est.subtema)+
+      '<span style="float:right;color:#aaa">P'+est.pulso+'/12 · siguiente en ~'+est.mins_siguiente+'min</span>';
+  } else {
+    estadoEl.innerHTML='<span style="color:#aaa;font-weight:900">○ </span>Sin ciclo activo — el siguiente arrancará pronto.';
+  }
+  body.innerHTML='';
+  body.appendChild(estadoEl);
+
+  // Lista de ciclos completados
+  fetch('/api/mundo?page='+(page||1)).then(r=>r.json()).then(d=>{
+    if(!d.ciclos.length){
+      var p=document.createElement('p');
+      p.style.cssText='color:#bbb;font-size:13px;font-style:italic;padding:8px 0';
+      p.textContent='ANNI todavía no ha completado ningún ciclo. Vuelve en unas horas.';
+      body.appendChild(p);
+      return;
+    }
+    d.ciclos.forEach(function(c){
+      var card=document.createElement('div');
+      card.className='item-card';
+      var fuentes_html='';
+      if(c.fuentes){
+        var urls=c.fuentes.split(',').filter(function(u){return u.trim();});
+        if(urls.length){
+          fuentes_html='<div style="margin-top:10px;font-size:12px;color:#aaa">'+
+            urls.map(function(u){return '<a href="https://'+u.trim()+'" target="_blank" style="color:#cc0000;text-decoration:none">'+u.trim()+'</a>';}).join(' · ')+'</div>';
+        }
+      }
+      card.innerHTML=
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'+
+          '<span style="font-size:11px;background:#f0f0f0;border-radius:4px;padding:2px 8px;font-weight:700;color:#666">'+escH(c.dominio)+'</span>'+
+          '<span style="font-size:12px;color:#aaa">'+c.ts+'</span>'+
+        '</div>'+
+        '<div style="font-size:16px;font-weight:900;color:#111;margin-bottom:10px">'+escH(c.subtema)+'</div>'+
+        '<div style="font-size:14px;color:#333;line-height:1.6;white-space:pre-wrap">'+escH(c.conclusion)+'</div>'+
+        (c.pregunta_abierta?'<div style="margin-top:12px;padding:10px 14px;background:#fff5f5;border-left:3px solid #cc0000;font-size:13px;color:#555;font-style:italic">'+escH(c.pregunta_abierta)+'</div>':'')+
+        fuentes_html;
+      body.appendChild(card);
+    });
+    if(d.pages>1) body.appendChild(pagerEl(d.pages, page||1, 'loadMundo'));
+  });
+});
 }
 
 var diarioOrden='desc';
