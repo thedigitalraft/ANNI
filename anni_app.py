@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.51"
+ANNI_VERSION = "1.0.52"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -461,6 +461,17 @@ def get_hitos_relevantes(usuario_id, query, n=8):
                 sim = dot / (mag1 * mag2) if mag1 and mag2 else 0
                 scores.append((hid, tipo, contenido, cuando, sim))
             scores.sort(key=lambda x: -x[4])
+            hids_top = [scores[i][0] for i in range(min(n, len(scores)))]
+            # Increment RAG activation counter for retrieved hitos
+            if hids_top:
+                try:
+                    conn_upd = sqlite3.connect(DB_PATH)
+                    placeholders_upd = ','.join(['?' for _ in hids_top])
+                    conn_upd.execute(f"UPDATE hitos_usuario SET peso = MIN(peso + 0.1, 50) WHERE id IN ({placeholders_upd})",
+                                     hids_top)
+                    conn_upd.commit()
+                    conn_upd.close()
+                except: pass
             for hid, tipo, contenido, cuando, sim in scores[:n]:
                 linea = f"[{tipo}] {contenido}"
                 if cuando: linea += f" | Activar: {cuando}"
@@ -971,6 +982,29 @@ Termina con la pregunta abierta del P11.""",
     except Exception as e:
         print(f"[CURIOSA] Error en P{pulso_num}: {e}")
         return None
+
+
+def incrementar_hitos_mencionados(usuario_id, mensaje):
+    """Incrementa peso de hitos cuyo contenido se menciona en el mensaje del usuario."""
+    if not mensaje or len(mensaje) < 5:
+        return
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT id, contenido, titulo FROM hitos_usuario WHERE usuario_id=? AND activo=1", (usuario_id,))
+        hitos = c.fetchall()
+        mensaje_lower = mensaje.lower()
+        for hid, contenido, titulo in hitos:
+            # Check if key words from hito appear in message
+            palabras = [w for w in (contenido or '').lower().split() if len(w) > 4]
+            palabras += [w for w in (titulo or '').lower().split() if len(w) > 4]
+            matches = sum(1 for p in palabras if p in mensaje_lower)
+            if matches >= 2:
+                c.execute("UPDATE hitos_usuario SET peso = MIN(peso + 0.2, 50) WHERE id=?", (hid,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[ANNI] Error incrementando menciones: {e}")
 
 def tick_curiosa(usuario_id):
     """Función principal — llamar periodicamente para avanzar ciclos."""
@@ -1578,6 +1612,9 @@ def api_chat():
 
     # Avanzar ciclo CURIOSA en background
     threading.Thread(target=tick_curiosa, args=(usuario_id,), daemon=True).start()
+    # Incrementar peso de hitos mencionados
+    if msg:
+        threading.Thread(target=incrementar_hitos_mencionados, args=(usuario_id, msg), daemon=True).start()
 
     # Detectar si es una tarea desde el chat
     tarea_creada = detectar_tarea_en_chat(usuario_id, msg or '')
