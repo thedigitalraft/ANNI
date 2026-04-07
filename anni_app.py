@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.48"
+ANNI_VERSION = "1.0.49"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1364,18 +1364,29 @@ def responder(usuario_id, username, nombre, user_input, history, imagen_data=Non
     # Mensaje del usuario — con imagen si existe
     formato = "\n\n[FORMATO: Prosa directa. Sin markdown innecesario. Sin repetir lo dicho antes.]"
     if imagen_data and anthropic_client:
-        # Mensaje multimodal con imagen real para Sonnet
         user_content = []
         if user_input:
             user_content.append({"type": "text", "text": user_input + formato})
-        user_content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": imagen_media_type or "image/jpeg",
-                "data": imagen_data
-            }
-        })
+        if imagen_media_type == 'application/pdf':
+            # PDF como documento base64
+            user_content.append({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": "application/pdf",
+                    "data": imagen_data
+                }
+            })
+        else:
+            # Imagen normal
+            user_content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": imagen_media_type or "image/jpeg",
+                    "data": imagen_data
+                }
+            })
         messages_sonnet.append({"role": "user", "content": user_content})
     else:
         messages_sonnet.append({"role": "user", "content": user_input + formato})
@@ -1537,13 +1548,21 @@ def api_chat():
             # Extraer base64 real y media_type para Sonnet
             msg_completo = msg if msg else f"[Imagen adjunta: {nombre_arch}]"
             if contenido.startswith('data:'):
-                # data:image/jpeg;base64,/9j/...
                 header, b64 = contenido.split(',', 1)
                 imagen_media_type = header.split(';')[0].replace('data:', '')
                 imagen_data = b64
             else:
                 imagen_data = contenido
                 imagen_media_type = 'image/jpeg'
+        elif tipo == 'pdf' or nombre_arch.lower().endswith('.pdf'):
+            # PDF — pasar como documento base64 a Sonnet
+            msg_completo = msg if msg else f"[PDF adjunto: {nombre_arch}]"
+            if contenido.startswith('data:'):
+                _, b64 = contenido.split(',', 1)
+            else:
+                b64 = contenido
+            imagen_data = b64
+            imagen_media_type = 'application/pdf'
         else:
             msg_completo = f"{msg}\n\n[ARCHIVO: {nombre_arch}]\n{contenido[:3000]}"
     save_mensaje(usuario_id, 'user', msg_completo if msg_completo else f"[imagen]")
@@ -2652,6 +2671,9 @@ PRV.style.display='block';PRV.textContent='Adjunto: '+f.name;
 var reader=new FileReader();
 if(f.type.startsWith('image/')){
 reader.onload=function(e){archivoData={tipo:'imagen',data:e.target.result,nombre:f.name};};
+reader.readAsDataURL(f);
+}else if(f.type==='application/pdf'||f.name.toLowerCase().endsWith('.pdf')){
+reader.onload=function(e){archivoData={tipo:'pdf',data:e.target.result,nombre:f.name};};
 reader.readAsDataURL(f);
 }else{
 reader.onload=function(e){archivoData={tipo:'texto',data:e.target.result,nombre:f.name};};
