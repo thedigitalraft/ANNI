@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.53"
+ANNI_VERSION = "1.0.54"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -208,6 +208,16 @@ def init_db():
         pulso_actual INTEGER DEFAULT 0
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_ciclos_usuario ON ciclos_curiosa(usuario_id, estado)")
+
+    # Tabla constelaciones — temas centrales detectados por ANNI
+    c.execute("""CREATE TABLE IF NOT EXISTS constelaciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        nombre TEXT NOT NULL,
+        descripcion TEXT DEFAULT '',
+        hitos_ids TEXT DEFAULT '[]',
+        ts_calculado REAL DEFAULT (unixepoch('now','subsec'))
+    )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_observaciones_usuario ON observaciones(usuario_id, activa)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_temas_usuario ON temas_abiertos(usuario_id, estado)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_personas_usuario ON personas(usuario_id)")
@@ -2196,9 +2206,12 @@ Solo JSON."""
 @app.route('/api/universo', methods=['GET'])
 @login_required
 def api_universo():
-    """Devuelve los hitos con embeddings para la visualización 3D."""
+    """Devuelve hitos y constelaciones para la visualización 3D."""
     import struct, json as json_mod
+    import numpy as np
+    import math as math_mod
     usuario_id = session['usuario_id']
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""SELECT h.id, COALESCE(h.titulo, SUBSTR(h.contenido,1,60)) as label,
@@ -2208,14 +2221,40 @@ def api_universo():
                  WHERE h.usuario_id=? AND h.activo=1
                  ORDER BY h.peso DESC""", (usuario_id,))
     rows = c.fetchall()
+
+    # Check/calculate constelaciones
+    c.execute("SELECT COUNT(*) FROM constelaciones WHERE usuario_id=?", (usuario_id,))
+    n_cons = c.fetchone()[0]
     conn.close()
 
     if len(rows) < 3:
         return jsonify({'ok': False, 'error': 'insuficientes_embeddings', 'count': len(rows)})
 
-    # UMAP 3D reduction
+    # Recalculate if no constelaciones or forced
+    recalc = request.args.get('recalc', '0') == '1'
+    if n_cons == 0 or recalc:
+        calcular_constelaciones(usuario_id)
+
+    # Load constelaciones
+    conn3 = sqlite3.connect(DB_PATH)
+    c3 = conn3.cursor()
+    c3.execute("SELECT id, nombre, descripcion, hitos_ids FROM constelaciones WHERE usuario_id=? ORDER BY id",
+               (usuario_id,))
+    cons_rows = c3.fetchall()
+    conn3.close()
+
+    # Build constelacion map: hito_id -> constelacion
+    hito_to_con = {}
+    constelaciones = []
+    con_colors = ['#cc0000','#ff8800','#ffcc00','#00aaff','#aa44ff','#00cc88']
+    for idx, (cid, nombre, desc, hitos_ids_json) in enumerate(cons_rows):
+        hids = json_mod.loads(hitos_ids_json)
+        constelaciones.append({'id': cid, 'nombre': nombre, 'descripcion': desc,
+                               'hitos_ids': hids, 'color': con_colors[idx % len(con_colors)]})
+        for hid in hids:
+            hito_to_con[hid] = idx
+
     try:
-        import numpy as np
         import umap as umap_lib
 
         vecs = []
@@ -2225,28 +2264,54 @@ def api_universo():
 
         vecs_np = np.array(vecs, dtype=np.float32)
         reducer = umap_lib.UMAP(n_components=3, n_neighbors=min(5, len(rows)-1),
-                                min_dist=0.2, random_state=42)
-        coords = reducer.fit_transform(vecs_np)
+                                min_dist=0.15, random_state=42)
+        raw_coords = reducer.fit_transform(vecs_np)
 
-        # Normalize to -80..80
+        # Normalize
         for axis in range(3):
-            mn, mx = coords[:,axis].min(), coords[:,axis].max()
+            mn, mx = raw_coords[:,axis].min(), raw_coords[:,axis].max()
             if mx > mn:
-                coords[:,axis] = (coords[:,axis] - mn) / (mx - mn) * 160 - 80
+                raw_coords[:,axis] = (raw_coords[:,axis] - mn) / (mx - mn) * 200 - 100
 
+        # Build hito points
+        hid_to_idx = {rows[i][0]: i for i in range(len(rows))}
         points = []
         for i, (hid, label, peso, tipo, blob) in enumerate(rows):
+            con_idx = hito_to_con.get(hid, 0)
+            con_color = constelaciones[con_idx]['color'] if constelaciones else '#cc0000'
+            con_nombre = constelaciones[con_idx]['nombre'] if constelaciones else 'GENERAL'
             points.append({
-                'x': float(coords[i,0]),
-                'y': float(coords[i,1]),
-                'z': float(coords[i,2]),
+                'x': float(raw_coords[i,0]),
+                'y': float(raw_coords[i,1]),
+                'z': float(raw_coords[i,2]),
                 'label': str(label)[:60],
                 'peso': float(peso),
                 'tipo': tipo,
-                'id': hid
+                'id': hid,
+                'constelacion': con_nombre,
+                'color': con_color
             })
 
-        return jsonify({'ok': True, 'points': points})
+        # Calculate star positions (centroids of each constelacion)
+        stars = []
+        for con in constelaciones:
+            hids = con['hitos_ids']
+            idxs = [hid_to_idx[h] for h in hids if h in hid_to_idx]
+            if not idxs:
+                continue
+            cx = float(np.mean([raw_coords[i,0] for i in idxs]))
+            cy = float(np.mean([raw_coords[i,1] for i in idxs]))
+            cz = float(np.mean([raw_coords[i,2] for i in idxs]))
+            stars.append({
+                'x': cx, 'y': cy, 'z': cz,
+                'nombre': con['nombre'],
+                'descripcion': con['descripcion'],
+                'color': con['color'],
+                'n_planetas': len(idxs)
+            })
+
+        return jsonify({'ok': True, 'points': points, 'stars': stars,
+                        'constelaciones': [c['nombre'] for c in constelaciones]})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})
 
@@ -2335,6 +2400,85 @@ def api_crear_tarea():
     conn.close()
     print(f"[ANNI] Tarea #{tarea_id} creada: {titulo}")
     return jsonify({'ok': True, 'id': tarea_id})
+
+
+def calcular_constelaciones(usuario_id):
+    """ANNI agrupa sus propios hitos en constelaciones temáticas usando Sonnet."""
+    import json as json_mod
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""SELECT h.id, COALESCE(h.titulo, SUBSTR(h.contenido,1,80)) as label, h.tipo
+                     FROM hitos_usuario h
+                     JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
+                     WHERE h.usuario_id=? AND h.activo=1""", (usuario_id,))
+        hitos = c.fetchall()
+        conn.close()
+
+        if len(hitos) < 4:
+            return None
+
+        hitos_txt = "\n".join([f"ID {h[0]}: {h[1]} (tipo: {h[2]})" for h in hitos])
+
+        prompt = f"""Eres ANNI. Tienes estos hitos sobre tu usuario:
+
+{hitos_txt}
+
+Agrúpalos en 4 a 6 temas centrales. Cada tema es una "constelación" — un conjunto de hitos que hablan de lo mismo.
+
+Responde SOLO con este JSON:
+{{
+  "constelaciones": [
+    {{
+      "nombre": "NOMBRE EN MAYÚSCULAS (1-2 palabras)",
+      "descripcion": "qué tienen en común estos hitos",
+      "hitos_ids": [lista de IDs que pertenecen a este grupo]
+    }}
+  ]
+}}
+
+Reglas:
+- Cada hito debe pertenecer exactamente a una constelación
+- Los nombres deben ser concisos: FAMILIA, TRABAJO, IDENTIDAD, ANNI, PENSAMIENTO, etc.
+- No dejes ningún hito sin asignar
+- Solo JSON, sin explicación."""
+
+        if anthropic_client:
+            resp = anthropic_client.messages.create(
+                model=CHAT_MODEL,
+                max_tokens=800,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = resp.content[0].text.strip()
+        else:
+            resp = together.chat.completions.create(
+                model=CHAT_MODEL_FALLBACK,
+                max_tokens=800,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = resp.choices[0].message.content.strip()
+
+        raw = raw.replace("```json","").replace("```","").strip()
+        data = json_mod.loads(raw)
+
+        # Save constelaciones
+        conn2 = sqlite3.connect(DB_PATH)
+        c2 = conn2.cursor()
+        # Clear existing
+        c2.execute("DELETE FROM constelaciones WHERE usuario_id=?", (usuario_id,))
+        for con in data.get("constelaciones", []):
+            c2.execute("""INSERT INTO constelaciones (usuario_id, nombre, descripcion, hitos_ids)
+                         VALUES (?,?,?,?)""",
+                      (usuario_id, con["nombre"], con.get("descripcion",""),
+                       json_mod.dumps(con.get("hitos_ids", []))))
+        conn2.commit()
+        conn2.close()
+        print(f"[ANNI] {len(data.get('constelaciones',[]))} constelaciones calculadas para usuario {usuario_id}")
+        return data.get("constelaciones", [])
+
+    except Exception as e:
+        print(f"[ANNI] Error calculando constelaciones: {e}")
+        return None
 
 def analizar_tarea_completada(usuario_id, tarea_id):
     """Analiza una tarea completada y actualiza el modelo de ejecución del usuario."""
@@ -3354,18 +3498,15 @@ fetch('/api/universo').then(r=>r.json()).then(function(d){
   var ui=document.createElement('div');
   ui.style.cssText='position:absolute;top:16px;left:16px;z-index:10;pointer-events:none;font-family:monospace';
   ui.innerHTML='<div style="font-size:18px;font-weight:bold;color:#cc0000;letter-spacing:4px;text-shadow:0 0 20px #cc000088">UNIVERSO ANNI</div>'+
-    '<div style="font-size:10px;color:#444;letter-spacing:2px;margin-top:3px">'+POINTS.length+' hitos · mapa semántico</div>';
+    '<div style="font-size:10px;color:#444;letter-spacing:2px;margin-top:3px">'+POINTS.length+' hitos · '+STARS.length+' constelaciones</div>'+
+    '<button onclick="loadUniverso(\"recalc\")" style="margin-top:8px;background:none;border:1px solid #333;color:#444;font-size:9px;padding:3px 8px;cursor:pointer;font-family:monospace;letter-spacing:1px">↻ RECALCULAR</button>';
   container.appendChild(ui);
 
   // Scale legend
   var scale=document.createElement('div');
   scale.style.cssText='position:absolute;top:16px;right:16px;z-index:10;font-family:monospace;font-size:10px;letter-spacing:1px;line-height:1.9;color:#555';
-  scale.innerHTML='<div style="margin-bottom:4px;color:#333">PESO</div>'+
-    '<div><span style="color:#1e6bbf">●</span> ≤10 poco activado</div>'+
-    '<div><span style="color:#d4aa00">●</span> ≤18 en uso</div>'+
-    '<div><span style="color:#ff8c00">●</span> ≤25 frecuente</div>'+
-    '<div><span style="color:#ff4400">●</span> ≤35 muy frecuente</div>'+
-    '<div><span style="color:#ff0000">●</span> >35 central</div>';
+  var consLegend = STARS.map(function(s){ return '<div><span style="color:'+s.color+'">★</span> '+s.nombre+' ('+s.n_planetas+')</div>'; }).join('');
+  scale.innerHTML='<div style="margin-bottom:4px;color:#333">CONSTELACIONES</div>'+consLegend;
   container.appendChild(scale);
 
   // Tooltip
@@ -3381,17 +3522,21 @@ fetch('/api/universo').then(r=>r.json()).then(function(d){
 
   // Load Three.js and render
   if(window.THREE){
-    renderUniverso(container, tip, POINTS);
+    renderUniverso(container, tip, POINTS, STARS);
   } else {
     var script=document.createElement('script');
     script.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-    script.onload=function(){ renderUniverso(container, tip, POINTS); };
+    script.onload=function(){ renderUniverso(container, tip, POINTS, STARS); };
     document.head.appendChild(script);
   }
 });
 }
 
-function renderUniverso(container, tip, POINTS){
+function hexToThree(hex){
+  return parseInt(hex.replace('#',''), 16);
+}
+
+function renderUniverso(container, tip, POINTS, STARS){
 var W=container.clientWidth, H=container.clientHeight;
 var scene=new THREE.Scene();
 var camera=new THREE.PerspectiveCamera(55,W/H,0.1,2000);
@@ -3488,11 +3633,17 @@ renderer.domElement.addEventListener('mousemove',function(e){
       if(hovered) hovered.material.emissiveIntensity=0.7;
       hovered=obj; obj.material.emissiveIntensity=1.8;
     }
-    var pc=obj.userData.peso<=5?'#4488ff':obj.userData.peso<=10?'#44aaff':obj.userData.peso<=18?'#ffdd00':obj.userData.peso<=25?'#ff8c00':obj.userData.peso<=35?'#ff4400':'#ff0000';
     tip.style.display='block';
     tip.style.left=(e.clientX-rect.left+15)+'px';
     tip.style.top=(e.clientY-rect.top-10)+'px';
-    tip.innerHTML='<b style="color:'+pc+'">⭐ '+escH(obj.userData.label.toUpperCase())+'</b><br><span style="color:#444;font-size:10px">peso: '+obj.userData.peso.toFixed(1)+'</span>';
+    if(obj.userData.isStar){
+      tip.innerHTML='<b style="color:'+obj.userData.color+'">★ CONSTELACIÓN: '+escH(obj.userData.label)+'</b><br>'+
+        escH(obj.userData.desc||'')+'<br><span style="color:#444;font-size:10px">'+obj.userData.n+' hitos</span>';
+    } else {
+      tip.innerHTML='<b style="color:'+obj.userData.color+'">🪐 '+escH(obj.userData.label.toUpperCase())+'</b><br>'+
+        '<span style="color:#666;font-size:10px">'+escH(obj.userData.constelacion||'')+'</span>'+
+        ' <span style="color:#444;font-size:10px">· peso: '+obj.userData.peso.toFixed(1)+'</span>';
+    }
   } else {
     if(hovered){hovered.material.emissiveIntensity=0.7;hovered=null;}
     tip.style.display='none';
@@ -3518,7 +3669,13 @@ function animate(){
   t+=0.004;
   scene.rotation.y=rotY; scene.rotation.x=rotX;
   meshes.forEach(function(m,i){
-    m.scale.setScalar(1+Math.sin(t*1.2+i*0.8)*0.07);
+    if(m.userData.isStar){
+      m.scale.setScalar(1+Math.sin(t*0.8+i)*0.05);
+      m.rotation.y += 0.003;
+    } else {
+      m.scale.setScalar(1+Math.sin(t*1.5+i*1.2)*0.06);
+      m.rotation.y += 0.006;
+    }
   });
   pl.intensity=1.8+Math.sin(t*0.5)*0.4;
   renderer.render(scene,camera);
