@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.45"
+ANNI_VERSION = "1.0.46"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2592,15 +2592,15 @@ loadDiario(1);}
 
 function editDiario(id,fecha){
 var card=document.getElementById('diario-'+id);
-var titulo=card.querySelector('#dtitulo-'+id).textContent;
-var texto=card.querySelector('#dtexto-'+id).textContent;
-card.querySelector('#dtitulo-'+id).innerHTML='<input value="'+escH(titulo)+'" id="editd-titulo-'+id+'" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:15px;font-weight:800;font-family:inherit">';
-card.querySelector('#dtexto-'+id).innerHTML=
-'<input type="date" value="'+escH(fecha)+'" id="editd-fecha-'+id+'" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit;margin-bottom:6px">'+
-'<textarea rows="8" id="editd-texto-'+id+'" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical">'+escH(texto)+'</textarea>';
-card.querySelector('.item-actions').innerHTML=
-'<button class="btn-edit" onclick="guardarEditDiario('+id+')">Guardar</button>'+
-'<button class="btn-del" onclick="loadDiario(currentPage)">Cancelar</button>';}
+if(!card){return;}
+var tituloEl=document.getElementById('dtitulo-'+id);
+var textoEl=document.getElementById('dtexto-'+id);
+var titulo=tituloEl?tituloEl.textContent:'';
+var texto=textoEl?textoEl.textContent:'';
+if(tituloEl) tituloEl.innerHTML='<input value="'+escH(titulo)+'" id="editd-titulo-'+id+'" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:15px;font-weight:800;font-family:inherit">';
+if(textoEl) textoEl.innerHTML='<input type="date" value="'+escH(fecha)+'" id="editd-fecha-'+id+'" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit;margin-bottom:6px"><textarea rows="8" id="editd-texto-'+id+'" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical">'+escH(texto)+'</textarea>';
+var actions=card.querySelector('.item-actions');
+if(actions) actions.innerHTML='<button class="btn-edit" onclick="guardarEditDiario('+id+')">Guardar</button><button class="btn-del" onclick="loadDiario(currentPage)">Cancelar</button>';}
 
 function guardarEditDiario(id){
 var titulo=document.getElementById('editd-titulo-'+id).value.trim();
