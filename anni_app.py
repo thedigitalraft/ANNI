@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.56"
+ANNI_VERSION = "1.0.58"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -246,6 +246,24 @@ def init_db():
             c.execute(sql)
         except:
             pass
+
+    # Tablas nuevas que pueden no existir en Railway
+    c.execute("""CREATE TABLE IF NOT EXISTS universo_cache (
+        id INTEGER PRIMARY KEY,
+        usuario_id INTEGER NOT NULL UNIQUE,
+        puntos_json TEXT NOT NULL,
+        estrellas_json TEXT NOT NULL,
+        n_hitos INTEGER DEFAULT 0,
+        ts REAL DEFAULT (unixepoch('now','subsec'))
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS constelaciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        nombre TEXT NOT NULL,
+        descripcion TEXT DEFAULT '',
+        hitos_ids TEXT DEFAULT '[]',
+        ts_calculado REAL DEFAULT (unixepoch('now','subsec'))
+    )""")
     # Seed dominios CURIOSA si no existen
     c.execute("SELECT COUNT(*) FROM dominios_curiosa")
     if c.fetchone()[0] == 0:
@@ -2374,6 +2392,21 @@ def recalcular_universo(usuario_id):
 
 
 
+
+@app.route('/api/curiosa/tick', methods=['POST'])
+@login_required
+def api_curiosa_tick():
+    """Fuerza un tick inmediato del ciclo CURIOSA activo."""
+    usuario_id = session['usuario_id']
+    # Reset ts_ultimo_pulso to force advancement
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""UPDATE ciclos_curiosa SET ts_ultimo_pulso = 0
+                    WHERE usuario_id=? AND estado='en_curso'""", (usuario_id,))
+    conn.commit()
+    conn.close()
+    threading.Thread(target=tick_curiosa, args=(usuario_id,), daemon=True).start()
+    return jsonify({'ok': True, 'msg': 'Tick forzado — el pulso avanzará en segundos'})
+
 # ── EL MUNDO DE ANNI ─────────────────────────────────────────────────────────
 
 @app.route('/api/mundo', methods=['GET'])
@@ -3858,7 +3891,32 @@ else{convActiva=null;updateBtn();}});
 </body></html>"""
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
+
+# ── BACKGROUND SCHEDULER ─────────────────────────────────────────────────────
+
+def background_scheduler():
+    """Corre en background cada 5 minutos — avanza ciclos CURIOSA de todos los usuarios."""
+    import time as time_mod
+    print("[ANNI] Background scheduler iniciado")
+    while True:
+        try:
+            time_mod.sleep(300)  # cada 5 minutos
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT DISTINCT usuario_id FROM ciclos_curiosa WHERE estado='en_curso'")
+            usuarios = [r[0] for r in c.fetchall()]
+            conn.close()
+            for uid in usuarios:
+                try:
+                    tick_curiosa(uid)
+                except Exception as e:
+                    print(f"[SCHEDULER] Error en tick_curiosa para usuario {uid}: {e}")
+        except Exception as e:
+            print(f"[SCHEDULER] Error general: {e}")
+
 if __name__ == '__main__':
+    threading.Thread(target=background_scheduler, daemon=True).start()
+    print('[ANNI] Scheduler arrancado')
     init_db()
     print(f"\n{'='*50}")
     print(f"  ANNI {ANNI_VERSION}")
