@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.43"
+ANNI_VERSION = "1.0.45"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -253,7 +253,7 @@ def save_mensaje(usuario_id, role, content):
 def get_observaciones_activas(usuario_id, limit=15):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT id, tipo, contenido, ts FROM observaciones
+    c.execute("""SELECT id, tipo, contenido, ts, peso FROM observaciones
                  WHERE usuario_id=? AND activa=1
                  ORDER BY peso DESC, ts DESC LIMIT ?""", (usuario_id, limit))
     rows = c.fetchall()
@@ -1491,7 +1491,9 @@ def api_diario_get():
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM diario WHERE usuario_id=?", (usuario_id,))
     total = c.fetchone()[0]
-    c.execute("SELECT id, fecha, dia_experimento, titulo, texto, ts FROM diario WHERE usuario_id=? ORDER BY fecha DESC LIMIT ? OFFSET ?",
+    orden = request.args.get('orden', 'desc')
+    order_sql = 'DESC' if orden == 'desc' else 'ASC'
+    c.execute(f"SELECT id, fecha, dia_experimento, titulo, texto, ts FROM diario WHERE usuario_id=? ORDER BY fecha {order_sql} LIMIT ? OFFSET ?",
               (usuario_id, per_page, offset))
     entradas = [{'id': r[0], 'fecha': r[1], 'dia': r[2], 'titulo': r[3], 'texto': r[4], 'ts': ts_format(r[5])} for r in c.fetchall()]
     conn.close()
@@ -1521,6 +1523,23 @@ def api_diario_post():
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'dia': dia})
+
+@app.route('/api/diario/<int:eid>', methods=['PUT'])
+@login_required
+def api_diario_put(eid):
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    titulo = data.get('titulo', '').strip()
+    texto = data.get('texto', '').strip()
+    fecha = data.get('fecha', '').strip()
+    if not titulo or not texto:
+        return jsonify({'ok': False})
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE diario SET titulo=?, texto=?, fecha=? WHERE id=? AND usuario_id=?",
+                 (titulo, texto, fecha, eid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
 
 @app.route('/api/diario/<int:eid>', methods=['DELETE'])
 @login_required
@@ -2531,6 +2550,8 @@ fetch('/api/chats/'+id,{method:'PUT',headers:{'Content-Type':'application/json'}
 .then(r=>r.json()).then(()=>loadChats(currentPage));};
 }
 
+var diarioOrden='desc';
+
 function loadDiario(page){
 var body=document.getElementById('page-body');
 var hoy=new Date();
@@ -2544,17 +2565,51 @@ body.innerHTML='<div class="item-card" style="background:#fff5f5;border-color:#f
 '<button onclick="guardarDiario()" style="padding:12px 20px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#cc0000;color:#fff;border:none">Guardar entrada</button>'+
 '</div>';
 calcDia();
-fetch('/api/diario?page='+page).then(r=>r.json()).then(d=>{
+// Botón de orden
+var ordenBtn=document.createElement('div');
+ordenBtn.style.cssText='display:flex;align-items:center;gap:8px;margin-bottom:12px';
+ordenBtn.innerHTML='<button onclick="toggleOrdenDiario()" class="nav-btn" style="font-size:11px">'+
+(diarioOrden==='desc'?'↓ Más recientes primero':'↑ Más antiguas primero')+'</button>';
+body.appendChild(ordenBtn);
+fetch('/api/diario?page='+page+'&orden='+diarioOrden).then(r=>r.json()).then(d=>{
 if(!d.entradas.length)return;
 d.entradas.forEach(function(e){
-var card=document.createElement('div');card.className='item-card';
+var card=document.createElement('div');card.className='item-card';card.id='diario-'+e.id;
 card.innerHTML='<span class="dia-badge">Dia '+e.dia+'</span>'+
 '<div class="item-meta">'+e.fecha+'</div>'+
-'<h3 style="font-size:16px;font-weight:800;margin-bottom:8px">'+escH(e.titulo)+'</h3>'+
-'<div class="item-content">'+escH(e.texto)+'</div>'+
-'<div class="item-actions"><button class="btn-del" onclick="delDiario('+e.id+')">Borrar</button></div>';
+'<h3 style="font-size:16px;font-weight:800;margin-bottom:8px" id="dtitulo-'+e.id+'">'+escH(e.titulo)+'</h3>'+
+'<div class="item-content" id="dtexto-'+e.id+'">'+escH(e.texto)+'</div>'+
+'<div class="item-actions">'+
+'<button class="btn-edit" onclick="editDiario('+e.id+','+JSON.stringify(e.fecha)+')">Editar</button>'+
+'<button class="btn-del" onclick="delDiario('+e.id+')">Borrar</button>'+
+'</div>';
 body.appendChild(card);});
 body.appendChild(pagerEl(d.pages,page,'loadDiario'));});}
+
+function toggleOrdenDiario(){
+diarioOrden=diarioOrden==='desc'?'asc':'desc';
+loadDiario(1);}
+
+function editDiario(id,fecha){
+var card=document.getElementById('diario-'+id);
+var titulo=card.querySelector('#dtitulo-'+id).textContent;
+var texto=card.querySelector('#dtexto-'+id).textContent;
+card.querySelector('#dtitulo-'+id).innerHTML='<input value="'+escH(titulo)+'" id="editd-titulo-'+id+'" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:15px;font-weight:800;font-family:inherit">';
+card.querySelector('#dtexto-'+id).innerHTML=
+'<input type="date" value="'+escH(fecha)+'" id="editd-fecha-'+id+'" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:13px;font-family:inherit;margin-bottom:6px">'+
+'<textarea rows="8" id="editd-texto-'+id+'" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical">'+escH(texto)+'</textarea>';
+card.querySelector('.item-actions').innerHTML=
+'<button class="btn-edit" onclick="guardarEditDiario('+id+')">Guardar</button>'+
+'<button class="btn-del" onclick="loadDiario(currentPage)">Cancelar</button>';}
+
+function guardarEditDiario(id){
+var titulo=document.getElementById('editd-titulo-'+id).value.trim();
+var texto=document.getElementById('editd-texto-'+id).value.trim();
+var fecha=document.getElementById('editd-fecha-'+id).value;
+if(!titulo||!texto){alert('Titulo y texto son obligatorios');return;}
+fetch('/api/diario/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({titulo:titulo,texto:texto,fecha:fecha})})
+.then(r=>r.json()).then(d=>{if(d.ok)loadDiario(currentPage);});}
 
 function calcDia(){
 var f=document.getElementById('d-fecha');var el=document.getElementById('d-dia');
