@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.52"
+ANNI_VERSION = "1.0.53"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2190,6 +2190,66 @@ Solo JSON."""
 
 
 
+
+# ── UNIVERSO ──────────────────────────────────────────────────────────────────
+
+@app.route('/api/universo', methods=['GET'])
+@login_required
+def api_universo():
+    """Devuelve los hitos con embeddings para la visualización 3D."""
+    import struct, json as json_mod
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT h.id, COALESCE(h.titulo, SUBSTR(h.contenido,1,60)) as label,
+                        h.peso, h.tipo, e.embedding
+                 FROM hitos_usuario h
+                 JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
+                 WHERE h.usuario_id=? AND h.activo=1
+                 ORDER BY h.peso DESC""", (usuario_id,))
+    rows = c.fetchall()
+    conn.close()
+
+    if len(rows) < 3:
+        return jsonify({'ok': False, 'error': 'insuficientes_embeddings', 'count': len(rows)})
+
+    # UMAP 3D reduction
+    try:
+        import numpy as np
+        import umap as umap_lib
+
+        vecs = []
+        for hid, label, peso, tipo, blob in rows:
+            nv = len(blob) // 4
+            vecs.append(struct.unpack(f'{nv}f', blob))
+
+        vecs_np = np.array(vecs, dtype=np.float32)
+        reducer = umap_lib.UMAP(n_components=3, n_neighbors=min(5, len(rows)-1),
+                                min_dist=0.2, random_state=42)
+        coords = reducer.fit_transform(vecs_np)
+
+        # Normalize to -80..80
+        for axis in range(3):
+            mn, mx = coords[:,axis].min(), coords[:,axis].max()
+            if mx > mn:
+                coords[:,axis] = (coords[:,axis] - mn) / (mx - mn) * 160 - 80
+
+        points = []
+        for i, (hid, label, peso, tipo, blob) in enumerate(rows):
+            points.append({
+                'x': float(coords[i,0]),
+                'y': float(coords[i,1]),
+                'z': float(coords[i,2]),
+                'label': str(label)[:60],
+                'peso': float(peso),
+                'tipo': tipo,
+                'id': hid
+            })
+
+        return jsonify({'ok': True, 'points': points})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
 # ── EL MUNDO DE ANNI ─────────────────────────────────────────────────────────
 
 @app.route('/api/mundo', methods=['GET'])
@@ -2637,6 +2697,7 @@ textarea{font-size:16px}}
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
   <button class='nav-btn' onclick='showPage("memoria")'>MEMORIA</button>
   <button class='nav-btn' onclick='showPage("diario")'>DIARIO</button>
+  <button class='nav-btn' onclick='showPage("universo")'>UNIVERSO</button>
   <button class='nav-btn' onclick='descargarBD()'>BD</button>
   <a href='/logout' class='nav-btn salir'>SALIR</a>
 </div>
@@ -2925,14 +2986,15 @@ document.getElementById('modal-bd').classList.remove('open');})
 
 function showPage(sec){
 currentSection=sec;currentPage=1;
-var titles={mundo:'El mundo de ANNI',tareas:'Tareas',hitos:'Hitos del usuario',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
+var titles={universo:'Universo ANNI',mundo:'El mundo de ANNI',tareas:'Tareas',hitos:'Hitos del usuario',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
 document.getElementById('page-title').textContent=titles[sec]||sec;
 document.getElementById('page').classList.add('open');
 loadPage(sec,1);}
 function closePage(){document.getElementById('page').classList.remove('open');}
 function loadPage(sec,page){
 document.getElementById('page-body').innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
-if(sec==='mundo')loadMundo(page);
+if(sec==='universo')loadUniverso();
+else if(sec==='mundo')loadMundo(page);
 else if(sec==='tareas')loadTareas(page);
 else if(sec==='hitos')loadHitos(page);
 else if(sec==='chats')loadChats(page);
@@ -3263,6 +3325,212 @@ fetch('/api/mundo/estado').then(r=>r.json()).then(est=>{
     if(d.pages>1) body.appendChild(pagerEl(d.pages, page||1, 'loadMundo'));
   });
 });
+}
+
+
+function loadUniverso(){
+var body=document.getElementById('page-body');
+body.innerHTML='<p style="color:#999;padding:20px;font-family:monospace">Calculando embeddings...</p>';
+
+fetch('/api/universo').then(r=>r.json()).then(function(d){
+  if(!d.ok){
+    if(d.error==='insuficientes_embeddings'){
+      body.innerHTML='<p style="color:#666;padding:20px;font-family:monospace">ANNI necesita al menos 3 hitos con embeddings para generar el universo.<br><br>Hitos disponibles: '+(d.count||0)+'</p>';
+    } else {
+      body.innerHTML='<p style="color:#cc0000;padding:20px;font-family:monospace">Error: '+escH(d.error)+'</p>';
+    }
+    return;
+  }
+
+  var POINTS = d.points;
+
+  // Container
+  body.innerHTML='';
+  var container=document.createElement('div');
+  container.style.cssText='position:relative;width:100%;height:calc(100vh - 120px);background:#000;border-radius:8px;overflow:hidden';
+  body.appendChild(container);
+
+  // UI overlay
+  var ui=document.createElement('div');
+  ui.style.cssText='position:absolute;top:16px;left:16px;z-index:10;pointer-events:none;font-family:monospace';
+  ui.innerHTML='<div style="font-size:18px;font-weight:bold;color:#cc0000;letter-spacing:4px;text-shadow:0 0 20px #cc000088">UNIVERSO ANNI</div>'+
+    '<div style="font-size:10px;color:#444;letter-spacing:2px;margin-top:3px">'+POINTS.length+' hitos · mapa semántico</div>';
+  container.appendChild(ui);
+
+  // Scale legend
+  var scale=document.createElement('div');
+  scale.style.cssText='position:absolute;top:16px;right:16px;z-index:10;font-family:monospace;font-size:10px;letter-spacing:1px;line-height:1.9;color:#555';
+  scale.innerHTML='<div style="margin-bottom:4px;color:#333">PESO</div>'+
+    '<div><span style="color:#1e6bbf">●</span> ≤10 poco activado</div>'+
+    '<div><span style="color:#d4aa00">●</span> ≤18 en uso</div>'+
+    '<div><span style="color:#ff8c00">●</span> ≤25 frecuente</div>'+
+    '<div><span style="color:#ff4400">●</span> ≤35 muy frecuente</div>'+
+    '<div><span style="color:#ff0000">●</span> >35 central</div>';
+  container.appendChild(scale);
+
+  // Tooltip
+  var tip=document.createElement('div');
+  tip.style.cssText='position:absolute;z-index:20;background:rgba(0,0,0,0.9);border:1px solid #222;color:#bbb;font-size:12px;padding:10px 14px;border-radius:6px;max-width:280px;pointer-events:none;display:none;font-family:monospace;line-height:1.5';
+  container.appendChild(tip);
+
+  // Controls hint
+  var ctrl=document.createElement('div');
+  ctrl.style.cssText='position:absolute;bottom:12px;right:12px;z-index:10;color:#222;font-size:10px;font-family:monospace;letter-spacing:1px';
+  ctrl.textContent='Arrastrar · Rueda zoom · Hover info';
+  container.appendChild(ctrl);
+
+  // Load Three.js and render
+  if(window.THREE){
+    renderUniverso(container, tip, POINTS);
+  } else {
+    var script=document.createElement('script');
+    script.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+    script.onload=function(){ renderUniverso(container, tip, POINTS); };
+    document.head.appendChild(script);
+  }
+});
+}
+
+function renderUniverso(container, tip, POINTS){
+var W=container.clientWidth, H=container.clientHeight;
+var scene=new THREE.Scene();
+var camera=new THREE.PerspectiveCamera(55,W/H,0.1,2000);
+camera.position.set(0,0,220);
+
+var renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(W,H);
+renderer.setPixelRatio(devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+// Stars
+var sg=new THREE.BufferGeometry();
+var sv=[];
+for(var i=0;i<15000;i++) sv.push((Math.random()-0.5)*2000,(Math.random()-0.5)*2000,(Math.random()-0.5)*2000);
+sg.setAttribute('position',new THREE.Float32BufferAttribute(sv,3));
+scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.6,transparent:true,opacity:0.85})));
+
+// Lights
+scene.add(new THREE.AmbientLight(0x110000,3));
+var pl=new THREE.PointLight(0xff6633,2,600);
+pl.position.set(0,80,120);
+scene.add(pl);
+
+// Lines between close pairs
+for(var i=0;i<POINTS.length;i++){
+  for(var j=i+1;j<POINTS.length;j++){
+    var a=POINTS[i],b=POINTS[j];
+    var dist=Math.sqrt(Math.pow(a.x-b.x,2)+Math.pow(a.y-b.y,2)+Math.pow(a.z-b.z,2));
+    if(dist<90){
+      var op=Math.max(0.15,(1-dist/90)*0.6);
+      var lg=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(a.x,a.y,a.z),new THREE.Vector3(b.x,b.y,b.z)]);
+      scene.add(new THREE.Line(lg,new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:op})));
+    }
+  }
+}
+
+// Color by peso
+function pesoColor(peso){
+  if(peso<=5)  return {c:0x0d2a6b,e:0x061440};
+  if(peso<=10) return {c:0x1e6bbf,e:0x0d3d7a};
+  if(peso<=18) return {c:0xd4aa00,e:0x7a6000};
+  if(peso<=25) return {c:0xff8c00,e:0x994d00};
+  if(peso<=35) return {c:0xff4400,e:0xcc2200};
+  return             {c:0xff0000,e:0xcc0000};
+}
+
+var meshes=[];
+POINTS.forEach(function(p,idx){
+  var size=2.5+(p.peso/10)*3.5;
+  var col=pesoColor(p.peso);
+  var geo=new THREE.IcosahedronGeometry(size,1);
+  var mat=new THREE.MeshPhongMaterial({color:col.c,emissive:col.e,emissiveIntensity:0.7,shininess:150,transparent:true,opacity:0.95});
+  var mesh=new THREE.Mesh(geo,mat);
+  mesh.position.set(p.x,p.y,p.z);
+  mesh.userData={label:p.label,peso:p.peso,col:col};
+  scene.add(mesh);
+  meshes.push(mesh);
+
+  // Glow
+  var gg=new THREE.SphereGeometry(size*2.5,12,12);
+  var gm=new THREE.MeshBasicMaterial({color:col.c,transparent:true,opacity:0.05,side:THREE.BackSide});
+  var glow=new THREE.Mesh(gg,gm);
+  glow.position.copy(mesh.position);
+  scene.add(glow);
+
+  // Label
+  var c2=document.createElement('canvas');
+  c2.width=512;c2.height=72;
+  var ctx=c2.getContext('2d');
+  ctx.fillStyle='rgba(0,0,0,0)';ctx.fillRect(0,0,512,72);
+  ctx.fillStyle='#ffffff';ctx.font='bold 32px Courier New';
+  ctx.fillText(p.label.substring(0,38).toUpperCase(),4,52);
+  var tex=new THREE.CanvasTexture(c2);
+  var sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0.8}));
+  sp.scale.set(52,7,1);
+  sp.position.set(p.x,p.y+size+3.5,p.z);
+  scene.add(sp);
+});
+
+// Raycaster
+var raycaster=new THREE.Raycaster();
+var mouse=new THREE.Vector2();
+var hovered=null;
+
+renderer.domElement.addEventListener('mousemove',function(e){
+  var rect=container.getBoundingClientRect();
+  mouse.x=((e.clientX-rect.left)/W)*2-1;
+  mouse.y=-((e.clientY-rect.top)/H)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+  var hits=raycaster.intersectObjects(meshes);
+  if(hits.length>0){
+    var obj=hits[0].object;
+    if(hovered!==obj){
+      if(hovered) hovered.material.emissiveIntensity=0.7;
+      hovered=obj; obj.material.emissiveIntensity=1.8;
+    }
+    var pc=obj.userData.peso<=5?'#4488ff':obj.userData.peso<=10?'#44aaff':obj.userData.peso<=18?'#ffdd00':obj.userData.peso<=25?'#ff8c00':obj.userData.peso<=35?'#ff4400':'#ff0000';
+    tip.style.display='block';
+    tip.style.left=(e.clientX-rect.left+15)+'px';
+    tip.style.top=(e.clientY-rect.top-10)+'px';
+    tip.innerHTML='<b style="color:'+pc+'">⭐ '+escH(obj.userData.label.toUpperCase())+'</b><br><span style="color:#444;font-size:10px">peso: '+obj.userData.peso.toFixed(1)+'</span>';
+  } else {
+    if(hovered){hovered.material.emissiveIntensity=0.7;hovered=null;}
+    tip.style.display='none';
+  }
+});
+
+// Drag & zoom
+var isDrag=false,prevX=0,prevY=0,rotX=0,rotY=0;
+renderer.domElement.addEventListener('mousedown',function(e){isDrag=true;prevX=e.clientX;prevY=e.clientY;});
+renderer.domElement.addEventListener('mouseup',function(){isDrag=false;});
+renderer.domElement.addEventListener('mousemove',function(e){
+  if(!isDrag)return;
+  rotY+=(e.clientX-prevX)*0.005;rotX+=(e.clientY-prevY)*0.005;prevX=e.clientX;prevY=e.clientY;
+});
+renderer.domElement.addEventListener('wheel',function(e){
+  camera.position.z=Math.max(60,Math.min(500,camera.position.z+e.deltaY*0.3));
+});
+
+var t=0;
+var animId=null;
+function animate(){
+  animId=requestAnimationFrame(animate);
+  t+=0.004;
+  scene.rotation.y=rotY; scene.rotation.x=rotX;
+  meshes.forEach(function(m,i){
+    m.scale.setScalar(1+Math.sin(t*1.2+i*0.8)*0.07);
+  });
+  pl.intensity=1.8+Math.sin(t*0.5)*0.4;
+  renderer.render(scene,camera);
+}
+animate();
+
+// Stop animation when page changes
+var origClose=window.closePage||function(){};
+window.closeUniverso=function(){
+  if(animId) cancelAnimationFrame(animId);
+  renderer.dispose();
+};
 }
 
 var diarioOrden='desc';
