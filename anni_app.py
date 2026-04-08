@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.66"
+ANNI_VERSION = "1.0.67"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2287,6 +2287,7 @@ def cron_tick():
 def api_universo():
     """Devuelve hitos y constelaciones para la visualización 3D — con cache."""
     import struct, json as json_mod
+    garantizar_tablas_universo()
     usuario_id = session['usuario_id']
     recalc = request.args.get('recalc', '0') == '1'
 
@@ -2326,6 +2327,36 @@ def api_universo():
 
     return  # old code removed — now handled by recalcular_universo
 
+
+def garantizar_tablas_universo():
+    """Crea tablas de universo si no existen — llamar antes de cualquier operación de universo."""
+    sqls = [
+        """CREATE TABLE IF NOT EXISTS universo_cache (
+            id INTEGER PRIMARY KEY,
+            usuario_id INTEGER NOT NULL UNIQUE,
+            puntos_json TEXT NOT NULL,
+            estrellas_json TEXT NOT NULL,
+            n_hitos INTEGER DEFAULT 0,
+            ts REAL DEFAULT (unixepoch('now','subsec'))
+        )""",
+        """CREATE TABLE IF NOT EXISTS constelaciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER NOT NULL,
+            nombre TEXT NOT NULL,
+            descripcion TEXT DEFAULT '',
+            hitos_ids TEXT DEFAULT '[]',
+            ts_calculado REAL DEFAULT (unixepoch('now','subsec'))
+        )"""
+    ]
+    for sql in sqls:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            conn.execute(sql)
+            conn.commit()
+            conn.close()
+        except:
+            pass
+
 def pca_python(vecs, n_components=3):
     """PCA en Python puro — sin numpy ni sklearn."""
     import random as rnd
@@ -2361,6 +2392,7 @@ def pca_python(vecs, n_components=3):
 def recalcular_universo(usuario_id):
     """Calcula PCA + constelaciones y guarda en cache. Sin numpy ni umap."""
     import struct, json as json_mod
+    garantizar_tablas_universo()
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -3689,12 +3721,24 @@ fetch('/api/universo').then(r=>r.json()).then(function(d){
   container.appendChild(ctrl);
 
   // Load Three.js and render
-  if(window.THREE){
+  // Debug info
+  var dbg=document.createElement('div');
+  dbg.style.cssText='position:absolute;bottom:10px;left:10px;color:#333;font-size:10px;font-family:monospace;z-index:100';
+  dbg.textContent=POINTS.length+' hitos · '+STARS.length+' estrellas · cargando Three.js...';
+  container.appendChild(dbg);
+
+  function doRender(){
+    dbg.textContent=POINTS.length+' hitos · '+STARS.length+' estrellas';
     renderUniverso(container, tip, POINTS, STARS);
+  }
+
+  if(window.THREE){
+    doRender();
   } else {
     var script=document.createElement('script');
     script.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-    script.onload=function(){ renderUniverso(container, tip, POINTS, STARS); };
+    script.onload=doRender;
+    script.onerror=function(){ dbg.textContent='Error cargando Three.js'; dbg.style.color='red'; };
     document.head.appendChild(script);
   }
 });
