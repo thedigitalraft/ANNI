@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.73"
+ANNI_VERSION = "1.0.74"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3812,6 +3812,11 @@ function repararEmbeddings(){
 function loadHitos(page){
 fetch('/api/hitos?page='+page).then(r=>r.json()).then(d=>{
 var body=document.getElementById('page-body');body.innerHTML='';
+// Repair button
+var repDiv=document.createElement('div');
+repDiv.style.cssText='text-align:right;margin-bottom:10px';
+repDiv.innerHTML='<button onclick="repararEmbeddings()" style="font-size:10px;padding:3px 10px;background:none;border:1px solid #ddd;cursor:pointer;font-family:monospace;color:#aaa;border-radius:4px">↻ Reparar embeddings</button>';
+body.appendChild(repDiv);
 if(!d.hitos.length){body.innerHTML='<p style="color:#999;padding:20px">Sin hitos guardados aun.</p>';return;}
 d.hitos.forEach(function(h){
 var card=document.createElement('div');card.className='item-card';
