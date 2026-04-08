@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.62"
+ANNI_VERSION = "1.0.65"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2266,7 +2266,7 @@ def cron_tick():
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT DISTINCT usuario_id FROM usuarios")
+        c.execute("SELECT id FROM usuarios")
         usuarios = [r[0] for r in c.fetchall()]
         conn.close()
         resultados = []
@@ -2326,13 +2326,42 @@ def api_universo():
 
     return  # old code removed — now handled by recalcular_universo
 
+def pca_python(vecs, n_components=3):
+    """PCA en Python puro — sin numpy ni sklearn."""
+    import random as rnd
+    rnd.seed(42)
+    n, d = len(vecs), len(vecs[0])
+    means = [sum(vecs[i][j] for i in range(n)) / n for j in range(d)]
+    centered = [[vecs[i][j] - means[j] for j in range(d)] for i in range(n)]
+
+    def dot(a, b): return sum(x*y for x,y in zip(a,b))
+    def normalize(v):
+        norm = sum(x*x for x in v) ** 0.5
+        return [x/norm for x in v] if norm > 1e-10 else v
+    def subtract_proj(v, u):
+        p = dot(v, u)
+        return [v[i] - p*u[i] for i in range(len(v))]
+
+    components = []
+    for _ in range(n_components):
+        pc = normalize([rnd.gauss(0, 1) for _ in range(d)])
+        for prev in components:
+            pc = subtract_proj(pc, prev)
+        pc = normalize(pc)
+        for _ in range(15):
+            scores = [dot(row, pc) for row in centered]
+            pc_new = [sum(scores[i]*centered[i][j] for i in range(n)) for j in range(d)]
+            for prev in components:
+                pc_new = subtract_proj(pc_new, prev)
+            pc = normalize(pc_new)
+        components.append(pc)
+
+    return [[dot(centered[i], components[k]) for k in range(n_components)] for i in range(n)]
+
 def recalcular_universo(usuario_id):
-    """Calcula UMAP + constelaciones y guarda en cache. Corre en background."""
+    """Calcula PCA + constelaciones y guarda en cache. Sin numpy ni umap."""
     import struct, json as json_mod
     try:
-        import numpy as np
-        import umap as umap_lib
-
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("""SELECT h.id, COALESCE(h.titulo, SUBSTR(h.contenido,1,60)) as label,
@@ -2349,11 +2378,9 @@ def recalcular_universo(usuario_id):
         if len(rows) < 3:
             return
 
-        # Recalculate constelaciones if needed
         if n_cons == 0:
             calcular_constelaciones(usuario_id)
 
-        # Load constelaciones
         conn2 = sqlite3.connect(DB_PATH)
         c2 = conn2.cursor()
         c2.execute("SELECT id, nombre, descripcion, hitos_ids FROM constelaciones WHERE usuario_id=? ORDER BY id",
@@ -2361,7 +2388,6 @@ def recalcular_universo(usuario_id):
         cons_rows = c2.fetchall()
         conn2.close()
 
-        # Build constelacion map
         hito_to_con = {}
         constelaciones = []
         con_colors = ['#cc0000','#ff8800','#ffcc00','#00aaff','#aa44ff','#00cc88']
@@ -2372,46 +2398,44 @@ def recalcular_universo(usuario_id):
             for hid in hids:
                 hito_to_con[hid] = idx
 
-        # UMAP
+        # PCA puro Python — sin dependencias
         vecs = []
         for hid, label, peso, tipo, blob in rows:
             nv = len(blob) // 4
-            vecs.append(struct.unpack(f'{nv}f', blob))
+            vecs.append(list(struct.unpack(f'{nv}f', blob)))
 
-        vecs_np = np.array(vecs, dtype=np.float32)
-        reducer = umap_lib.UMAP(n_components=3, n_neighbors=min(5, len(rows)-1),
-                                min_dist=0.15, random_state=42)
-        raw_coords = reducer.fit_transform(vecs_np)
+        n = len(vecs)
+        coords = pca_python(vecs, n_components=3)
 
+        # Normalize to -100..100
         for axis in range(3):
-            mn = raw_coords.min_axis(axis)
-            mx = raw_coords.max_axis(axis)
+            vals = [coords[i][axis] for i in range(n)]
+            mn, mx = min(vals), max(vals)
             if mx > mn:
                 for i in range(n):
-                    raw_coords.data[i][axis] = (raw_coords.data[i][axis] - mn) / (mx - mn) * 200 - 100
+                    coords[i][axis] = (coords[i][axis] - mn) / (mx - mn) * 200 - 100
 
-        hid_to_idx = {rows[i][0]: i for i in range(len(rows))}
+        hid_to_idx = {rows[i][0]: i for i in range(n)}
         points = []
         for i, (hid, label, peso, tipo, blob) in enumerate(rows):
             con_idx = hito_to_con.get(hid, 0)
             con_color = constelaciones[con_idx]['color'] if constelaciones else '#cc0000'
             con_nombre = constelaciones[con_idx]['nombre'] if constelaciones else 'GENERAL'
             points.append({
-                'x': float(raw_coords.data[i][0]), 'y': float(raw_coords.data[i][1]), 'z': float(raw_coords.data[i][2]),
+                'x': float(coords[i][0]), 'y': float(coords[i][1]), 'z': float(coords[i][2]),
                 'label': str(label)[:60], 'peso': float(peso), 'tipo': tipo,
                 'id': hid, 'constelacion': con_nombre, 'color': con_color
             })
 
-        # Stars (centroids)
         stars = []
         for con in constelaciones:
             hids = con['hitos_ids']
             idxs = [hid_to_idx[h] for h in hids if h in hid_to_idx]
             if not idxs:
                 continue
-            cx = sum(raw_coords.data[i][0] for i in idxs) / len(idxs)
-            cy = sum(raw_coords.data[i][1] for i in idxs) / len(idxs)
-            cz = sum(raw_coords.data[i][2] for i in idxs) / len(idxs)
+            cx = sum(coords[i][0] for i in idxs) / len(idxs)
+            cy = sum(coords[i][1] for i in idxs) / len(idxs)
+            cz = sum(coords[i][2] for i in idxs) / len(idxs)
             stars.append({'x': cx, 'y': cy, 'z': cz, 'nombre': con['nombre'],
                           'descripcion': con['descripcion'], 'color': con['color'],
                           'n_planetas': len(idxs)})
@@ -3944,11 +3968,13 @@ else{convActiva=null;updateBtn();}});
 
 # ── BACKGROUND SCHEDULER ─────────────────────────────────────────────────────
 
-def background_scheduler():
-    """Loop continuo — ejecuta pulsos CURIOSA y duerme entre ellos. Igual que ANI antigua."""
+def ciclo_loop():
+    """Loop principal de ciclos CURIOSA — igual que ANI antigua.
+    Ejecuta un pulso completo y duerme 20 minutos. Sin complicaciones."""
     import time as time_mod
-    print("[ANNI] Background scheduler iniciado")
-    time_mod.sleep(30)  # espera inicial al arrancar
+    import json as json_mod
+    print("[ANNI] ciclo_loop arrancado")
+    time_mod.sleep(30)  # espera inicial
 
     while True:
         try:
@@ -3960,89 +3986,97 @@ def background_scheduler():
 
             for uid in usuarios:
                 try:
-                    # Arrancar ciclo si no hay ninguno activo
-                    if debe_arrancar_ciclo(uid):
+                    # Si no hay ciclo activo, arrancar uno nuevo
+                    conn2 = sqlite3.connect(DB_PATH)
+                    c2 = conn2.cursor()
+                    c2.execute("SELECT id, dominio, subtema, pulso_actual, pulsos FROM ciclos_curiosa WHERE usuario_id=? AND estado='en_curso' LIMIT 1", (uid,))
+                    ciclo = c2.fetchone()
+                    conn2.close()
+
+                    if not ciclo:
+                        # Arrancar ciclo nuevo inmediatamente
                         dominio = get_siguiente_dominio(uid)
-                        conn2 = sqlite3.connect(DB_PATH)
-                        c2 = conn2.cursor()
-                        c2.execute("SELECT fuentes FROM dominios_curiosa WHERE nombre=?", (dominio,))
-                        row = c2.fetchone()
-                        conn2.close()
-                        fuentes = row[0] if row else ""
+                        conn4 = sqlite3.connect(DB_PATH)
+                        c4 = conn4.cursor()
+                        c4.execute("SELECT fuentes FROM dominios_curiosa WHERE nombre=?", (dominio,))
+                        row4 = c4.fetchone()
+                        conn4.close()
+                        fuentes = row4[0] if row4 else ""
                         anteriores = get_subtemas_anteriores(uid, dominio)
                         subtema = generar_subtema(dominio, fuentes, anteriores)
                         if subtema:
-                            conn3 = sqlite3.connect(DB_PATH)
-                            conn3.execute("""INSERT INTO ciclos_curiosa
-                                           (usuario_id, dominio, subtema, estado, pulso_actual, ts_inicio)
-                                           VALUES (?,?,?,'en_curso',0,?)""",
-                                         (uid, dominio, subtema, time.time()))
-                            conn3.commit()
-                            conn3.close()
-                            print(f"[SCHEDULER] Nuevo ciclo: {dominio} — {subtema[:40]}")
+                            conn5 = sqlite3.connect(DB_PATH)
+                            conn5.execute("INSERT INTO ciclos_curiosa (usuario_id, dominio, subtema, estado, pulso_actual, ts_inicio) VALUES (?,?,?,'en_curso',0,?)",
+                                         (uid, dominio, subtema, time_mod.time()))
+                            conn5.commit()
+                            conn5.close()
+                            print(f"[CICLO] Nuevo: {dominio} — {subtema[:50]}")
+                        continue
 
-                    # Ejecutar siguiente pulso si hay ciclo activo
-                    ciclo = get_ciclo_activo_curiosa(uid)
-                    if ciclo:
-                        import json as json_mod
-                        ciclo_id, dominio, subtema, pulso_actual, ts_ultimo, pulsos_json = ciclo
-                        siguiente_pulso = pulso_actual + 1
-                        if siguiente_pulso <= 12:
-                            conn4 = sqlite3.connect(DB_PATH)
-                            c4 = conn4.cursor()
-                            c4.execute("SELECT fuentes FROM dominios_curiosa WHERE nombre=?", (dominio,))
-                            row4 = c4.fetchone()
-                            conn4.close()
-                            fuentes = row4[0] if row4 else ""
-                            pulsos = json_mod.loads(pulsos_json) if pulsos_json else {}
-                            print(f"[SCHEDULER] Ejecutando P{siguiente_pulso} — {dominio}: {subtema[:40]}")
-                            resultado = ejecutar_pulso_curiosa(uid, ciclo_id, dominio, subtema,
-                                                               fuentes, siguiente_pulso, pulsos)
-                            if resultado:
-                                pulsos[str(siguiente_pulso)] = resultado
-                                conn5 = sqlite3.connect(DB_PATH)
-                                c5 = conn5.cursor()
-                                if siguiente_pulso == 12:
-                                    pregunta = pulsos.get("11", "")
-                                    try:
-                                        import struct
-                                        resp_emb = together.embeddings.create(
-                                            model=EMBED_MODEL, input=[resultado[:1600]])
-                                        vec = resp_emb.data[0].embedding
-                                        blob = struct.pack(f"{len(vec)}f", *vec)
-                                    except:
-                                        blob = None
-                                    c5.execute("""UPDATE ciclos_curiosa
-                                                 SET pulso_actual=12, pulsos=?, conclusion=?,
-                                                     pregunta_abierta=?, estado='completado',
-                                                     embedding=?, ts_fin=?, ts_ultimo_pulso=?
-                                                 WHERE id=?""",
-                                              (json_mod.dumps(pulsos), resultado, pregunta,
-                                               blob, time.time(), time.time(), ciclo_id))
-                                    print(f"[SCHEDULER] Ciclo completado: {dominio} — {subtema[:40]}")
-                                else:
-                                    c5.execute("""UPDATE ciclos_curiosa
-                                                 SET pulso_actual=?, pulsos=?, ts_ultimo_pulso=?
-                                                 WHERE id=?""",
-                                              (siguiente_pulso, json_mod.dumps(pulsos),
-                                               time.time(), ciclo_id))
-                                conn5.commit()
-                                conn5.close()
+                    ciclo_id, dominio, subtema, pulso_actual, pulsos_json = ciclo
+                    siguiente_pulso = pulso_actual + 1
+
+                    if siguiente_pulso > 12:
+                        # Marcar como completado
+                        conn6 = sqlite3.connect(DB_PATH)
+                        conn6.execute("UPDATE ciclos_curiosa SET estado='completado', ts_fin=? WHERE id=?",
+                                     (time_mod.time(), ciclo_id))
+                        conn6.commit()
+                        conn6.close()
+                        print(f"[CICLO] Completado: {dominio}")
+                        continue
+
+                    # Ejecutar pulso
+                    conn7 = sqlite3.connect(DB_PATH)
+                    c7 = conn7.cursor()
+                    c7.execute("SELECT fuentes FROM dominios_curiosa WHERE nombre=?", (dominio,))
+                    row7 = c7.fetchone()
+                    conn7.close()
+                    fuentes = row7[0] if row7 else ""
+                    pulsos = json_mod.loads(pulsos_json) if pulsos_json else {}
+
+                    print(f"[CICLO] P{siguiente_pulso}/12 — {dominio}: {subtema[:40]}")
+                    resultado = ejecutar_pulso_curiosa(uid, ciclo_id, dominio, subtema, fuentes, siguiente_pulso, pulsos)
+
+                    if resultado:
+                        pulsos[str(siguiente_pulso)] = resultado
+                        conn8 = sqlite3.connect(DB_PATH)
+                        c8 = conn8.cursor()
+                        if siguiente_pulso == 12:
+                            pregunta = pulsos.get("11", "")
+                            try:
+                                resp_emb = together.embeddings.create(model=EMBED_MODEL, input=[resultado[:1600]])
+                                vec = resp_emb.data[0].embedding
+                                import struct as struct_mod
+                                blob = struct_mod.pack(f"{len(vec)}f", *vec)
+                            except:
+                                blob = None
+                            c8.execute("UPDATE ciclos_curiosa SET pulso_actual=12, pulsos=?, conclusion=?, pregunta_abierta=?, estado='completado', embedding=?, ts_fin=?, ts_ultimo_pulso=? WHERE id=?",
+                                      (json_mod.dumps(pulsos), resultado, pregunta, blob, time_mod.time(), time_mod.time(), ciclo_id))
+                            print(f"[CICLO] ✓ Completado: {dominio} — {subtema[:40]}")
+                        else:
+                            c8.execute("UPDATE ciclos_curiosa SET pulso_actual=?, pulsos=?, ts_ultimo_pulso=? WHERE id=?",
+                                      (siguiente_pulso, json_mod.dumps(pulsos), time_mod.time(), ciclo_id))
+                        conn8.commit()
+                        conn8.close()
+
                 except Exception as e:
-                    print(f"[SCHEDULER] Error usuario {uid}: {e}")
+                    print(f"[CICLO] Error usuario {uid}: {e}")
 
         except Exception as e:
-            print(f"[SCHEDULER] Error general: {e}")
+            print(f"[CICLO] Error general: {e}")
 
-        time_mod.sleep(1200)  # 20 minutos entre pulsos — igual que el diseño original
+        time_mod.sleep(1200)  # 20 minutos — igual que el diseño original
+
+
 
 if __name__ == '__main__':
-    threading.Thread(target=background_scheduler, daemon=True).start()
-    print('[ANNI] Scheduler arrancado')
     init_db()
     print(f"\n{'='*50}")
     print(f"  ANNI {ANNI_VERSION}")
     print(f"  {ANNI_CREDITS}")
     print(f"  DB: {DB_PATH}")
     print(f"{'='*50}\n")
+    threading.Thread(target=ciclo_loop, daemon=True).start()
+    print('[ANNI] ciclo_loop arrancado')
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
