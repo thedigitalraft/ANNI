@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.69"
+ANNI_VERSION = "1.0.70"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3858,77 +3858,7 @@ fetch('/api/mundo/estado').then(r=>r.json()).then(est=>{
 
 
 function loadUniverso(){
-var body=document.getElementById('page-body');
-body.innerHTML='<p style="color:#999;padding:20px;font-family:monospace">Calculando embeddings...</p>';
-
-fetch('/api/universo').then(r=>r.json()).then(function(d){
-  if(!d.ok){
-    if(d.error==='insuficientes_embeddings'){
-      body.innerHTML='<p style="color:#666;padding:20px;font-family:monospace">ANNI necesita al menos 3 hitos con embeddings para generar el universo.<br><br>Hitos disponibles: '+(d.count||0)+'</p>';
-    } else if(d.error==='calculando'){
-      body.innerHTML='<div style="color:#444;padding:40px;font-family:monospace;text-align:center"><div style="font-size:32px;margin-bottom:16px;animation:spin 2s linear infinite;display:inline-block">✦</div><br><br>'+escH(d.msg||'Calculando...')+'<br><br><span style="font-size:11px;color:#333">Esto solo ocurre la primera vez.<br>Vuelve a pulsar UNIVERSO en 30 segundos.</span></div><style>@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>';
-    } else {
-      body.innerHTML='<p style="color:#cc0000;padding:20px;font-family:monospace">Error: '+escH(d.error)+'</p>';
-    }
-    return;
-  }
-
-  var POINTS = d.points;
-
-  // Container
-  body.innerHTML='';
-  var container=document.createElement('div');
-  container.style.cssText='position:relative;width:100%;height:calc(100vh - 120px);background:#000;border-radius:8px;overflow:hidden';
-  body.appendChild(container);
-
-  // UI overlay
-  var ui=document.createElement('div');
-  ui.style.cssText='position:absolute;top:16px;left:16px;z-index:10;pointer-events:none;font-family:monospace';
-  ui.innerHTML='<div style="font-size:18px;font-weight:bold;color:#cc0000;letter-spacing:4px;text-shadow:0 0 20px #cc000088">UNIVERSO ANNI</div>'+
-    '<div style="font-size:10px;color:#444;letter-spacing:2px;margin-top:3px">'+POINTS.length+' hitos · '+STARS.length+' constelaciones</div>'+
-    '<button onclick="loadUniverso(\"recalc\")" style="margin-top:8px;background:none;border:1px solid #333;color:#444;font-size:9px;padding:3px 8px;cursor:pointer;font-family:monospace;letter-spacing:1px">↻ RECALCULAR</button>';
-  container.appendChild(ui);
-
-  // Scale legend
-  var scale=document.createElement('div');
-  scale.style.cssText='position:absolute;top:16px;right:16px;z-index:10;font-family:monospace;font-size:10px;letter-spacing:1px;line-height:1.9;color:#555';
-  var consLegend = STARS.map(function(s){ return '<div><span style="color:'+s.color+'">★</span> '+s.nombre+' ('+s.n_planetas+')</div>'; }).join('');
-  scale.innerHTML='<div style="margin-bottom:4px;color:#333">CONSTELACIONES</div>'+consLegend;
-  container.appendChild(scale);
-
-  // Tooltip
-  var tip=document.createElement('div');
-  tip.style.cssText='position:absolute;z-index:20;background:rgba(0,0,0,0.9);border:1px solid #222;color:#bbb;font-size:12px;padding:10px 14px;border-radius:6px;max-width:280px;pointer-events:none;display:none;font-family:monospace;line-height:1.5';
-  container.appendChild(tip);
-
-  // Controls hint
-  var ctrl=document.createElement('div');
-  ctrl.style.cssText='position:absolute;bottom:12px;right:12px;z-index:10;color:#222;font-size:10px;font-family:monospace;letter-spacing:1px';
-  ctrl.textContent='Arrastrar · Rueda zoom · Hover info';
-  container.appendChild(ctrl);
-
-  // Load Three.js and render
-  // Debug info
-  var dbg=document.createElement('div');
-  dbg.style.cssText='position:absolute;bottom:10px;left:10px;color:#333;font-size:10px;font-family:monospace;z-index:100';
-  dbg.textContent=POINTS.length+' hitos · '+STARS.length+' estrellas · cargando Three.js...';
-  container.appendChild(dbg);
-
-  function doRender(){
-    dbg.textContent=POINTS.length+' hitos · '+STARS.length+' estrellas';
-    renderUniverso(container, tip, POINTS, STARS);
-  }
-
-  if(window.THREE){
-    doRender();
-  } else {
-    var script=document.createElement('script');
-    script.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-    script.onload=doRender;
-    script.onerror=function(){ dbg.textContent='Error cargando Three.js'; dbg.style.color='red'; };
-    document.head.appendChild(script);
-  }
-});
+window.location.href='/universo';
 }
 
 function hexToThree(hex){
