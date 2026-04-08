@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.67"
+ANNI_VERSION = "1.0.68"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2279,6 +2279,193 @@ def cron_tick():
         return jsonify({'ok': True, 'usuarios': resultados, 'ts': time.time()})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/universo')
+@login_required  
+def universo_page():
+    """Sirve el universo como página completa — igual que el standalone HTML."""
+    import struct, json as json_mod
+    usuario_id = session['usuario_id']
+    garantizar_tablas_universo()
+
+    # Get hitos with embeddings
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT h.id, COALESCE(h.titulo, SUBSTR(h.contenido,1,60)) as label,
+                        h.peso, e.embedding
+                 FROM hitos_usuario h
+                 JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
+                 WHERE h.usuario_id=? AND h.activo=1
+                 ORDER BY h.peso DESC""", (usuario_id,))
+    rows = c.fetchall()
+    conn.close()
+
+    if len(rows) < 3:
+        return "<html><body style='background:#000;color:#555;font-family:monospace;padding:40px'>Necesitas al menos 3 hitos con embeddings.</body></html>"
+
+    # PCA
+    vecs = []
+    for hid, label, peso, blob in rows:
+        nv = len(blob) // 4
+        vecs.append(list(struct.unpack(f'{nv}f', blob)))
+
+    coords = pca_python(vecs, n_components=3)
+    n = len(coords)
+
+    for axis in range(3):
+        vals = [coords[i][axis] for i in range(n)]
+        mn, mx = min(vals), max(vals)
+        if mx > mn:
+            for i in range(n):
+                coords[i][axis] = (coords[i][axis] - mn) / (mx - mn) * 160 - 80
+
+    points = []
+    for i, (hid, label, peso, blob) in enumerate(rows):
+        points.append({
+            'x': float(coords[i][0]), 'y': float(coords[i][1]), 'z': float(coords[i][2]),
+            'label': str(label)[:60], 'peso': float(peso), 'id': hid
+        })
+
+    points_json = json_mod.dumps(points)
+    n_nodos = len(points)
+
+    html = """<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Universo ANNI</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+#back { position:fixed; top:16px; left:16px; z-index:20; background:none; border:1px solid #333; color:#555; padding:4px 12px; cursor:pointer; font-family:monospace; font-size:11px; letter-spacing:1px; }
+#back:hover { color:#cc0000; border-color:#cc0000; }
+#ui { position:fixed; top:16px; left:80px; z-index:10; pointer-events:none; }
+#title { font-size:18px; font-weight:bold; color:#cc0000; letter-spacing:4px; text-shadow:0 0 20px #cc000088; }
+#subtitle { font-size:10px; color:#444; letter-spacing:2px; margin-top:3px; }
+#scale { position:fixed; top:16px; right:16px; z-index:10; font-size:10px; letter-spacing:1px; line-height:1.9; color:#555; }
+#tooltip { position:fixed; z-index:20; background:rgba(0,0,0,0.9); border:1px solid #222; color:#bbb; font-size:12px; padding:10px 14px; border-radius:6px; max-width:280px; pointer-events:none; display:none; font-family:monospace; line-height:1.5; }
+#ctrl { position:fixed; bottom:12px; right:12px; z-index:10; color:#222; font-size:10px; font-family:monospace; letter-spacing:1px; }
+</style>
+</head>
+<body>
+<button id="back" onclick="history.back()">← VOLVER</button>
+<div id="ui">
+  <div id="title">UNIVERSO ANNI</div>
+  <div id="subtitle">""" + str(n_nodos) + """ hitos · mapa semántico</div>
+</div>
+<div id="scale">
+  <div style="margin-bottom:4px;color:#333">PESO</div>
+  <div><span style="color:#1e6bbf">●</span> ≤10 poco activado</div>
+  <div><span style="color:#d4aa00">●</span> ≤18 en uso</div>
+  <div><span style="color:#ff8c00">●</span> ≤25 frecuente</div>
+  <div><span style="color:#ff4400">●</span> ≤35 muy frecuente</div>
+  <div><span style="color:#ff0000">●</span> >35 central</div>
+</div>
+<div id="tooltip"></div>
+<div id="ctrl">Arrastrar · Rueda zoom · Hover info</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const POINTS = """ + points_json + """;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 2000);
+camera.position.set(0, 0, 250);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+// Stars
+const sg = new THREE.BufferGeometry();
+const sv = [];
+for(let i=0;i<15000;i++) sv.push((Math.random()-0.5)*2000,(Math.random()-0.5)*2000,(Math.random()-0.5)*2000);
+sg.setAttribute('position', new THREE.Float32BufferAttribute(sv,3));
+scene.add(new THREE.Points(sg, new THREE.PointsMaterial({color:0xffffff,size:0.6,transparent:true,opacity:0.85})));
+
+scene.add(new THREE.AmbientLight(0x110000,3));
+const pl = new THREE.PointLight(0xff6633,2,600);
+pl.position.set(0,80,120);
+scene.add(pl);
+
+// Lines
+for(let i=0;i<POINTS.length;i++) for(let j=i+1;j<POINTS.length;j++){
+  const a=POINTS[i],b=POINTS[j];
+  const dist=Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2+(a.z-b.z)**2);
+  if(dist<90){
+    const op=Math.max(0.15,(1-dist/90)*0.6);
+    const lg=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(a.x,a.y,a.z),new THREE.Vector3(b.x,b.y,b.z)]);
+    scene.add(new THREE.Line(lg,new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:op})));
+  }
+}
+
+function pesoColor(p){
+  if(p<=5) return {c:0x0d2a6b,e:0x061440};
+  if(p<=10) return {c:0x1e6bbf,e:0x0d3d7a};
+  if(p<=18) return {c:0xd4aa00,e:0x7a6000};
+  if(p<=25) return {c:0xff8c00,e:0x994d00};
+  if(p<=35) return {c:0xff4400,e:0xcc2200};
+  return {c:0xff0000,e:0xcc0000};
+}
+
+const meshes=[];
+const tip=document.getElementById('tooltip');
+POINTS.forEach((p,i)=>{
+  const size=2.5+(p.peso/10)*3.5;
+  const col=pesoColor(p.peso);
+  const geo=new THREE.IcosahedronGeometry(size,1);
+  const mat=new THREE.MeshPhongMaterial({color:col.c,emissive:col.e,emissiveIntensity:0.7,shininess:150,transparent:true,opacity:0.95});
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.position.set(p.x,p.y,p.z);
+  mesh.userData={label:p.label,peso:p.peso};
+  scene.add(mesh); meshes.push(mesh);
+  const gg=new THREE.SphereGeometry(size*2.5,12,12);
+  const gm=new THREE.MeshBasicMaterial({color:col.c,transparent:true,opacity:0.05,side:THREE.BackSide});
+  const glow=new THREE.Mesh(gg,gm); glow.position.copy(mesh.position); scene.add(glow);
+  const c2=document.createElement('canvas'); c2.width=512; c2.height=72;
+  const ctx=c2.getContext('2d');
+  ctx.fillStyle='rgba(0,0,0,0)'; ctx.fillRect(0,0,512,72);
+  ctx.fillStyle='#ffffff'; ctx.font='bold 28px Courier New';
+  ctx.fillText(p.label.substring(0,38).toUpperCase(),4,48);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c2),transparent:true,opacity:0.8}));
+  sp.scale.set(48,7,1); sp.position.set(p.x,p.y+size+3,p.z); scene.add(sp);
+});
+
+const raycaster=new THREE.Raycaster();
+const mouse=new THREE.Vector2();
+let hovered=null;
+window.addEventListener('mousemove',e=>{
+  mouse.x=(e.clientX/innerWidth)*2-1;
+  mouse.y=-(e.clientY/innerHeight)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+  const hits=raycaster.intersectObjects(meshes);
+  if(hits.length>0){
+    const obj=hits[0].object;
+    if(hovered!==obj){if(hovered)hovered.material.emissiveIntensity=0.7;hovered=obj;obj.material.emissiveIntensity=1.8;}
+    const pc=obj.userData.peso<=5?'#4488ff':obj.userData.peso<=10?'#44aaff':obj.userData.peso<=18?'#ffdd00':obj.userData.peso<=25?'#ff8c00':obj.userData.peso<=35?'#ff4400':'#ff0000';
+    tip.style.display='block'; tip.style.left=(e.clientX+15)+'px'; tip.style.top=(e.clientY-10)+'px';
+    tip.innerHTML='<b style="color:'+pc+'">⭐ '+obj.userData.label.toUpperCase()+'</b><br><span style="color:#555;font-size:10px">peso: '+obj.userData.peso.toFixed(1)+'</span>';
+  } else { if(hovered){hovered.material.emissiveIntensity=0.7;hovered=null;} tip.style.display='none'; }
+});
+let isDrag=false,prevX=0,prevY=0,rotX=0,rotY=0;
+renderer.domElement.addEventListener('mousedown',e=>{isDrag=true;prevX=e.clientX;prevY=e.clientY;});
+renderer.domElement.addEventListener('mouseup',()=>isDrag=false);
+renderer.domElement.addEventListener('mousemove',e=>{if(!isDrag)return;rotY+=(e.clientX-prevX)*0.005;rotX+=(e.clientY-prevY)*0.005;prevX=e.clientX;prevY=e.clientY;});
+renderer.domElement.addEventListener('wheel',e=>{camera.position.z=Math.max(60,Math.min(500,camera.position.z+e.deltaY*0.3));});
+window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+let t=0;
+function animate(){
+  requestAnimationFrame(animate); t+=0.004;
+  scene.rotation.y=rotY; scene.rotation.x=rotX;
+  meshes.forEach((m,i)=>{m.scale.setScalar(1+Math.sin(t*1.2+i*0.8)*0.07);});
+  pl.intensity=1.8+Math.sin(t*0.5)*0.4;
+  renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>"""
+    return html
 
 # ── UNIVERSO ──────────────────────────────────────────────────────────────────
 
