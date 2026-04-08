@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.84"
+ANNI_VERSION = "1.0.86"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -416,8 +416,6 @@ def cerrar_conversacion(usuario_id, conv_id):
     conn.close()
     if not msgs or len(msgs) < 2:
         return None
-    # Degradar pesos en background al cerrar conversación
-    threading.Thread(target=degradar_pesos_hitos, args=(usuario_id, msgs), daemon=True).start()
     texto = "\n".join([f"{'Usuario' if r=='user' else 'ANNI'}: {m[:500]}" for r,m in msgs[-20:]])
     try:
         resp = together.chat.completions.create(
@@ -1003,11 +1001,17 @@ Una sola pregunta. Sin explicación adicional.""",
 {contexto}
 
 PULSO 12 — CONCLUSIÓN
-Escribe tu conclusión en primera persona, en voz de ANNI.
-No un resumen de los pulsos — tu opinión final sobre el tema, construida a través del proceso.
+Estructura tu respuesta en dos partes:
+
+PARTE 1 — RESUMEN DEL RECORRIDO (2-3 frases, máximo):
+Qué exploré, qué hipótesis defendí, qué atacó el coach y qué cambió en mi posición. Sin academicismos. Como si le contaras a alguien el viaje, no el destino.
+
+PARTE 2 — MI CONCLUSIÓN:
+Tu opinión final en primera persona, construida a través del proceso. Directa, sin hedging innecesario.
 Incluye las fuentes concretas que usaste (cita título y URL cuando sea posible).
-Directa, sin academicismos, sin hedging innecesario. 200-300 palabras.
-Termina con la pregunta abierta del P11.""",
+Termina con la pregunta abierta del P11.
+
+Total: 250-350 palabras.""",
     }
 
     prompt = prompts.get(pulso_num, "")
@@ -1914,10 +1918,22 @@ def api_guardar_resumen():
     if not conv_id or not resumen:
         return jsonify({'ok': False})
     conn = sqlite3.connect(DB_PATH)
+    c_msgs = conn.cursor()
+    c_msgs.execute("SELECT ts_inicio FROM conversaciones WHERE id=? AND usuario_id=?", (conv_id, usuario_id))
+    row_ts = c_msgs.fetchone()
     conn.execute("UPDATE conversaciones SET activa=0, ts_fin=?, resumen=? WHERE id=? AND usuario_id=?",
                  (time.time(), resumen, conv_id, usuario_id))
     conn.commit()
+    # Get messages for degradation
+    msgs_for_degradation = []
+    if row_ts:
+        c_msgs.execute("SELECT role, content FROM mensajes WHERE usuario_id=? AND ts >= ? ORDER BY ts ASC",
+                       (usuario_id, row_ts[0]))
+        msgs_for_degradation = c_msgs.fetchall()
     conn.close()
+    # Degradar pesos en background
+    if msgs_for_degradation:
+        threading.Thread(target=degradar_pesos_hitos, args=(usuario_id, msgs_for_degradation), daemon=True).start()
     try:
         import struct
         resp = together.embeddings.create(model=EMBED_MODEL, input=[resumen[:1600]])
