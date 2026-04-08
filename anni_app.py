@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.74"
+ANNI_VERSION = "1.0.76"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1039,22 +1039,39 @@ Termina con la pregunta abierta del P11.""",
 
 
 def incrementar_hitos_mencionados(usuario_id, mensaje):
-    """Incrementa peso de hitos cuyo contenido se menciona en el mensaje del usuario."""
+    """Incrementa peso de hitos cuando se mencionan personas o contenido relevante."""
     if not mensaje or len(mensaje) < 5:
         return
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
+        mensaje_lower = mensaje.lower()
+
+        # 1. Personas mencionadas por nombre — suma a todos sus hitos relacionados
+        c.execute("SELECT nombre, relacion FROM personas WHERE usuario_id=?", (usuario_id,))
+        personas = c.fetchall()
+        for nombre, relacion in personas:
+            nombre_lower = nombre.lower()
+            if nombre_lower in mensaje_lower and nombre_lower not in ('rafa', 'anni'):
+                # Incrementar todos los hitos que mencionan esta persona
+                c.execute("""UPDATE hitos_usuario SET peso = MIN(peso + 0.3, 50)
+                             WHERE usuario_id=? AND activo=1
+                             AND (LOWER(titulo) LIKE ? OR LOWER(contenido) LIKE ?)""",
+                          (usuario_id, f'%{nombre_lower}%', f'%{nombre_lower}%'))
+                updated = conn.execute("SELECT changes()").fetchone()[0]
+                if updated:
+                    print(f"[ANNI] Peso +0.3 por mención de {nombre} ({updated} hitos)")
+
+        # 2. Keywords del hito en el mensaje (lógica original mejorada)
         c.execute("SELECT id, contenido, titulo FROM hitos_usuario WHERE usuario_id=? AND activo=1", (usuario_id,))
         hitos = c.fetchall()
-        mensaje_lower = mensaje.lower()
         for hid, contenido, titulo in hitos:
-            # Check if key words from hito appear in message
             palabras = [w for w in (contenido or '').lower().split() if len(w) > 4]
             palabras += [w for w in (titulo or '').lower().split() if len(w) > 4]
             matches = sum(1 for p in palabras if p in mensaje_lower)
             if matches >= 2:
                 c.execute("UPDATE hitos_usuario SET peso = MIN(peso + 0.2, 50) WHERE id=?", (hid,))
+
         conn.commit()
         conn.close()
     except Exception as e:
@@ -1999,10 +2016,16 @@ def api_editar_hito(hid):
     usuario_id = session['usuario_id']
     data = request.json or {}
     contenido = data.get('contenido', '').strip()
+    titulo = data.get('titulo', '').strip()
     if not contenido:
         return jsonify({'ok': False})
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("UPDATE hitos_usuario SET contenido=? WHERE id=? AND usuario_id=?", (contenido, hid, usuario_id))
+    if titulo:
+        conn.execute("UPDATE hitos_usuario SET contenido=?, titulo=? WHERE id=? AND usuario_id=?",
+                     (contenido, titulo, hid, usuario_id))
+    else:
+        conn.execute("UPDATE hitos_usuario SET contenido=? WHERE id=? AND usuario_id=?",
+                     (contenido, hid, usuario_id))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -3820,7 +3843,7 @@ body.appendChild(repDiv);
 if(!d.hitos.length){body.innerHTML='<p style="color:#999;padding:20px">Sin hitos guardados aun.</p>';return;}
 d.hitos.forEach(function(h){
 var card=document.createElement('div');card.className='item-card';
-var titulo=h.titulo?'<div style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+escH(h.titulo)+'</div>':'';
+var titulo=h.titulo?'<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+escH(h.titulo)+'</div>':'';
 var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(h.categoria)+'</span>':'';
 var ev=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px">"'+escH(h.evidencia)+'"</div>':'';
 var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Activar:</b> '+escH(h.cuando)+'</div>':'';
@@ -3837,14 +3860,26 @@ body.appendChild(pagerEl(d.pages,page,'loadHitos'));});}
 function editHito(id,btn){
 var card=btn.closest('.item-card');
 var contentEl=card.querySelector('[id="hc-'+id+'"]');
+var titleEl=card.querySelector('[id="ht-'+id+'"]');
 if(!contentEl)return;
-var orig=contentEl.textContent;
-contentEl.innerHTML='<textarea style="width:100%;border:2px solid #cc0000;border-radius:8px;padding:10px;font-size:15px;font-family:inherit;resize:vertical" rows="4">'+escH(orig)+'</textarea>';
+var origContent=contentEl.textContent;
+var origTitle=titleEl?titleEl.textContent:'';
+
+// Replace title with input
+if(titleEl){
+  titleEl.innerHTML='<input type="text" value="'+escH(origTitle)+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 10px;font-size:16px;font-weight:900;font-family:inherit;margin-bottom:8px">';
+}
+// Replace content with textarea
+contentEl.innerHTML='<textarea style="width:100%;border:2px solid #cc0000;border-radius:8px;padding:10px;font-size:15px;font-family:inherit;resize:vertical" rows="4">'+escH(origContent)+'</textarea>';
+
 btn.textContent='Guardar';
 btn.onclick=function(){
 var txt=contentEl.querySelector('textarea').value.trim();
+var tit=titleEl?titleEl.querySelector('input').value.trim():'';
 if(!txt)return;
-fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({contenido:txt})})
+var payload={contenido:txt};
+if(tit) payload.titulo=tit;
+fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
 .then(()=>loadHitos(currentPage));};
 }
 
