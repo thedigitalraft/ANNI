@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.72"
+ANNI_VERSION = "1.0.73"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2506,6 +2506,30 @@ def api_personas_sin_hito():
     }
     return jsonify({'hito': hito})
 
+
+@app.route('/api/embeddings/repair', methods=['POST'])
+@login_required
+def api_embeddings_repair():
+    """Genera embeddings para todos los hitos que no los tienen."""
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT h.id, h.titulo, h.contenido FROM hitos_usuario h
+                 WHERE h.usuario_id=? AND h.activo=1
+                 AND h.id NOT IN (
+                     SELECT registro_id FROM embeddings WHERE tabla_origen='hitos_usuario'
+                 )""", (usuario_id,))
+    hitos = c.fetchall()
+    conn.close()
+
+    for hid, titulo, contenido in hitos:
+        texto = f"{titulo}. {contenido}" if titulo else contenido
+        threading.Thread(target=db_guardar_embedding,
+                        args=('hitos_usuario', hid, texto), daemon=True).start()
+
+    return jsonify({'ok': True, 'reparando': len(hitos),
+                    'msg': f'Generando embeddings para {len(hitos)} hitos...'})
+
 # ── UNIVERSO ──────────────────────────────────────────────────────────────────
 
 @app.route('/api/universo', methods=['GET'])
@@ -3777,6 +3801,12 @@ function reabrirTarea(id){
 function borrarTarea(id){
   if(!confirm('¿Borrar esta tarea?'))return;
   fetch('/api/tareas/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.ok)loadTareas(1);});
+}
+
+function repararEmbeddings(){
+  fetch('/api/embeddings/repair',{method:'POST'}).then(r=>r.json()).then(function(d){
+    if(d.ok) alert('Generando embeddings para '+d.reparando+' hitos. Espera unos segundos y recarga el UNIVERSO.');
+  });
 }
 
 function loadHitos(page){
