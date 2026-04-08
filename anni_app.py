@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.77"
+ANNI_VERSION = "1.0.78"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2499,10 +2499,17 @@ def api_personas_sin_hito():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     # Personas que no están mencionadas en ningún hito
-    c.execute("""SELECT p.nombre, p.relacion, p.tono_predominante, p.notas
+    # Solo personas con relaciones personales reales — no referencias académicas
+    relaciones_personales = ('pareja','esposa','esposo','hijo','hija','hijastra','hijastro',
+                              'suegro','suegra','cuñado','cuñada','amigo','amiga','socio','socia',
+                              'padre','madre','hermano','hermana','colega','jefe','cliente')
+    placeholders = ','.join(['?' for _ in relaciones_personales])
+    c.execute(f"""SELECT p.nombre, p.relacion, p.tono_predominante, p.notas
                  FROM personas p
                  WHERE p.usuario_id=?
                  AND p.nombre NOT IN ('Rafa', 'ANNI')
+                 AND LOWER(p.relacion) IN ({placeholders})
+                 AND p.veces_mencionada >= 2
                  AND NOT EXISTS (
                      SELECT 1 FROM hitos_usuario h
                      WHERE h.usuario_id=p.usuario_id
@@ -2510,7 +2517,8 @@ def api_personas_sin_hito():
                      AND (LOWER(h.titulo) LIKE '%' || LOWER(p.nombre) || '%'
                           OR LOWER(h.contenido) LIKE '%' || LOWER(p.nombre) || '%')
                  )
-                 ORDER BY p.veces_mencionada DESC LIMIT 1""", (usuario_id,))
+                 ORDER BY p.veces_mencionada DESC LIMIT 1""",
+              (usuario_id,) + relaciones_personales)
     persona = c.fetchone()
     conn.close()
 
