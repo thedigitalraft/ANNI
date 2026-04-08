@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.83"
+ANNI_VERSION = "1.0.84"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2411,11 +2411,11 @@ def universo_page():
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
-#back { position:fixed; bottom:20px; left:20px; z-index:20; background:none; border:1px solid #333; color:#555; padding:6px 14px; cursor:pointer; font-family:monospace; font-size:12px; letter-spacing:1px; }
+#back { position:fixed; bottom:20px; left:20px; z-index:20; background:none; border:1px solid #ffffff; color:#ffffff; padding:6px 14px; cursor:pointer; font-family:monospace; font-size:12px; letter-spacing:1px; }
 #back:hover { color:#cc0000; border-color:#cc0000; }
 #ui { position:fixed; top:16px; left:16px; z-index:10; pointer-events:none; }
-#title { font-size:18px; font-weight:bold; color:#cc0000; letter-spacing:4px; text-shadow:0 0 20px #cc000088; }
-#subtitle { font-size:10px; color:#444; letter-spacing:2px; margin-top:3px; }
+#title { font-size:45px; font-weight:bold; color:#cc0000; letter-spacing:4px; text-shadow:0 0 20px #cc000088; }
+#subtitle { font-size:20px; color:#ffffff; letter-spacing:2px; margin-top:3px; }
 #scale { position:fixed; top:16px; right:16px; z-index:10; font-size:20px; letter-spacing:1px; line-height:1.9; color:#ffffff; }
 #tooltip { position:fixed; z-index:20; background:rgba(0,0,0,0.9); border:1px solid #222; color:#bbb; font-size:12px; padding:10px 14px; border-radius:6px; max-width:280px; pointer-events:none; display:none; font-family:monospace; line-height:1.5; }
 #ctrl { position:fixed; bottom:12px; right:12px; z-index:10; color:#222; font-size:10px; font-family:monospace; letter-spacing:1px; }
