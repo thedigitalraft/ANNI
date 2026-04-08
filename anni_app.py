@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.80"
+ANNI_VERSION = "1.0.83"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2416,7 +2416,7 @@ body { background: #000; overflow: hidden; font-family: 'Courier New', monospace
 #ui { position:fixed; top:16px; left:16px; z-index:10; pointer-events:none; }
 #title { font-size:18px; font-weight:bold; color:#cc0000; letter-spacing:4px; text-shadow:0 0 20px #cc000088; }
 #subtitle { font-size:10px; color:#444; letter-spacing:2px; margin-top:3px; }
-#scale { position:fixed; top:16px; right:16px; z-index:10; font-size:20px; letter-spacing:1px; line-height:1.9; color:#555; }
+#scale { position:fixed; top:16px; right:16px; z-index:10; font-size:20px; letter-spacing:1px; line-height:1.9; color:#ffffff; }
 #tooltip { position:fixed; z-index:20; background:rgba(0,0,0,0.9); border:1px solid #222; color:#bbb; font-size:12px; padding:10px 14px; border-radius:6px; max-width:280px; pointer-events:none; display:none; font-family:monospace; line-height:1.5; }
 #ctrl { position:fixed; bottom:12px; right:12px; z-index:10; color:#222; font-size:10px; font-family:monospace; letter-spacing:1px; }
 </style>
@@ -2425,10 +2425,10 @@ body { background: #000; overflow: hidden; font-family: 'Courier New', monospace
 <button id="back" onclick="window.location.href='/chat'">← INICIO</button>
 <div id="ui">
   <div id="title">UNIVERSO ANNI</div>
-  <div id="subtitle">""" + str(n_nodos) + """ hitos · mapa semántico</div>
+  <div id="subtitle">Hitos en el espacio semántico</div>
 </div>
 <div id="scale">
-  <div style="margin-bottom:4px;color:#333">PESO</div>
+  <div style="margin-bottom:4px;color:#ffffff">PESO</div>
   <div><span style="color:#ac0000">●</span> ≤5 &nbsp;nuevo</div>
   <div><span style="color:#ff0000">●</span> ≤10 poco activo</div>
   <div><span style="color:#ffc000">●</span> ≤18 en uso</div>
