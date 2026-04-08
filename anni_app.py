@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.65"
+ANNI_VERSION = "1.0.66"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3705,15 +3705,21 @@ function hexToThree(hex){
 }
 
 function renderUniverso(container, tip, POINTS, STARS){
-var W=container.clientWidth, H=container.clientHeight;
+var W=container.clientWidth||window.innerWidth;
+var H=container.clientHeight||Math.floor(window.innerHeight*0.75);
+if(W<100){W=window.innerWidth-80;}
+if(H<100){H=500;}
 var scene=new THREE.Scene();
 var camera=new THREE.PerspectiveCamera(55,W/H,0.1,2000);
 camera.position.set(0,0,220);
 
-var renderer=new THREE.WebGLRenderer({antialias:true});
+var renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});
 renderer.setSize(W,H);
-renderer.setPixelRatio(devicePixelRatio);
+renderer.setClearColor(0x000000,1);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 container.appendChild(renderer.domElement);
+renderer.domElement.style.width='100%';
+renderer.domElement.style.height='100%';
 
 // Stars
 var sg=new THREE.BufferGeometry();
