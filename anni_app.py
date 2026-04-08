@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.76"
+ANNI_VERSION = "1.0.77"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3843,7 +3843,7 @@ body.appendChild(repDiv);
 if(!d.hitos.length){body.innerHTML='<p style="color:#999;padding:20px">Sin hitos guardados aun.</p>';return;}
 d.hitos.forEach(function(h){
 var card=document.createElement('div');card.className='item-card';
-var titulo=h.titulo?'<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+escH(h.titulo)+'</div>':'';
+var titulo='<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+(h.titulo?escH(h.titulo):'')+'</div>';
 var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(h.categoria)+'</span>':'';
 var ev=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px">"'+escH(h.evidencia)+'"</div>':'';
 var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Activar:</b> '+escH(h.cuando)+'</div>':'';
