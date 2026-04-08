@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.59"
+ANNI_VERSION = "1.0.61"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2238,6 +2238,32 @@ Solo JSON."""
 
 
 
+
+# ── CRON TICK ────────────────────────────────────────────────────────────────
+
+@app.route('/cron/tick', methods=['GET', 'POST'])
+def cron_tick():
+    """Endpoint público para avanzar ciclos CURIOSA — llamar cada 20 min via cron."""
+    secret = request.args.get('key', '')
+    if secret != os.environ.get('CRON_SECRET', 'anni-tick-2026'):
+        return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT usuario_id FROM usuarios")
+        usuarios = [r[0] for r in c.fetchall()]
+        conn.close()
+        resultados = []
+        for uid in usuarios:
+            try:
+                tick_curiosa(uid)
+                resultados.append(uid)
+            except Exception as e:
+                print(f"[CRON] Error tick usuario {uid}: {e}")
+        return jsonify({'ok': True, 'usuarios': resultados, 'ts': time.time()})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
 # ── UNIVERSO ──────────────────────────────────────────────────────────────────
 
 @app.route('/api/universo', methods=['GET'])
@@ -3901,24 +3927,96 @@ else{convActiva=null;updateBtn();}});
 # ── BACKGROUND SCHEDULER ─────────────────────────────────────────────────────
 
 def background_scheduler():
-    """Corre en background cada 5 minutos — avanza ciclos CURIOSA de todos los usuarios."""
+    """Loop continuo — ejecuta pulsos CURIOSA y duerme entre ellos. Igual que ANI antigua."""
     import time as time_mod
     print("[ANNI] Background scheduler iniciado")
+    time_mod.sleep(30)  # espera inicial al arrancar
+
     while True:
         try:
-            time_mod.sleep(300)  # cada 5 minutos
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute("SELECT DISTINCT usuario_id FROM ciclos_curiosa WHERE estado='en_curso'")
+            c.execute("SELECT DISTINCT usuario_id FROM usuarios")
             usuarios = [r[0] for r in c.fetchall()]
             conn.close()
+
             for uid in usuarios:
                 try:
-                    tick_curiosa(uid)
+                    # Arrancar ciclo si no hay ninguno activo
+                    if debe_arrancar_ciclo(uid):
+                        dominio = get_siguiente_dominio(uid)
+                        conn2 = sqlite3.connect(DB_PATH)
+                        c2 = conn2.cursor()
+                        c2.execute("SELECT fuentes FROM dominios_curiosa WHERE nombre=?", (dominio,))
+                        row = c2.fetchone()
+                        conn2.close()
+                        fuentes = row[0] if row else ""
+                        anteriores = get_subtemas_anteriores(uid, dominio)
+                        subtema = generar_subtema(dominio, fuentes, anteriores)
+                        if subtema:
+                            conn3 = sqlite3.connect(DB_PATH)
+                            conn3.execute("""INSERT INTO ciclos_curiosa
+                                           (usuario_id, dominio, subtema, estado, pulso_actual, ts_inicio)
+                                           VALUES (?,?,?,'en_curso',0,?)""",
+                                         (uid, dominio, subtema, time.time()))
+                            conn3.commit()
+                            conn3.close()
+                            print(f"[SCHEDULER] Nuevo ciclo: {dominio} — {subtema[:40]}")
+
+                    # Ejecutar siguiente pulso si hay ciclo activo
+                    ciclo = get_ciclo_activo_curiosa(uid)
+                    if ciclo:
+                        import json as json_mod
+                        ciclo_id, dominio, subtema, pulso_actual, ts_ultimo, pulsos_json = ciclo
+                        siguiente_pulso = pulso_actual + 1
+                        if siguiente_pulso <= 12:
+                            conn4 = sqlite3.connect(DB_PATH)
+                            c4 = conn4.cursor()
+                            c4.execute("SELECT fuentes FROM dominios_curiosa WHERE nombre=?", (dominio,))
+                            row4 = c4.fetchone()
+                            conn4.close()
+                            fuentes = row4[0] if row4 else ""
+                            pulsos = json_mod.loads(pulsos_json) if pulsos_json else {}
+                            print(f"[SCHEDULER] Ejecutando P{siguiente_pulso} — {dominio}: {subtema[:40]}")
+                            resultado = ejecutar_pulso_curiosa(uid, ciclo_id, dominio, subtema,
+                                                               fuentes, siguiente_pulso, pulsos)
+                            if resultado:
+                                pulsos[str(siguiente_pulso)] = resultado
+                                conn5 = sqlite3.connect(DB_PATH)
+                                c5 = conn5.cursor()
+                                if siguiente_pulso == 12:
+                                    pregunta = pulsos.get("11", "")
+                                    try:
+                                        import struct
+                                        resp_emb = together.embeddings.create(
+                                            model=EMBED_MODEL, input=[resultado[:1600]])
+                                        vec = resp_emb.data[0].embedding
+                                        blob = struct.pack(f"{len(vec)}f", *vec)
+                                    except:
+                                        blob = None
+                                    c5.execute("""UPDATE ciclos_curiosa
+                                                 SET pulso_actual=12, pulsos=?, conclusion=?,
+                                                     pregunta_abierta=?, estado='completado',
+                                                     embedding=?, ts_fin=?, ts_ultimo_pulso=?
+                                                 WHERE id=?""",
+                                              (json_mod.dumps(pulsos), resultado, pregunta,
+                                               blob, time.time(), time.time(), ciclo_id))
+                                    print(f"[SCHEDULER] Ciclo completado: {dominio} — {subtema[:40]}")
+                                else:
+                                    c5.execute("""UPDATE ciclos_curiosa
+                                                 SET pulso_actual=?, pulsos=?, ts_ultimo_pulso=?
+                                                 WHERE id=?""",
+                                              (siguiente_pulso, json_mod.dumps(pulsos),
+                                               time.time(), ciclo_id))
+                                conn5.commit()
+                                conn5.close()
                 except Exception as e:
-                    print(f"[SCHEDULER] Error en tick_curiosa para usuario {uid}: {e}")
+                    print(f"[SCHEDULER] Error usuario {uid}: {e}")
+
         except Exception as e:
             print(f"[SCHEDULER] Error general: {e}")
+
+        time_mod.sleep(1200)  # 20 minutos entre pulsos — igual que el diseño original
 
 if __name__ == '__main__':
     threading.Thread(target=background_scheduler, daemon=True).start()
