@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.78"
+ANNI_VERSION = "1.0.80"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -416,6 +416,8 @@ def cerrar_conversacion(usuario_id, conv_id):
     conn.close()
     if not msgs or len(msgs) < 2:
         return None
+    # Degradar pesos en background al cerrar conversación
+    threading.Thread(target=degradar_pesos_hitos, args=(usuario_id, msgs), daemon=True).start()
     texto = "\n".join([f"{'Usuario' if r=='user' else 'ANNI'}: {m[:500]}" for r,m in msgs[-20:]])
     try:
         resp = together.chat.completions.create(
@@ -1037,6 +1039,54 @@ Termina con la pregunta abierta del P11.""",
         print(f"[CURIOSA] Error en P{pulso_num}: {e}")
         return None
 
+
+
+def degradar_pesos_hitos(usuario_id, mensajes_conversacion):
+    """Degrada el peso de hitos no mencionados en esta conversación. -0.05 por conversación."""
+    try:
+        # Texto completo de la conversación para buscar menciones
+        texto_conv = ' '.join([m[1].lower() for m in mensajes_conversacion if m[1]])
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT id, titulo, contenido FROM hitos_usuario WHERE usuario_id=? AND activo=1 AND peso > 1",
+                  (usuario_id,))
+        hitos = c.fetchall()
+
+        # También obtener nombres de personas para detectar menciones
+        c.execute("SELECT nombre FROM personas WHERE usuario_id=?", (usuario_id,))
+        personas = [r[0].lower() for r in c.fetchall()]
+
+        for hid, titulo, contenido in hitos:
+            titulo_lower = (titulo or '').lower()
+            contenido_lower = (contenido or '').lower()
+
+            # ¿Se mencionó este hito en la conversación?
+            mencionado = False
+
+            # Por palabras clave del hito
+            palabras = [w for w in contenido_lower.split() if len(w) > 4]
+            palabras += [w for w in titulo_lower.split() if len(w) > 4]
+            if sum(1 for p in palabras if p in texto_conv) >= 2:
+                mencionado = True
+
+            # Por nombre de persona asociada
+            if not mencionado:
+                for nombre in personas:
+                    if nombre in titulo_lower or nombre in contenido_lower:
+                        if nombre in texto_conv:
+                            mencionado = True
+                            break
+
+            # Degradar si no se mencionó
+            if not mencionado:
+                c.execute("UPDATE hitos_usuario SET peso = MAX(peso - 0.05, 1) WHERE id=?", (hid,))
+
+        conn.commit()
+        conn.close()
+        print(f"[ANNI] Pesos degradados para usuario {usuario_id}")
+    except Exception as e:
+        print(f"[ANNI] Error degradando pesos: {e}")
 
 def incrementar_hitos_mencionados(usuario_id, mensaje):
     """Incrementa peso de hitos cuando se mencionan personas o contenido relevante."""
@@ -2379,11 +2429,12 @@ body { background: #000; overflow: hidden; font-family: 'Courier New', monospace
 </div>
 <div id="scale">
   <div style="margin-bottom:4px;color:#333">PESO</div>
-  <div><span style="color:#1e6bbf">●</span> ≤10 poco activado</div>
-  <div><span style="color:#d4aa00">●</span> ≤18 en uso</div>
-  <div><span style="color:#ff8c00">●</span> ≤25 frecuente</div>
-  <div><span style="color:#ff4400">●</span> ≤35 muy frecuente</div>
-  <div><span style="color:#ff0000">●</span> >35 central</div>
+  <div><span style="color:#ac0000">●</span> ≤5 &nbsp;nuevo</div>
+  <div><span style="color:#ff0000">●</span> ≤10 poco activo</div>
+  <div><span style="color:#ffc000">●</span> ≤18 en uso</div>
+  <div><span style="color:#ffff00">●</span> ≤25 frecuente</div>
+  <div><span style="color:#caeefb">●</span> ≤35 muy frecuente</div>
+  <div><span style="color:#00b0f0">●</span> >35 central</div>
 </div>
 <div id="tooltip"></div>
 <div id="ctrl">Arrastrar · Rueda zoom · Hover info</div>
@@ -2423,12 +2474,12 @@ for(let i=0;i<POINTS.length;i++) for(let j=i+1;j<POINTS.length;j++){
 }
 
 function pesoColor(p){
-  if(p<=5) return {c:0x0d2a6b,e:0x061440};
-  if(p<=10) return {c:0x1e6bbf,e:0x0d3d7a};
-  if(p<=18) return {c:0xd4aa00,e:0x7a6000};
-  if(p<=25) return {c:0xff8c00,e:0x994d00};
-  if(p<=35) return {c:0xff4400,e:0xcc2200};
-  return {c:0xff0000,e:0xcc0000};
+  if(p<=5)  return {c:0xac0000,e:0x660000};  // Granate M
+  if(p<=10) return {c:0xff0000,e:0x990000};  // Rojo K
+  if(p<=18) return {c:0xffc000,e:0x996000};  // Naranja G
+  if(p<=25) return {c:0xffff00,e:0x999900};  // Amarillo F
+  if(p<=35) return {c:0xcaeefb,e:0x6699aa};  // Azul claro A
+  return            {c:0x00b0f0,e:0x006688};  // Azul cielo B/O
 }
 
 const meshes=[];
@@ -2465,7 +2516,7 @@ window.addEventListener('mousemove',e=>{
   if(hits.length>0){
     const obj=hits[0].object;
     if(hovered!==obj){if(hovered)hovered.material.emissiveIntensity=0.7;hovered=obj;obj.material.emissiveIntensity=1.8;}
-    const pc=obj.userData.peso<=5?'#4488ff':obj.userData.peso<=10?'#44aaff':obj.userData.peso<=18?'#ffdd00':obj.userData.peso<=25?'#ff8c00':obj.userData.peso<=35?'#ff4400':'#ff0000';
+    const pc=obj.userData.peso<=5?'#ac0000':obj.userData.peso<=10?'#ff0000':obj.userData.peso<=18?'#ffc000':obj.userData.peso<=25?'#ffff00':obj.userData.peso<=35?'#caeefb':'#00b0f0';
     tip.style.display='block'; tip.style.left=(e.clientX+15)+'px'; tip.style.top=(e.clientY-10)+'px';
     tip.innerHTML='<b style="color:'+pc+'">⭐ '+obj.userData.label.toUpperCase()+'</b><br><span style="color:#555;font-size:10px">peso: '+obj.userData.peso.toFixed(1)+'</span>';
   } else { if(hovered){hovered.material.emissiveIntensity=0.7;hovered=null;} tip.style.display='none'; }
