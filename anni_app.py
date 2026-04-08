@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.61"
+ANNI_VERSION = "1.0.62"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -18,7 +18,7 @@ ANNI_ADMIN_KEY = os.environ.get("ANNI_ADMIN_KEY", "")
 if not FLASK_SECRET:
     raise RuntimeError("FLASK_SECRET no está configurado en las variables de entorno.")
 
-CHAT_MODEL = "claude-sonnet-4-20250514"  # Anthropic Sonnet via API directa
+CHAT_MODEL = "claude-sonnet-4-5"  # Anthropic Sonnet via API directa
 CHAT_MODEL_FALLBACK = "deepseek-ai/DeepSeek-V3"  # Together AI — fallback y funciones internas
 CHAT_MODEL_FALLBACK = "deepseek-ai/DeepSeek-V3"
 EMBED_MODEL = "intfloat/multilingual-e5-large-instruct"
@@ -247,23 +247,39 @@ def init_db():
         except:
             pass
 
-    # Tablas nuevas que pueden no existir en Railway
-    c.execute("""CREATE TABLE IF NOT EXISTS universo_cache (
-        id INTEGER PRIMARY KEY,
-        usuario_id INTEGER NOT NULL UNIQUE,
-        puntos_json TEXT NOT NULL,
-        estrellas_json TEXT NOT NULL,
-        n_hitos INTEGER DEFAULT 0,
-        ts REAL DEFAULT (unixepoch('now','subsec'))
-    )""")
-    c.execute("""CREATE TABLE IF NOT EXISTS constelaciones (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        usuario_id INTEGER NOT NULL,
-        nombre TEXT NOT NULL,
-        descripcion TEXT DEFAULT '',
-        hitos_ids TEXT DEFAULT '[]',
-        ts_calculado REAL DEFAULT (unixepoch('now','subsec'))
-    )""")
+    conn.commit()
+    conn.close()
+
+    # Tablas nuevas en conexiones separadas — garantiza que se crean aunque haya errores previos
+    tablas_nuevas = [
+        """CREATE TABLE IF NOT EXISTS universo_cache (
+            id INTEGER PRIMARY KEY,
+            usuario_id INTEGER NOT NULL UNIQUE,
+            puntos_json TEXT NOT NULL,
+            estrellas_json TEXT NOT NULL,
+            n_hitos INTEGER DEFAULT 0,
+            ts REAL DEFAULT (unixepoch('now','subsec'))
+        )""",
+        """CREATE TABLE IF NOT EXISTS constelaciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER NOT NULL,
+            nombre TEXT NOT NULL,
+            descripcion TEXT DEFAULT '',
+            hitos_ids TEXT DEFAULT '[]',
+            ts_calculado REAL DEFAULT (unixepoch('now','subsec'))
+        )"""
+    ]
+    for sql in tablas_nuevas:
+        try:
+            conn_t = sqlite3.connect(DB_PATH)
+            conn_t.execute(sql)
+            conn_t.commit()
+            conn_t.close()
+        except Exception as e:
+            print(f"[ANNI] Error creando tabla: {e}")
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
     # Seed dominios CURIOSA si no existen
     c.execute("SELECT COUNT(*) FROM dominios_curiosa")
     if c.fetchone()[0] == 0:
@@ -2368,9 +2384,11 @@ def recalcular_universo(usuario_id):
         raw_coords = reducer.fit_transform(vecs_np)
 
         for axis in range(3):
-            mn, mx = raw_coords[:,axis].min(), raw_coords[:,axis].max()
+            mn = raw_coords.min_axis(axis)
+            mx = raw_coords.max_axis(axis)
             if mx > mn:
-                raw_coords[:,axis] = (raw_coords[:,axis] - mn) / (mx - mn) * 200 - 100
+                for i in range(n):
+                    raw_coords.data[i][axis] = (raw_coords.data[i][axis] - mn) / (mx - mn) * 200 - 100
 
         hid_to_idx = {rows[i][0]: i for i in range(len(rows))}
         points = []
@@ -2379,7 +2397,7 @@ def recalcular_universo(usuario_id):
             con_color = constelaciones[con_idx]['color'] if constelaciones else '#cc0000'
             con_nombre = constelaciones[con_idx]['nombre'] if constelaciones else 'GENERAL'
             points.append({
-                'x': float(raw_coords[i,0]), 'y': float(raw_coords[i,1]), 'z': float(raw_coords[i,2]),
+                'x': float(raw_coords.data[i][0]), 'y': float(raw_coords.data[i][1]), 'z': float(raw_coords.data[i][2]),
                 'label': str(label)[:60], 'peso': float(peso), 'tipo': tipo,
                 'id': hid, 'constelacion': con_nombre, 'color': con_color
             })
@@ -2391,9 +2409,9 @@ def recalcular_universo(usuario_id):
             idxs = [hid_to_idx[h] for h in hids if h in hid_to_idx]
             if not idxs:
                 continue
-            cx = float(np.mean([raw_coords[i,0] for i in idxs]))
-            cy = float(np.mean([raw_coords[i,1] for i in idxs]))
-            cz = float(np.mean([raw_coords[i,2] for i in idxs]))
+            cx = sum(raw_coords.data[i][0] for i in idxs) / len(idxs)
+            cy = sum(raw_coords.data[i][1] for i in idxs) / len(idxs)
+            cz = sum(raw_coords.data[i][2] for i in idxs) / len(idxs)
             stars.append({'x': cx, 'y': cy, 'z': cz, 'nombre': con['nombre'],
                           'descripcion': con['descripcion'], 'color': con['color'],
                           'n_planetas': len(idxs)})
@@ -3936,7 +3954,7 @@ def background_scheduler():
         try:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute("SELECT DISTINCT usuario_id FROM usuarios")
+            c.execute("SELECT id FROM usuarios")
             usuarios = [r[0] for r in c.fetchall()]
             conn.close()
 
