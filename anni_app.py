@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.70"
+ANNI_VERSION = "1.0.71"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2467,6 +2467,45 @@ animate();
 </html>"""
     return html
 
+
+@app.route('/api/personas-sin-hito', methods=['GET'])
+@login_required
+def api_personas_sin_hito():
+    """Devuelve un hito propuesto para la primera persona que no tiene hito todavía."""
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    # Personas que no están mencionadas en ningún hito
+    c.execute("""SELECT p.nombre, p.relacion, p.tono_predominante, p.notas
+                 FROM personas p
+                 WHERE p.usuario_id=?
+                 AND p.nombre NOT IN ('Rafa', 'ANNI')
+                 AND NOT EXISTS (
+                     SELECT 1 FROM hitos_usuario h
+                     WHERE h.usuario_id=p.usuario_id
+                     AND h.activo=1
+                     AND (LOWER(h.titulo) LIKE '%' || LOWER(p.nombre) || '%'
+                          OR LOWER(h.contenido) LIKE '%' || LOWER(p.nombre) || '%')
+                 )
+                 ORDER BY p.veces_mencionada DESC LIMIT 1""", (usuario_id,))
+    persona = c.fetchone()
+    conn.close()
+
+    if not persona:
+        return jsonify({'hito': None})
+
+    nombre, relacion, tono, notas = persona
+    hito = {
+        'hito': True,
+        'titulo': f'{nombre.upper()} — {(relacion or "persona cercana").upper()}',
+        'categoria': 'relacion',
+        'contenido': f'{nombre} es {relacion or "persona importante"} en la vida del usuario. Tono: {tono or "neutro"}. {notas or ""}',
+        'evidencia': f'ANNI detectó a {nombre} en conversaciones previas como {relacion}',
+        'cuando_activarlo': f'Cuando el usuario mencione a {nombre} o temas relacionados con {relacion}',
+        'como_usarlo': f'Tener en cuenta la relación con {nombre} al responder sobre vida personal o decisiones'
+    }
+    return jsonify({'hito': hito})
+
 # ── UNIVERSO ──────────────────────────────────────────────────────────────────
 
 @app.route('/api/universo', methods=['GET'])
@@ -3419,7 +3458,16 @@ S.disabled=false;I.focus();
 if(lastMsg&&resp){
 fetch('/api/detectar-hito',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({mensaje:lastMsg,respuesta:resp})})
-.then(r=>r.json()).then(h=>{if(h.hito&&h.hito.hito)mostrarModalHito(h.hito);})
+.then(r=>r.json()).then(h=>{
+  if(h.hito&&h.hito.hito){
+    mostrarModalHito(h.hito);
+  } else {
+    // Check if there are personas without hitos to propose
+    fetch('/api/personas-sin-hito').then(r=>r.json()).then(function(ph){
+      if(ph.hito) mostrarModalHito(ph.hito);
+    }).catch(()=>{});
+  }
+})
 .catch(()=>{});}})
 .catch(e=>{rmtyp();add('anni','Error de conexion.');S.disabled=false;});}
 
