@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.04"
+ANNI_VERSION = "1.01.05"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4217,6 +4217,18 @@ function loadMVPage(){
   });
 }
 
+function borrarPersona(nombre, btn){
+  if(!confirm('Borrar a '+nombre+' de personas detectadas?')) return;
+  fetch('/api/personas/rechazar',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({nombre:nombre})
+  }).then(r=>r.json()).then(function(d){
+    if(d.ok){
+      var card=btn.closest('.item-card');
+      if(card) card.remove();
+    }
+  });
+}
+
 function guardarNuevaMV(){
   var titulo=document.getElementById('mv-titulo').value.trim();
   var contenido=document.getElementById('mv-contenido').value.trim();
@@ -4328,6 +4340,10 @@ function loadMemoriaAnni(){
             var card=document.createElement('div');card.className='item-card';
             card.innerHTML='<div class="item-meta">'+escH(p.relacion||'')+'</div><div style="font-weight:900;font-size:15px;margin-bottom:4px">'+escH(p.nombre)+'</div><div style="font-size:13px;color:#666">Mencionada '+p.veces_mencionada+' veces</div>';
             if(p.notas) card.innerHTML+='<div style="font-size:12px;color:#888;margin-top:4px">'+escH(p.notas)+'</div>';
+            var bBtn=document.createElement('div');bBtn.className='item-actions';
+            var bB=document.createElement('button');bB.className='btn-del';bB.textContent='Borrar';
+            bB.onclick=function(){borrarPersona(p.nombre,bB);};
+            bBtn.appendChild(bB);card.appendChild(bBtn);
             content.appendChild(card);
           });
         }
