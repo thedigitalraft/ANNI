@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.88"
+ANNI_VERSION = "1.0.89"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3506,13 +3506,13 @@ textarea{font-size:16px}}
 
 <!-- BARRA NAV -->
 <div id='nav'>
-  <button class='nav-btn' onclick='showPage("mundo")'>MUNDO</button>
   <button class='nav-btn' onclick='showPage("tareas")'>TAREAS</button>
-  <button class='nav-btn' onclick='showPage("memoria_anni")'>MEMORIA ANNI</button>
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
   <button class='nav-btn' onclick='showPage("diario")'>DIARIO</button>
-  <button class='nav-btn' onclick='showPage("universo")'>UNIVERSO</button>
-  <button class='nav-btn' onclick='descargarBD()'>BD</button>
+  <button class='nav-btn' onclick='showPage("memoria_anni")'>MEMORIA ANNI</button>
+  <button class='nav-btn' onclick='showPage("mundo")'>MUNDO ANNI</button>
+  <button class='nav-btn' onclick='showPage("universo")'>UNIVERSO ANNI</button>
+  <button class='nav-btn' onclick='descargarBD()'>BD ANNI</button>
   <a href='/logout' class='nav-btn salir'>SALIR</a>
 </div>
 
