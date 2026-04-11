@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.05"
+ANNI_VERSION = "1.01.06"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2797,6 +2797,27 @@ def api_borrar_memoria_extendida(mid):
     return jsonify({'ok': True})
 
 
+
+@app.route('/api/observaciones/<int:oid>', methods=['DELETE'])
+@login_required
+def api_borrar_observacion(oid):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE observaciones SET activa=0 WHERE id=? AND usuario_id=?", (oid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/temas-abiertos/<int:tid>', methods=['DELETE'])
+@login_required
+def api_borrar_tema(tid):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE temas_abiertos SET estado='cerrado' WHERE id=? AND usuario_id=?", (tid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 @app.route('/api/temas-abiertos', methods=['GET'])
 @login_required
 def api_temas_abiertos():
@@ -4217,6 +4238,18 @@ function loadMVPage(){
   });
 }
 
+function borrarObservacion(id, btn){
+  fetch('/api/observaciones/'+id,{method:'DELETE'}).then(r=>r.json()).then(function(d){
+    if(d.ok){var card=btn.closest('.item-card');if(card)card.remove();}
+  });
+}
+
+function borrarTema(id, btn){
+  fetch('/api/temas-abiertos/'+id,{method:'DELETE'}).then(r=>r.json()).then(function(d){
+    if(d.ok){var card=btn.closest('.item-card');if(card)card.remove();}
+  });
+}
+
 function borrarPersona(nombre, btn){
   if(!confirm('Borrar a '+nombre+' de personas detectadas?')) return;
   fetch('/api/personas/rechazar',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -4319,75 +4352,137 @@ function loadMemoriaAnni(){
       }).catch(function(){content.innerHTML='<p style="color:#999;padding:20px">Error cargando memoria extendida.</p>';});
 
     } else if(tabId==='interpretada'){
-      // Personas + observaciones + temas
-      var relacionesPersonales=['pareja','esposa','esposo','hijo','hija','hijastra','hijastro',
-        'suegro','suegra','cuñado','cuñada','amigo','amiga','socio','socia',
-        'padre','madre','hermano','hermana','colega','jefe','cliente','fundador','cofundador'];
-      fetch('/api/personas').then(r=>r.json()).then(function(dp){
-        content.innerHTML='';
-        // Filtrar solo personas relevantes
-        var personasFiltradas=(dp.personas||[]).filter(function(p){
-          if(p.veces_mencionada<1) return false;
+      content.innerHTML='';
+
+      var famRels=['pareja','esposa','esposo','hijo','hija','hijastra','hijastro','suegro','suegra','cuñado','cuñada','padre','madre','hermano','hermana'];
+      var trabajoRels=['colega','jefe','cliente','socio','socia','amigo','amiga','fundador','cofundador'];
+
+      // Helper: render section header
+      function secHeader(txt){
+        var h=document.createElement('div');
+        h.style.cssText='font-size:13px;font-weight:900;color:#cc0000;letter-spacing:2px;margin:20px 0 10px';
+        h.textContent=txt;
+        return h;
+      }
+
+      // Helper: persona card
+      function personaCard(p){
+        var card=document.createElement('div');card.className='item-card';
+        card.innerHTML='<div class="item-meta">'+escH(p.relacion||'')+'</div>'+
+          '<div style="font-weight:900;font-size:15px;margin-bottom:4px">'+escH(p.nombre)+'</div>'+
+          '<div style="font-size:13px;color:#666">Mencionada '+p.veces_mencionada+' vez'+(p.veces_mencionada!==1?'es':'')+'</div>';
+        if(p.notas) card.innerHTML+='<div style="font-size:12px;color:#888;margin-top:4px">'+escH(p.notas)+'</div>';
+        var bBtn=document.createElement('div');bBtn.className='item-actions';
+        var bB=document.createElement('button');bB.className='btn-del';bB.textContent='Borrar';
+        bB.onclick=(function(nombre){return function(){borrarPersona(nombre,bB);};})(p.nombre);
+        bBtn.appendChild(bB);card.appendChild(bBtn);
+        return card;
+      }
+
+      // Helper: observacion card with delete
+      function obsCard(o){
+        var card=document.createElement('div');card.className='item-card';
+        var tipoColors={patron:'#666',emocion:'#994499',energia:'#cc6600',velocidad:'#006699',evitacion:'#cc0000'};
+        var col=tipoColors[o.tipo]||'#666';
+        var tipoTag='<span style="font-size:11px;background:#f9f9f9;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px;color:'+col+'">'+escH(o.tipo||'')+'</span>';
+        card.innerHTML='<div class="item-meta">'+tipoTag+o.ts+'</div>'+
+          '<div style="font-size:14px;color:#333;margin-top:4px">'+escH(o.contenido)+'</div>'+
+          (o.evidencia?'<div style="font-size:12px;color:#888;margin-top:6px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:8px">"'+escH(o.evidencia)+'"</div>':'');
+        var bBtn=document.createElement('div');bBtn.className='item-actions';
+        var bB=document.createElement('button');bB.className='btn-del';bB.textContent='Borrar';
+        bB.onclick=(function(id){return function(){borrarObservacion(id,bB);};})(o.id);
+        bBtn.appendChild(bB);card.appendChild(bBtn);
+        return card;
+      }
+
+      // Helper: tema card with delete
+      function temaCard(t){
+        var card=document.createElement('div');card.className='item-card';
+        card.innerHTML='<div class="item-meta">'+t.ts+'</div>'+
+          '<div style="font-size:14px;color:#333;margin-top:4px">'+escH(t.tema)+'</div>'+
+          '<div style="font-size:12px;color:#aaa;margin-top:4px">Mencionado '+t.veces+' veces</div>';
+        var bBtn=document.createElement('div');bBtn.className='item-actions';
+        var bB=document.createElement('button');bB.className='btn-del';bB.textContent='Borrar';
+        bB.onclick=(function(id){return function(){borrarTema(id,bB);};})(t.id);
+        bBtn.appendChild(bB);card.appendChild(bBtn);
+        return card;
+      }
+
+      Promise.all([
+        fetch('/api/personas').then(r=>r.json()),
+        fetch('/api/observaciones').then(r=>r.json()),
+        fetch('/api/temas-abiertos').then(r=>r.json())
+      ]).then(function(results){
+        var dp=results[0], do2=results[1], dt=results[2];
+
+        // Deduplicar personas por nombre normalizado (Antonio/Antonio Torrijos → el de más menciones)
+        var personasMap={};
+        (dp.personas||[]).forEach(function(p){
+          var key=p.nombre.toLowerCase().split(' ')[0]; // primer nombre
           var rel=(p.relacion||'').toLowerCase();
-          return relacionesPersonales.some(function(r){return rel.indexOf(r)>=0;});
-        });
-        if(personasFiltradas.length){
-          var h2=document.createElement('div');
-          h2.style.cssText='font-size:13px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:10px;margin-top:4px';
-          h2.textContent='PERSONAS DETECTADAS';
-          content.appendChild(h2);
-          personasFiltradas.forEach(function(p){
-            var card=document.createElement('div');card.className='item-card';
-            card.innerHTML='<div class="item-meta">'+escH(p.relacion||'')+'</div><div style="font-weight:900;font-size:15px;margin-bottom:4px">'+escH(p.nombre)+'</div><div style="font-size:13px;color:#666">Mencionada '+p.veces_mencionada+' veces</div>';
-            if(p.notas) card.innerHTML+='<div style="font-size:12px;color:#888;margin-top:4px">'+escH(p.notas)+'</div>';
-            var bBtn=document.createElement('div');bBtn.className='item-actions';
-            var bB=document.createElement('button');bB.className='btn-del';bB.textContent='Borrar';
-            bB.onclick=function(){borrarPersona(p.nombre,bB);};
-            bBtn.appendChild(bB);card.appendChild(bBtn);
-            content.appendChild(card);
-          });
-        }
-        // Observaciones
-        fetch('/api/observaciones').then(r=>r.json()).then(function(do2){
-          if(do2.observaciones&&do2.observaciones.length){
-            var h3=document.createElement('div');
-            h3.style.cssText='font-size:13px;font-weight:900;color:#cc0000;letter-spacing:2px;margin:20px 0 10px';
-            h3.textContent='OBSERVACIONES';
-            content.appendChild(h3);
-            do2.observaciones.slice(0,10).forEach(function(o){
-              var card=document.createElement('div');card.className='item-card';
-              var tipoTag='<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(o.tipo||'')+'</span>';
-              card.innerHTML='<div class="item-meta">'+tipoTag+o.ts+'</div>'+
-                '<div style="font-size:14px;color:#333;margin-top:4px">'+escH(o.contenido)+'</div>'+
-                (o.evidencia?'<div style="font-size:12px;color:#888;margin-top:6px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:8px">"'+escH(o.evidencia)+'"</div>':'');
-              content.appendChild(card);
-            });
-          } else {
-            // No observaciones message
-        }
-        // Temas abiertos
-        fetch('/api/temas-abiertos').then(r=>r.json()).then(function(dt){
-          if(dt.temas&&dt.temas.length){
-            var h4=document.createElement('div');
-            h4.style.cssText='font-size:13px;font-weight:900;color:#cc0000;letter-spacing:2px;margin:20px 0 10px';
-            h4.textContent='TEMAS ABIERTOS';
-            content.appendChild(h4);
-            dt.temas.forEach(function(t){
-              var card=document.createElement('div');card.className='item-card';
-              card.innerHTML='<div class="item-meta">'+t.ts+'</div>'+
-                '<div style="font-size:14px;color:#333;margin-top:4px">'+escH(t.tema)+'</div>'+
-                '<div style="font-size:12px;color:#aaa;margin-top:4px">Mencionado '+t.veces+' veces</div>';
-              content.appendChild(card);
-            });
+          var esFam=famRels.some(function(r){return rel.indexOf(r)>=0;});
+          var esTrab=trabajoRels.some(function(r){return rel.indexOf(r)>=0;});
+          if(!esFam && !esTrab) return;
+          if(!personasMap[key] || p.veces_mencionada > personasMap[key].veces_mencionada){
+            personasMap[key]=p;
           }
-        }).catch(function(){});
-        if(!personasFiltradas.length){
+        });
+        var personasDedup=Object.values(personasMap);
+
+        var familia=personasDedup.filter(function(p){
+          var rel=(p.relacion||'').toLowerCase();
+          return famRels.some(function(r){return rel.indexOf(r)>=0;});
+        }).sort(function(a,b){return b.veces_mencionada-a.veces_mencionada;});
+
+        var trabajo=personasDedup.filter(function(p){
+          var rel=(p.relacion||'').toLowerCase();
+          return trabajoRels.some(function(r){return rel.indexOf(r)>=0;});
+        }).sort(function(a,b){return b.veces_mencionada-a.veces_mencionada;});
+
+        // FAMILIA
+        if(familia.length){
+          content.appendChild(secHeader('FAMILIA'));
+          familia.forEach(function(p){content.appendChild(personaCard(p));});
+        }
+
+        // TRABAJO Y AMIGOS
+        if(trabajo.length){
+          content.appendChild(secHeader('TRABAJO Y AMIGOS'));
+          trabajo.forEach(function(p){content.appendChild(personaCard(p));});
+        }
+
+        // PATRONES
+        var patrones=(do2.observaciones||[]).filter(function(o){return o.tipo==='patron'||o.tipo==='velocidad'||o.tipo==='evitacion';});
+        if(patrones.length){
+          content.appendChild(secHeader('PATRONES'));
+          patrones.forEach(function(o){content.appendChild(obsCard(o));});
+        }
+
+        // EMOCIONES Y ENERGÍA
+        var emociones=(do2.observaciones||[]).filter(function(o){return o.tipo==='emocion'||o.tipo==='energia';});
+        if(emociones.length){
+          content.appendChild(secHeader('EMOCIONES Y ENERGÍA'));
+          emociones.forEach(function(o){content.appendChild(obsCard(o));});
+        }
+
+        // TEMAS ABIERTOS (filtrar basura)
+        var temasBuenos=(dt.temas||[]).filter(function(t){
+          var tema=t.tema.toLowerCase();
+          var basura=['cierre','conversación','conversacion','abordar transporte','partido de fútbol','partido de futbol','workbook','ponderación','ponderacion'];
+          return !basura.some(function(b){return tema.indexOf(b)>=0;});
+        });
+        if(temasBuenos.length){
+          content.appendChild(secHeader('TEMAS ABIERTOS'));
+          temasBuenos.forEach(function(t){content.appendChild(temaCard(t));});
+        }
+
+        if(!familia.length && !trabajo.length && !patrones.length && !emociones.length){
           var empty=document.createElement('p');
-          empty.style.cssText='color:#999;padding:20px;font-size:13px';
-          empty.textContent='Aún no hay personas, observaciones ni temas detectados.';
+          empty.style.cssText='color:#999;padding:20px';
+          empty.textContent='Aún no hay información interpretada.';
           content.appendChild(empty);
         }
-      }).catch(function(){});
+
       }).catch(function(){
         content.innerHTML='<p style="color:#999;padding:20px">Error cargando memoria interpretada.</p>';
       });
