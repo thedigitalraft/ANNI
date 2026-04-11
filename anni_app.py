@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.11"
+ANNI_VERSION = "1.01.12"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2678,26 +2678,40 @@ const tip=document.getElementById('tooltip');
 // Render hito #1 as center star first
 const centerPoint = POINTS.find(p => p.isCenter);
 if(centerPoint){
-  const cSize = 12;
-  const cGeo = new THREE.SphereGeometry(cSize, 24, 24);
-  const cMat = new THREE.MeshPhongMaterial({color:0x00b0f0,emissive:0x004488,emissiveIntensity:1.2,shininess:300});
-  const cMesh = new THREE.Mesh(cGeo, cMat);
-  cMesh.position.set(0,0,0);
-  cMesh.userData = {label: centerPoint.label, peso: 50, isCenter: true};
-  scene.add(cMesh); meshes.push(cMesh);
-  // Glow rings
-  [2,3.5,5.5].forEach(function(m,gi){
-    const gg=new THREE.SphereGeometry(cSize*m,12,12);
-    const gm=new THREE.MeshBasicMaterial({color:0x00b0f0,transparent:true,opacity:0.05/(gi+1),side:THREE.BackSide});
-    scene.add(new THREE.Mesh(gg,gm));
+  // BLACK HOLE — Interstellar style
+  // Core
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(8,32,32),new THREE.MeshBasicMaterial({color:0x000000})));
+  // Orange border
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(8.7,32,32),new THREE.MeshBasicMaterial({color:0xff6600,transparent:true,opacity:0.9,side:THREE.BackSide})));
+  // Accretion disk
+  const diskParams=[[11,1.4,0.95,0xff6600],[15,1.2,0.7,0xff8800],[19,1.0,0.45,0xffaa00],[23,0.7,0.25,0xffcc44],[28,0.5,0.1,0xffffff]];
+  const diskMeshes=[];
+  diskParams.forEach(function(d){
+    const dm=new THREE.Mesh(new THREE.TorusGeometry(d[0],d[1],12,120),new THREE.MeshBasicMaterial({color:d[3],transparent:true,opacity:d[2]}));
+    dm.rotation.x=Math.PI/2+0.15;dm.rotation.z=0.08;scene.add(dm);diskMeshes.push(dm);
   });
-  // Label
-  const cvC=document.createElement('canvas');cvC.width=512;cvC.height=72;
-  const ctxC=cvC.getContext('2d');ctxC.fillStyle='rgba(0,0,0,0)';ctxC.fillRect(0,0,512,72);
-  ctxC.fillStyle='#00b0f0';ctxC.font='bold 36px Courier New';
-  ctxC.fillText(centerPoint.label.toUpperCase().substring(0,30),4,50);
-  const spC=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cvC),transparent:true,opacity:1}));
-  spC.scale.set(52,8,1);spC.position.set(0,cSize+8,0);scene.add(spC);
+  // Photon ring
+  const photon=new THREE.Mesh(new THREE.TorusGeometry(9,0.4,8,80),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.6}));
+  photon.rotation.x=Math.PI/2+0.15;scene.add(photon);
+  // Glow layers
+  [[12,0.12],[17,0.06],[24,0.03],[34,0.015]].forEach(function(g){
+    scene.add(new THREE.Mesh(new THREE.SphereGeometry(g[0],16,16),new THREE.MeshBasicMaterial({color:0xff7700,transparent:true,opacity:g[1],side:THREE.BackSide})));
+  });
+  // Animate disk
+  function animateDisk(){diskMeshes.forEach(function(d){d.rotation.z+=0.002;});}
+  // Label — just first name, small, above
+  const cvC=document.createElement('canvas');cvC.width=256;cvC.height=56;
+  const ctxC=cvC.getContext('2d');ctxC.fillStyle='rgba(0,0,0,0)';ctxC.fillRect(0,0,256,56);
+  ctxC.fillStyle='#ff8800';ctxC.font='bold 28px Courier New';
+  var centerLabel=centerPoint.label.split(' — ')[0].split(' ')[0];
+  ctxC.fillText(centerLabel.toUpperCase(),4,40);
+  const spC=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cvC),transparent:true,opacity:0.9}));
+  spC.scale.set(30,7,1);spC.position.set(0,42,0);scene.add(spC);
+  // Invisible click sphere
+  const bhC=new THREE.Mesh(new THREE.SphereGeometry(30,16,16),new THREE.MeshBasicMaterial({transparent:true,opacity:0}));
+  bhC.userData={label:centerPoint.label,peso:50,isCenter:true};scene.add(bhC);meshes.push(bhC);
+  // Store ref for animation
+  window._bhDiskMeshes=diskMeshes;
 }
 POINTS.forEach((p,i)=>{
   const size=2.5+(p.peso/10)*3.5;
