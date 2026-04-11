@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.12"
+ANNI_VERSION = "1.01.13"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2693,8 +2693,8 @@ if(centerPoint){
   // Photon ring
   const photon=new THREE.Mesh(new THREE.TorusGeometry(9,0.4,8,80),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.6}));
   photon.rotation.x=Math.PI/2+0.15;scene.add(photon);
-  // Glow layers
-  [[12,0.12],[17,0.06],[24,0.03],[34,0.015]].forEach(function(g){
+  // Glow layers — smaller to not cover nearby nodes
+  [[10,0.10],[14,0.05],[18,0.02]].forEach(function(g){
     scene.add(new THREE.Mesh(new THREE.SphereGeometry(g[0],16,16),new THREE.MeshBasicMaterial({color:0xff7700,transparent:true,opacity:g[1],side:THREE.BackSide})));
   });
   // Animate disk
@@ -2708,12 +2708,12 @@ if(centerPoint){
   const spC=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cvC),transparent:true,opacity:0.9}));
   spC.scale.set(30,7,1);spC.position.set(0,42,0);scene.add(spC);
   // Invisible click sphere
-  const bhC=new THREE.Mesh(new THREE.SphereGeometry(30,16,16),new THREE.MeshBasicMaterial({transparent:true,opacity:0}));
+  const bhC=new THREE.Mesh(new THREE.SphereGeometry(12,16,16),new THREE.MeshBasicMaterial({transparent:true,opacity:0}));
   bhC.userData={label:centerPoint.label,peso:50,isCenter:true};scene.add(bhC);meshes.push(bhC);
   // Store ref for animation
   window._bhDiskMeshes=diskMeshes;
 }
-POINTS.forEach((p,i)=>{
+POINTS.filter(p=>!p.isCenter).forEach((p,i)=>{
   const size=2.5+(p.peso/10)*3.5;
   const col=pesoColor(p.peso);
   const geo=new THREE.IcosahedronGeometry(size,1);
