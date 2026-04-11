@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.00"
+ANNI_VERSION = "1.01.01"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -669,7 +669,7 @@ def degradar_observaciones(usuario_id):
     except Exception as e:
         print(f"[ANNI] Error degradando observaciones: {e}")
 
-def analizar_conversacion(usuario_id, ultimos_mensajes):
+def analizar_conversacion(usuario_id, ultimos_mensajes, resumen=''):
     """Analiza los últimos mensajes y extrae observaciones, personas y temas."""
     if not ultimos_mensajes:
         return
@@ -686,10 +686,13 @@ def analizar_conversacion(usuario_id, ultimos_mensajes):
         for m in ultimos_mensajes[-20:]
     ])
 
+    # Incluir el resumen si existe — contiene información ya interpretada
+    resumen_section = f"\n\nRESUMEN DE LA CONVERSACIÓN (ya interpretado por ANNI):\n{resumen}" if resumen else ""
+
     prompt = f"""Eres el sistema de memoria de ANNI. Analiza esta conversación y extrae información estructurada sobre el usuario.
 
 CONVERSACIÓN:
-{texto_completo}
+{texto_completo}{resumen_section}
 
 Responde SOLO con este JSON exacto, sin nada más:
 {{
@@ -1834,7 +1837,7 @@ def auto_cerrar_conversacion_inactiva(usuario_id):
                 msgs_conv = c3.fetchall()
                 conn3.close()
                 if msgs_conv:
-                    threading.Thread(target=analizar_conversacion, args=(usuario_id, msgs_conv), daemon=True).start()
+                    threading.Thread(target=analizar_conversacion, args=(usuario_id, msgs_conv, ''), daemon=True).start()
             return conv_id
         return None
     except Exception as e:
@@ -2056,7 +2059,7 @@ def api_guardar_resumen():
         msgs_conv = c4.fetchall()
         conn4.close()
         if msgs_conv:
-            threading.Thread(target=analizar_conversacion, args=(usuario_id, msgs_conv), daemon=True).start()
+            threading.Thread(target=analizar_conversacion, args=(usuario_id, msgs_conv, resumen), daemon=True).start()
             print(f"[ANNI] analizar_conversacion disparado para conv #{conv_id} ({len(msgs_conv)} msgs)")
     return jsonify({'ok': True})
 
