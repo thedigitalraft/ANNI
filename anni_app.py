@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.99"
+ANNI_VERSION = "1.01.00"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -158,24 +158,7 @@ def init_db():
     except:
         pass
 
-    # Migración: acortar memorias validadas sobrecargadas (1.0.87)
-    memorias_limpias = [
-        (1,  'RAFA',          'El usuario. Consultor, speaker y builder de IA. Padre de Alonso y Bosco. Pareja de Bea. Basado en Madrid y CDMX.'),
-        (3,  'BEA',           'Bea es la pareja y socia de Rafa. Co-fundadora de La Mákina. Vive con él en CDMX. Tiene una hija, Sofía.'),
-        (9,  'LA MÁKINA',     'Agencia de contenido y diseño fundada por Rafa y Bea el 15 de septiembre de 2022. Cliente principal: MetLife.'),
-        (16, 'ALONSO',        'Alonso es el hijo mayor de Rafa, nacido el 27 de septiembre de 2007. Tiene 18 años.'),
-        (17, 'BOSCO',         'Bosco es el hijo menor de Rafa, nacido el 21 de octubre de 2010. Tiene 15 años.'),
-        (33, 'ERIKA',         'Erika fue la primera esposa de Rafa y madre de Alonso y Bosco. Falleció el 31 de enero de 2018.'),
-        (34, 'PHIYL — COLEGA','Phiyl es colega de Rafa y Bea. Director de operaciones de La Mákina.'),
-    ]
-    for mid, titulo, contenido in memorias_limpias:
-        try:
-            # Solo actualizar si el contenido actual es más largo de 120 chars (estaba sobrecargado)
-            row = c.execute("SELECT LENGTH(contenido) FROM hitos_usuario WHERE id=?", (mid,)).fetchone()
-            if row and row[0] > 120:
-                c.execute("UPDATE hitos_usuario SET titulo=?, contenido=? WHERE id=?", (titulo, contenido, mid))
-        except:
-            pass
+    # Migración 1.0.87 eliminada — no sobreescribir datos de usuario en cada deploy
 
     # Migraciones hitos_usuario
     for col in [
