@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.14"
+ANNI_VERSION = "1.01.15"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5036,11 +5036,12 @@ POINTS.filter(function(p){return !p.isCenter;}).forEach(function(p,idx){
   var ctx=c2.getContext('2d');
   ctx.fillStyle='rgba(0,0,0,0)';ctx.fillRect(0,0,512,72);
   ctx.fillStyle='#ffffff';ctx.font='bold 32px Courier New';
-  var displayLabel2=p.label.split(' — ')[0].split(' ')[0];ctx.fillText(displayLabel2.toUpperCase().substring(0,20),4,52);
+  var displayLabel2=p.label.split(' — ')[0].split(' ')[0].toUpperCase().substring(0,20);
+  ctx.textAlign='center';ctx.fillText(displayLabel2,256,52);
   var tex=new THREE.CanvasTexture(c2);
-  var sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0.8}));
+  var sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0.85}));
   sp.scale.set(52,7,1);
-  sp.position.set(p.x,p.y+size+3.5,p.z);
+  sp.position.set(p.x,p.y+size+4,p.z);
   scene.add(sp);
 });
 
