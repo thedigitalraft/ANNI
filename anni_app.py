@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.92"
+ANNI_VERSION = "1.0.93"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2681,11 +2681,12 @@ def api_temas_abiertos():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
-        c.execute("""SELECT id, tema, contexto, datetime(ts, 'unixepoch', 'localtime') as ts
-                     FROM temas_abiertos WHERE usuario_id=? AND activo=1
-                     ORDER BY ts DESC LIMIT 20""", (usuario_id,))
+        c.execute("""SELECT id, tema, veces_mencionado, estado,
+                        datetime(ts, 'unixepoch', 'localtime') as ts
+                     FROM temas_abiertos WHERE usuario_id=? AND estado='abierto'
+                     ORDER BY veces_mencionado DESC LIMIT 20""", (usuario_id,))
         rows = c.fetchall()
-        temas = [{"id":r[0],"tema":r[1],"contexto":r[2],"ts":r[3]} for r in rows]
+        temas = [{"id":r[0],"tema":r[1],"veces":r[2],"estado":r[3],"ts":r[4]} for r in rows]
     except:
         temas = []
     conn.close()
@@ -2710,11 +2711,13 @@ def api_observaciones():
     usuario_id = session['usuario_id']
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT id, observacion, datetime(ts, 'unixepoch', 'localtime') as ts
-                 FROM observaciones WHERE usuario_id=? ORDER BY ts DESC LIMIT 30""", (usuario_id,))
+    c.execute("""SELECT id, tipo, contenido, evidencia,
+                        datetime(ts, 'unixepoch', 'localtime') as ts
+                 FROM observaciones WHERE usuario_id=? AND activa=1
+                 ORDER BY ts DESC LIMIT 30""", (usuario_id,))
     rows = c.fetchall()
     conn.close()
-    obs = [{"id": r[0], "observacion": r[1], "ts": r[2]} for r in rows]
+    obs = [{"id": r[0], "tipo": r[1], "contenido": r[2], "evidencia": r[3], "ts": r[4]} for r in rows]
     return jsonify({"observaciones": obs})
 
 @app.route('/api/personas-sin-hito', methods=['GET'])
@@ -4189,7 +4192,10 @@ function loadMemoriaAnni(){
             content.appendChild(h3);
             do2.observaciones.slice(0,10).forEach(function(o){
               var card=document.createElement('div');card.className='item-card';
-              card.innerHTML='<div class="item-meta">'+o.ts+'</div><div style="font-size:14px;color:#333">'+escH(o.observacion)+'</div>';
+              var tipoTag='<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(o.tipo||'')+'</span>';
+              card.innerHTML='<div class="item-meta">'+tipoTag+o.ts+'</div>'+
+                '<div style="font-size:14px;color:#333;margin-top:4px">'+escH(o.contenido)+'</div>'+
+                (o.evidencia?'<div style="font-size:12px;color:#888;margin-top:6px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:8px">"'+escH(o.evidencia)+'"</div>':'');
               content.appendChild(card);
             });
           } else {
@@ -4204,8 +4210,9 @@ function loadMemoriaAnni(){
             content.appendChild(h4);
             dt.temas.forEach(function(t){
               var card=document.createElement('div');card.className='item-card';
-              card.innerHTML='<div class="item-meta">'+t.ts+'</div><div style="font-size:14px;color:#333">'+escH(t.tema)+'</div>';
-              if(t.contexto) card.innerHTML+='<div style="font-size:12px;color:#888;margin-top:4px">'+escH(t.contexto)+'</div>';
+              card.innerHTML='<div class="item-meta">'+t.ts+'</div>'+
+                '<div style="font-size:14px;color:#333;margin-top:4px">'+escH(t.tema)+'</div>'+
+                '<div style="font-size:12px;color:#aaa;margin-top:4px">Mencionado '+t.veces+' veces</div>';
               content.appendChild(card);
             });
           }
