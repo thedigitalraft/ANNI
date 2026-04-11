@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.86"
+ANNI_VERSION = "1.0.87"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -139,6 +139,19 @@ def init_db():
         FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_diario_usuario ON diario(usuario_id, fecha)")
+
+    # Tabla memoria_extendida
+    c.execute("""CREATE TABLE IF NOT EXISTS memoria_extendida (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        memoria_validada_id INTEGER,
+        persona_nombre TEXT DEFAULT '',
+        tipo TEXT DEFAULT 'usuario',
+        contenido TEXT NOT NULL,
+        ts REAL DEFAULT 0,
+        activo INTEGER DEFAULT 1,
+        FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+    )""")
 
     # Migraciones hitos_usuario
     for col in [
@@ -2017,6 +2030,7 @@ def delete_persona(persona_id):
 # ── HITOS USUARIO ────────────────────────────────────────────────────────────
 
 @app.route('/api/hitos', methods=['GET'])
+@app.route('/api/memorias-validadas', methods=['GET'])
 @login_required
 def api_hitos():
     usuario_id = session['usuario_id']
@@ -2441,7 +2455,7 @@ body { background: #000; overflow: hidden; font-family: 'Courier New', monospace
 <button id="back" onclick="window.location.href='/chat'">← INICIO</button>
 <div id="ui">
   <div id="title">UNIVERSO ANNI</div>
-  <div id="subtitle">Hitos en el espacio semántico</div>
+  <div id="subtitle">Memoria validada en el espacio semántico</div>
 </div>
 <div id="scale">
   <div style="margin-bottom:4px;color:#ffffff">PESO</div>
@@ -3377,7 +3391,7 @@ textarea{font-size:16px}}
 <div id='nav'>
   <button class='nav-btn' onclick='showPage("mundo")'>MUNDO</button>
   <button class='nav-btn' onclick='showPage("tareas")'>TAREAS</button>
-  <button class='nav-btn' onclick='showPage("hitos")'>HITOS</button>
+  <button class='nav-btn' onclick='showPage("memoria_anni")'>MEMORIA ANNI</button>
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
   <button class='nav-btn' onclick='showPage("memoria")'>MEMORIA</button>
   <button class='nav-btn' onclick='showPage("diario")'>DIARIO</button>
@@ -3471,7 +3485,7 @@ textarea{font-size:16px}}
 <!-- PÁGINA -->
 <div id='page'>
 <div class='page-header'>
-<h1 id='page-title'>Hitos</h1>
+<h1 id='page-title'>Memoria ANNI</h1>
 <button class='page-close' onclick='closePage()'>Inicio</button>
 </div>
 <div class='page-body' id='page-body'></div>
@@ -3679,7 +3693,7 @@ document.getElementById('modal-bd').classList.remove('open');})
 
 function showPage(sec){
 currentSection=sec;currentPage=1;
-var titles={universo:'Universo ANNI',mundo:'El mundo de ANNI',tareas:'Tareas',hitos:'Hitos del usuario',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
+var titles={universo:'Universo ANNI',mundo:'El mundo de ANNI',tareas:'Tareas',memoria_anni:'Memoria ANNI',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
 document.getElementById('page-title').textContent=titles[sec]||sec;
 document.getElementById('page').classList.add('open');
 loadPage(sec,1);}
@@ -3689,7 +3703,7 @@ document.getElementById('page-body').innerHTML='<p style="color:#999;padding:20p
 if(sec==='universo')loadUniverso();
 else if(sec==='mundo')loadMundo(page);
 else if(sec==='tareas')loadTareas(page);
-else if(sec==='hitos')loadHitos(page);
+else if(sec==='memoria_anni')loadMemoriaAnni();
 else if(sec==='chats')loadChats(page);
 else if(sec==='diario')loadDiario(page);
 else if(sec==='memoria')loadMemoria();}
@@ -3907,6 +3921,126 @@ function repararEmbeddings(){
   });
 }
 
+
+function loadMemoriaAnni(){
+  var body=document.getElementById('page-body');
+  body.innerHTML='';
+
+  // Tabs
+  var tabs=document.createElement('div');
+  tabs.style.cssText='display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid #222;padding-bottom:12px';
+  var tabDefs=[
+    {id:'cruda',label:'Memoria cruda',desc:'Mensajes y conversaciones — lo que pasó'},
+    {id:'interpretada',label:'Memoria interpretada',desc:'Observaciones, personas, temas — lo que ANNI cree que pasó'},
+    {id:'validada',label:'Memoria validada',desc:'Anclas cognitivas confirmadas — lo que es verdad operativa'}
+  ];
+  var activeTab='validada';
+
+  function renderTab(tabId){
+    activeTab=tabId;
+    // Update tab styles
+    tabs.querySelectorAll('.mem-tab').forEach(function(t){
+      t.style.background=t.dataset.tab===tabId?'#cc0000':'none';
+      t.style.color=t.dataset.tab===tabId?'#fff':'#666';
+      t.style.borderColor=t.dataset.tab===tabId?'#cc0000':'#333';
+    });
+    var content=document.getElementById('mem-content');
+    content.innerHTML='<p style="color:#555;padding:20px;font-family:monospace">Cargando...</p>';
+
+    if(tabId==='validada'){
+      fetch('/api/hitos?page=1&per_page=50').then(r=>r.json()).then(function(d){
+        content.innerHTML='';
+        // Repair button
+        var repDiv=document.createElement('div');
+        repDiv.style.cssText='text-align:right;margin-bottom:10px';
+        repDiv.innerHTML='<button onclick="repararEmbeddings()" style="font-size:10px;padding:3px 10px;background:none;border:1px solid #ddd;cursor:pointer;font-family:monospace;color:#aaa;border-radius:4px">&#8635; Reparar embeddings</button>';
+        content.appendChild(repDiv);
+        if(!d.hitos||!d.hitos.length){content.innerHTML='<p style="color:#999;padding:20px">Sin memorias validadas aún.</p>';return;}
+        d.hitos.forEach(function(h){
+          var card=document.createElement('div');card.className='item-card';
+          var titulo=h.titulo?'<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+escH(h.titulo)+'</div>':'<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px"></div>';
+          var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(h.categoria)+'</span>':'';
+          var ev=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px">"'+escH(h.evidencia)+'"</div>':'';
+          var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Activar:</b> '+escH(h.cuando)+'</div>':'';
+          var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</b> '+escH(h.como)+'</div>':'';
+          var pesoBar='<div style="font-size:11px;color:#aaa;margin-top:6px">Peso: <b style="color:#cc0000">'+h.peso.toFixed(1)+'</b></div>';
+          card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+'<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+pesoBar+'<div class="item-actions"><button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button><button class="btn-del" onclick="delHito('+h.id+')">Borrar</button></div>';
+          content.appendChild(card);
+        });
+        content.appendChild(pagerEl(d.pages,1,'loadHitos'));
+      });
+
+    } else if(tabId==='cruda'){
+      fetch('/api/chats?page=1&per_page=20').then(r=>r.json()).then(function(d){
+        content.innerHTML='';
+        if(!d.chats||!d.chats.length){content.innerHTML='<p style="color:#999;padding:20px">Sin conversaciones guardadas.</p>';return;}
+        d.chats.forEach(function(c){
+          var card=document.createElement('div');card.className='item-card';
+          card.innerHTML='<div class="item-meta">Chat #'+c.id+' &middot; '+c.inicio+'</div><div class="item-content" id="cc-'+c.id+'">'+escH(c.resumen)+'</div><div class="item-actions"><button class="btn-edit" onclick="editChat('+c.id+',this)">Editar</button></div>';
+          content.appendChild(card);
+        });
+        content.appendChild(pagerEl(d.pages,1,'loadChats'));
+      });
+
+    } else if(tabId==='interpretada'){
+      // Personas + observaciones + temas
+      fetch('/api/personas').then(r=>r.json()).then(function(dp){
+        content.innerHTML='';
+        if(dp.personas&&dp.personas.length){
+          var h2=document.createElement('div');
+          h2.style.cssText='font-size:13px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:10px;margin-top:4px';
+          h2.textContent='PERSONAS DETECTADAS';
+          content.appendChild(h2);
+          dp.personas.forEach(function(p){
+            var card=document.createElement('div');card.className='item-card';
+            card.innerHTML='<div class="item-meta">'+escH(p.relacion||'')+'</div><div style="font-weight:900;font-size:15px;margin-bottom:4px">'+escH(p.nombre)+'</div><div style="font-size:13px;color:#666">Mencionada '+p.veces_mencionada+' veces</div>';
+            if(p.notas) card.innerHTML+='<div style="font-size:12px;color:#888;margin-top:4px">'+escH(p.notas)+'</div>';
+            content.appendChild(card);
+          });
+        }
+        // Observaciones
+        fetch('/api/observaciones').then(r=>r.json()).then(function(do2){
+          if(do2.observaciones&&do2.observaciones.length){
+            var h3=document.createElement('div');
+            h3.style.cssText='font-size:13px;font-weight:900;color:#cc0000;letter-spacing:2px;margin:20px 0 10px';
+            h3.textContent='OBSERVACIONES';
+            content.appendChild(h3);
+            do2.observaciones.slice(0,10).forEach(function(o){
+              var card=document.createElement('div');card.className='item-card';
+              card.innerHTML='<div class="item-meta">'+o.ts+'</div><div style="font-size:14px;color:#333">'+escH(o.observacion)+'</div>';
+              content.appendChild(card);
+            });
+          } else {
+            var empty=document.createElement('p');
+            empty.style.cssText='color:#999;padding:20px;font-size:13px';
+            empty.textContent='Aún no hay observaciones ni personas detectadas.';
+            content.appendChild(empty);
+          }
+        }).catch(function(){});
+      }).catch(function(){
+        content.innerHTML='<p style="color:#999;padding:20px">Error cargando memoria interpretada.</p>';
+      });
+    }
+  }
+
+  tabDefs.forEach(function(td){
+    var btn=document.createElement('button');
+    btn.className='mem-tab';
+    btn.dataset.tab=td.id;
+    btn.style.cssText='font-family:monospace;font-size:11px;letter-spacing:1px;padding:6px 14px;border:1px solid #333;cursor:pointer;border-radius:3px;background:none;color:#666;transition:all 0.2s';
+    btn.textContent=td.label.toUpperCase();
+    btn.onclick=function(){renderTab(td.id);};
+    tabs.appendChild(btn);
+  });
+  body.appendChild(tabs);
+
+  var contentDiv=document.createElement('div');
+  contentDiv.id='mem-content';
+  body.appendChild(contentDiv);
+
+  renderTab('validada');
+}
+
 function loadHitos(page){
 fetch('/api/hitos?page='+page).then(r=>r.json()).then(d=>{
 var body=document.getElementById('page-body');body.innerHTML='';
@@ -3915,7 +4049,7 @@ var repDiv=document.createElement('div');
 repDiv.style.cssText='text-align:right;margin-bottom:10px';
 repDiv.innerHTML='<button onclick="repararEmbeddings()" style="font-size:10px;padding:3px 10px;background:none;border:1px solid #ddd;cursor:pointer;font-family:monospace;color:#aaa;border-radius:4px">↻ Reparar embeddings</button>';
 body.appendChild(repDiv);
-if(!d.hitos.length){body.innerHTML='<p style="color:#999;padding:20px">Sin hitos guardados aun.</p>';return;}
+if(!d.hitos.length){body.innerHTML='<p style="color:#999;padding:20px">Sin memorias validadas aun.</p>';return;}
 d.hitos.forEach(function(h){
 var card=document.createElement('div');card.className='item-card';
 var titulo='<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+(h.titulo?escH(h.titulo):'')+'</div>';
