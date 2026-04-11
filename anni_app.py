@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.89"
+ANNI_VERSION = "1.0.90"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2602,15 +2602,25 @@ animate();
 @login_required
 def api_get_memoria_extendida():
     usuario_id = session['usuario_id']
+    mv_id = request.args.get('memoria_validada_id')
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT me.id, me.titulo, me.contenido, me.tipo, me.memoria_validada_id,
-                        h.titulo as mv_titulo,
-                        datetime(me.ts, 'unixepoch', 'localtime') as ts
-                 FROM memoria_extendida me
-                 LEFT JOIN hitos_usuario h ON h.id = me.memoria_validada_id
-                 WHERE me.usuario_id=? AND me.activo=1
-                 ORDER BY me.ts DESC""", (usuario_id,))
+    if mv_id:
+        c.execute("""SELECT me.id, me.titulo, me.contenido, me.tipo, me.memoria_validada_id,
+                            h.titulo as mv_titulo,
+                            datetime(me.ts, 'unixepoch', 'localtime') as ts
+                     FROM memoria_extendida me
+                     LEFT JOIN hitos_usuario h ON h.id = me.memoria_validada_id
+                     WHERE me.usuario_id=? AND me.activo=1 AND me.memoria_validada_id=?
+                     ORDER BY me.ts DESC""", (usuario_id, mv_id))
+    else:
+        c.execute("""SELECT me.id, me.titulo, me.contenido, me.tipo, me.memoria_validada_id,
+                            h.titulo as mv_titulo,
+                            datetime(me.ts, 'unixepoch', 'localtime') as ts
+                     FROM memoria_extendida me
+                     LEFT JOIN hitos_usuario h ON h.id = me.memoria_validada_id
+                     WHERE me.usuario_id=? AND me.activo=1
+                     ORDER BY me.ts DESC""", (usuario_id,))
     rows = c.fetchall()
     conn.close()
     memorias = [{"id":r[0],"titulo":r[1],"contenido":r[2],"tipo":r[3],
@@ -2662,6 +2672,24 @@ def api_borrar_memoria_extendida(mid):
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
+
+
+@app.route('/api/temas-abiertos', methods=['GET'])
+@login_required
+def api_temas_abiertos():
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    try:
+        c.execute("""SELECT id, tema, contexto, datetime(ts, 'unixepoch', 'localtime') as ts
+                     FROM temas_abiertos WHERE usuario_id=? AND activo=1
+                     ORDER BY ts DESC LIMIT 20""", (usuario_id,))
+        rows = c.fetchall()
+        temas = [{"id":r[0],"tema":r[1],"contexto":r[2],"ts":r[3]} for r in rows]
+    except:
+        temas = []
+    conn.close()
+    return jsonify({"temas": temas})
 
 @app.route('/api/personas', methods=['GET'])
 @login_required
@@ -4129,14 +4157,23 @@ function loadMemoriaAnni(){
 
     } else if(tabId==='interpretada'){
       // Personas + observaciones + temas
+      var relacionesPersonales=['pareja','esposa','esposo','hijo','hija','hijastra','hijastro',
+        'suegro','suegra','cuñado','cuñada','amigo','amiga','socio','socia',
+        'padre','madre','hermano','hermana','colega','jefe','cliente','fundador','cofundador'];
       fetch('/api/personas').then(r=>r.json()).then(function(dp){
         content.innerHTML='';
-        if(dp.personas&&dp.personas.length){
+        // Filtrar solo personas relevantes
+        var personasFiltradas=(dp.personas||[]).filter(function(p){
+          if(p.veces_mencionada<2) return false;
+          var rel=(p.relacion||'').toLowerCase();
+          return relacionesPersonales.some(function(r){return rel.indexOf(r)>=0;});
+        });
+        if(personasFiltradas.length){
           var h2=document.createElement('div');
           h2.style.cssText='font-size:13px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:10px;margin-top:4px';
           h2.textContent='PERSONAS DETECTADAS';
           content.appendChild(h2);
-          dp.personas.forEach(function(p){
+          personasFiltradas.forEach(function(p){
             var card=document.createElement('div');card.className='item-card';
             card.innerHTML='<div class="item-meta">'+escH(p.relacion||'')+'</div><div style="font-weight:900;font-size:15px;margin-bottom:4px">'+escH(p.nombre)+'</div><div style="font-size:13px;color:#666">Mencionada '+p.veces_mencionada+' veces</div>';
             if(p.notas) card.innerHTML+='<div style="font-size:12px;color:#888;margin-top:4px">'+escH(p.notas)+'</div>';
@@ -4156,12 +4193,30 @@ function loadMemoriaAnni(){
               content.appendChild(card);
             });
           } else {
-            var empty=document.createElement('p');
-            empty.style.cssText='color:#999;padding:20px;font-size:13px';
-            empty.textContent='Aún no hay observaciones ni personas detectadas.';
-            content.appendChild(empty);
+            // No observaciones message
+        }
+        // Temas abiertos
+        fetch('/api/temas-abiertos').then(r=>r.json()).then(function(dt){
+          if(dt.temas&&dt.temas.length){
+            var h4=document.createElement('div');
+            h4.style.cssText='font-size:13px;font-weight:900;color:#cc0000;letter-spacing:2px;margin:20px 0 10px';
+            h4.textContent='TEMAS ABIERTOS';
+            content.appendChild(h4);
+            dt.temas.forEach(function(t){
+              var card=document.createElement('div');card.className='item-card';
+              card.innerHTML='<div class="item-meta">'+t.ts+'</div><div style="font-size:14px;color:#333">'+escH(t.tema)+'</div>';
+              if(t.contexto) card.innerHTML+='<div style="font-size:12px;color:#888;margin-top:4px">'+escH(t.contexto)+'</div>';
+              content.appendChild(card);
+            });
           }
         }).catch(function(){});
+        if(!personasFiltradas.length){
+          var empty=document.createElement('p');
+          empty.style.cssText='color:#999;padding:20px;font-size:13px';
+          empty.textContent='Aún no hay personas, observaciones ni temas detectados.';
+          content.appendChild(empty);
+        }
+      }).catch(function(){});
       }).catch(function(){
         content.innerHTML='<p style="color:#999;padding:20px">Error cargando memoria interpretada.</p>';
       });
@@ -4239,12 +4294,76 @@ fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'}
 
 
 function verMemoriaExtendida(memoriaValidadaId, titulo){
-  showPage('memoria_anni');
-  setTimeout(function(){
-    // Click on extendida tab and pre-filter
-    var tabs=document.querySelectorAll('.mem-tab');
-    tabs.forEach(function(t){if(t.dataset.tab==='extendida')t.click();});
-  },100);
+  // Fetch existing memorias extendidas for this memoria validada
+  fetch('/api/memoria-extendida?memoria_validada_id='+memoriaValidadaId).then(r=>r.json()).then(function(d){
+    // Build inline panel below the card
+    var existingPanel=document.getElementById('me-panel-'+memoriaValidadaId);
+    if(existingPanel){existingPanel.remove();return;} // toggle off
+
+    var panel=document.createElement('div');
+    panel.id='me-panel-'+memoriaValidadaId;
+    panel.style.cssText='background:#f9f9f9;border:1px solid #e0e0e0;border-radius:8px;padding:16px;margin-top:8px';
+
+    var titulo_panel='<div style="font-size:12px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:12px">MEMORIA EXTENDIDA — '+escH(titulo)+'</div>';
+
+    var memorias_html='';
+    if(d.memorias&&d.memorias.length){
+      d.memorias.forEach(function(m){
+        memorias_html+='<div style="border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:10px">';
+        memorias_html+='<div style="font-weight:900;font-size:13px;margin-bottom:4px">'+escH(m.titulo||'Sin título')+'</div>';
+        memorias_html+='<div style="font-size:13px;color:#444;line-height:1.6;white-space:pre-wrap" id="mep-'+m.id+'">'+escH(m.contenido)+'</div>';
+        memorias_html+='<div style="margin-top:6px"><button onclick="editMEInline('+m.id+')" style="font-size:10px;padding:2px 8px;border:1px solid #ddd;background:none;cursor:pointer;font-family:monospace;margin-right:4px">Editar</button>';
+        memorias_html+='<button onclick="delMemoriaExtendida('+m.id+');document.getElementById('me-panel-'+memoriaValidadaId+'').remove();" style="font-size:10px;padding:2px 8px;border:1px solid #ffcccc;background:none;cursor:pointer;font-family:monospace;color:#cc0000">Borrar</button></div>';
+        memorias_html+='</div>';
+      });
+    } else {
+      memorias_html='<p style="color:#999;font-size:13px;margin-bottom:12px">Sin memorias extendidas aún.</p>';
+    }
+
+    var form_html='<div style="margin-top:12px;border-top:1px solid #eee;padding-top:12px">';
+    form_html+='<div style="font-size:11px;color:#aaa;margin-bottom:6px">AÑADIR NUEVA ENTRADA</div>';
+    form_html+='<input id="me-tit-'+memoriaValidadaId+'" placeholder="Título (ej: Historia de vida, Relación...)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;margin-bottom:6px"><br>';
+    form_html+='<textarea id="me-body-'+memoriaValidadaId+'" placeholder="Escribe aquí el contexto extendido..." style="width:100%;border:1px solid #ddd;border-radius:4px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:80px"></textarea><br>';
+    form_html+='<button onclick="guardarMEInline('+memoriaValidadaId+',''+escH(titulo)+'')" style="margin-top:6px;font-size:11px;padding:4px 14px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>';
+    form_html+='</div>';
+
+    panel.innerHTML=titulo_panel+memorias_html+form_html;
+
+    // Insert after the card's item-actions
+    var btn=document.querySelector('[onclick*="verMemoriaExtendida('+memoriaValidadaId+',"]');
+    if(btn){btn.closest('.item-card').appendChild(panel);}
+  }).catch(function(){alert('Error cargando memoria extendida.');});
+}
+
+function guardarMEInline(memoriaValidadaId, titulo){
+  var tit=document.getElementById('me-tit-'+memoriaValidadaId).value.trim()||titulo;
+  var body=document.getElementById('me-body-'+memoriaValidadaId).value.trim();
+  if(!body){alert('El contenido no puede estar vacío.');return;}
+  fetch('/api/memoria-extendida',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({titulo:tit,contenido:body,memoria_validada_id:memoriaValidadaId,tipo:'usuario'})
+  }).then(r=>r.json()).then(function(d){
+    if(d.ok){
+      // Refresh the panel
+      document.getElementById('me-panel-'+memoriaValidadaId).remove();
+      verMemoriaExtendida(memoriaValidadaId,titulo);
+    }
+  });
+}
+
+function editMEInline(id){
+  var el=document.getElementById('mep-'+id);
+  if(!el)return;
+  var orig=el.textContent;
+  el.innerHTML='<textarea style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:8px;font-size:13px;font-family:inherit;resize:vertical;min-height:80px">'+escH(orig)+'</textarea>';
+  el.innerHTML+='<button onclick="saveMEInline('+id+',this)" style="margin-top:4px;font-size:10px;padding:3px 10px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px">Guardar</button>';
+}
+
+function saveMEInline(id,btn){
+  var el=document.getElementById('mep-'+id);
+  var txt=el.querySelector('textarea').value.trim();
+  if(!txt)return;
+  fetch('/api/memoria-extendida/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({contenido:txt})})
+  .then(function(){el.innerHTML=escH(txt);});
 }
 
 function nuevaMemoriaExtendida(memoriaValidadaId, titulo){
