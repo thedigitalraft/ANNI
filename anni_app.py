@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.03"
+ANNI_VERSION = "1.01.04"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -139,6 +139,15 @@ def init_db():
         FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_diario_usuario ON diario(usuario_id, fecha)")
+
+    # Tabla hitos rechazados — para no volver a proponer
+    c.execute("""CREATE TABLE IF NOT EXISTS hitos_rechazados (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        titulo_hash TEXT NOT NULL,
+        ts REAL DEFAULT 0,
+        UNIQUE(usuario_id, titulo_hash)
+    )""")
 
     # Tabla memoria_extendida
     c.execute("""CREATE TABLE IF NOT EXISTS memoria_extendida (
@@ -2429,6 +2438,20 @@ Solo JSON."""
         if not parsed.get('hito'):
             return jsonify({'hito': None})
 
+        # Verificar si este hito fue rechazado previamente
+        titulo_prop = parsed.get('titulo', '').lower()
+        if titulo_prop:
+            import hashlib
+            th = hashlib.md5(titulo_prop.encode()).hexdigest()
+            conn_rech = sqlite3.connect(DB_PATH)
+            rechazado = conn_rech.execute(
+                "SELECT id FROM hitos_rechazados WHERE usuario_id=? AND titulo_hash=?",
+                (usuario_id, th)).fetchone()
+            conn_rech.close()
+            if rechazado:
+                print(f"[ANNI] Hito rechazado previamente, omitiendo: {titulo_prop[:50]}")
+                return jsonify({'hito': None})
+
         # Verificar duplicados con embeddings antes de proponer
         contenido_nuevo = parsed.get('contenido', '')
         if contenido_nuevo:
@@ -2821,6 +2844,36 @@ def api_observaciones():
     return jsonify({"observaciones": obs})
 
 
+
+@app.route('/api/hitos/rechazar', methods=['POST'])
+@login_required
+def api_rechazar_hito_propuesto():
+    """Guarda el titulo del hito rechazado para no volver a proponerlo."""
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    titulo = data.get('titulo', '').strip().lower()
+    nombre = data.get('persona_nombre', '').strip()
+    if not titulo:
+        return jsonify({'ok': False})
+    import hashlib
+    titulo_hash = hashlib.md5(titulo.encode()).hexdigest()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("INSERT OR IGNORE INTO hitos_rechazados (usuario_id, titulo_hash, ts) VALUES (?,?,?)",
+                     (usuario_id, titulo_hash, time.time()))
+        conn.commit()
+    except:
+        pass
+    # Si tiene persona_nombre, eliminarla de personas también
+    if nombre:
+        conn.execute("DELETE FROM personas WHERE usuario_id=? AND LOWER(nombre)=LOWER(?)",
+                     (usuario_id, nombre))
+        conn.commit()
+        print(f"[ANNI] Persona rechazada: {nombre}")
+    conn.close()
+    print(f"[ANNI] Hito rechazado guardado: {titulo[:50]}")
+    return jsonify({'ok': True})
+
 @app.route('/api/personas/rechazar', methods=['POST'])
 @login_required
 def api_rechazar_persona():
@@ -2872,6 +2925,17 @@ def api_personas_sin_hito():
         return jsonify({'hito': None})
 
     nombre, relacion, tono, notas = persona
+    # Verificar si ya fue rechazado
+    import hashlib
+    titulo_check = f'{nombre.upper()} — {(relacion or "persona cercana").upper()}'.lower()
+    th_check = hashlib.md5(titulo_check.encode()).hexdigest()
+    conn2 = sqlite3.connect(DB_PATH)
+    rechazado = conn2.execute(
+        "SELECT id FROM hitos_rechazados WHERE usuario_id=? AND titulo_hash=?",
+        (usuario_id, th_check)).fetchone()
+    conn2.close()
+    if rechazado:
+        return jsonify({'hito': None})
     hito = {
         'hito': True,
         'titulo': f'{nombre.upper()} — {(relacion or "persona cercana").upper()}',
@@ -3848,10 +3912,12 @@ document.getElementById('modal-hito').classList.remove('open');pendHito=null;});
 
 function rechazarHito(){
   document.getElementById('modal-hito').classList.remove('open');
-  // Si viene de personas-sin-hito, eliminar la persona para que no vuelva a proponerse
-  if(pendHito && pendHito.persona_nombre){
-    fetch('/api/personas/rechazar',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({nombre:pendHito.persona_nombre})
+  if(pendHito){
+    fetch('/api/hitos/rechazar',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        titulo: pendHito.titulo||'',
+        persona_nombre: pendHito.persona_nombre||''
+      })
     }).catch(function(){});
   }
   pendHito=null;
