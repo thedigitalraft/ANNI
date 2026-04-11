@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.20"
+ANNI_VERSION = "1.01.21"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4598,11 +4598,13 @@ function loadMemoriaAnni(){
       }
 
       Promise.all([
-        fetch('/api/personas').then(r=>r.json()),
-        fetch('/api/observaciones').then(r=>r.json()),
-        fetch('/api/temas-abiertos').then(r=>r.json())
+        fetch('/api/personas').then(r=>r.json()).catch(function(){return {personas:[]};}),
+        fetch('/api/observaciones').then(r=>r.json()).catch(function(){return {observaciones:[]};}),
+        fetch('/api/temas-abiertos').then(r=>r.json()).catch(function(){return {temas:[]};})
       ]).then(function(results){
-        var dp=results[0], do2=results[1], dt=results[2];
+        var dp=results[0]||{personas:[]};
+        var do2=results[1]||{observaciones:[]};
+        var dt=results[2]||{temas:[]};
 
         // Deduplicar personas por nombre normalizado (Antonio/Antonio Torrijos → el de más menciones)
         var personasMap={};
@@ -4672,8 +4674,8 @@ function loadMemoriaAnni(){
           content.appendChild(empty);
         }
 
-      }).catch(function(){
-        content.innerHTML='<p style="color:#999;padding:20px">Error cargando memoria interpretada.</p>';
+      }).catch(function(err){
+        content.innerHTML='<p style="color:#999;padding:20px">Error cargando memoria interpretada: '+(err?err.toString():'')+'. Intenta recargar la página.</p>';
       });
     }
   }
