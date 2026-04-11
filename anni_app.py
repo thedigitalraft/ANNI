@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.96"
+ANNI_VERSION = "1.0.97"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3970,6 +3970,38 @@ function repararEmbeddings(){
 }
 
 
+function loadMVPage(page){
+  var content=document.getElementById('mem-content');
+  if(!content) return;
+  fetch('/api/hitos?page='+page).then(r=>r.json()).then(function(d){
+    content.innerHTML='';
+    var repDiv=document.createElement('div');
+    repDiv.style.cssText='text-align:right;margin-bottom:10px';
+    repDiv.innerHTML='<button onclick="repararEmbeddings()" style="font-size:10px;padding:3px 10px;background:none;border:1px solid #ddd;cursor:pointer;font-family:monospace;color:#aaa;border-radius:4px">&#8635; Reparar embeddings</button>';
+    content.appendChild(repDiv);
+    if(!d.hitos||!d.hitos.length){content.innerHTML='<p style="color:#999;padding:20px">Sin memorias validadas aún.</p>';return;}
+    d.hitos.forEach(function(h){
+      var card=document.createElement('div');card.className='item-card';
+      var titulo='<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+(h.titulo?escH(h.titulo):'')+'</div>';
+      var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(h.categoria)+'</span>':'';
+      var ev=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px">"'+escH(h.evidencia)+'"</div>':'';
+      var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Activar:</b> '+escH(h.cuando)+'</div>':'';
+      var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</b> '+escH(h.como)+'</div>':'';
+      var pesoBar='<div style="font-size:11px;color:#aaa;margin-top:6px">Peso: <b style="color:#cc0000">'+h.peso.toFixed(1)+'</b></div>';
+      card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
+        '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+pesoBar+
+        '<div class="item-actions">'+
+        '<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
+        '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
+        '<button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" data-mvid="'+h.id+'" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button>'+
+        '</div>';
+      content.appendChild(card);
+    });
+    content.appendChild(pagerEl(d.pages,page,'loadMVPage'));
+  });
+}
+
+
 function loadMemoriaAnni(){
   var body=document.getElementById('page-body');
   body.innerHTML='';
@@ -3997,31 +4029,6 @@ function loadMemoriaAnni(){
     content.innerHTML='<p style="color:#555;padding:20px;font-family:monospace">Cargando...</p>';
 
     if(tabId==='validada'){
-      var currentMVPage = 1;
-      function loadMVPage(page){
-        currentMVPage = page;
-        fetch('/api/hitos?page='+page).then(r=>r.json()).then(function(d){
-        content.innerHTML='';
-        // Repair button
-        var repDiv=document.createElement('div');
-        repDiv.style.cssText='text-align:right;margin-bottom:10px';
-        repDiv.innerHTML='<button onclick="repararEmbeddings()" style="font-size:10px;padding:3px 10px;background:none;border:1px solid #ddd;cursor:pointer;font-family:monospace;color:#aaa;border-radius:4px">&#8635; Reparar embeddings</button>';
-        content.appendChild(repDiv);
-        if(!d.hitos||!d.hitos.length){content.innerHTML='<p style="color:#999;padding:20px">Sin memorias validadas aún.</p>';return;}
-        d.hitos.forEach(function(h){
-          var card=document.createElement('div');card.className='item-card';
-          var titulo=h.titulo?'<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+escH(h.titulo)+'</div>':'<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px"></div>';
-          var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(h.categoria)+'</span>':'';
-          var ev=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px">"'+escH(h.evidencia)+'"</div>':'';
-          var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Activar:</b> '+escH(h.cuando)+'</div>':'';
-          var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</b> '+escH(h.como)+'</div>':'';
-          var pesoBar='<div style="font-size:11px;color:#aaa;margin-top:6px">Peso: <b style="color:#cc0000">'+h.peso.toFixed(1)+'</b></div>';
-          card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+'<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+pesoBar+'<div class="item-actions"><button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button><button class="btn-del" onclick="delHito('+h.id+')">Borrar</button><button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" data-mvid="'+h.id+'" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button></div>';
-          content.appendChild(card);
-        });
-          content.appendChild(pagerEl(d.pages,page,'loadMVPage'));
-        });
-      }
       loadMVPage(1);
 
     } else if(tabId==='cruda'){
