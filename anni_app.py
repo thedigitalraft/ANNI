@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.87"
+ANNI_VERSION = "1.0.88"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -147,11 +147,16 @@ def init_db():
         memoria_validada_id INTEGER,
         persona_nombre TEXT DEFAULT '',
         tipo TEXT DEFAULT 'usuario',
+        titulo TEXT DEFAULT '',
         contenido TEXT NOT NULL,
         ts REAL DEFAULT 0,
         activo INTEGER DEFAULT 1,
         FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
     )""")
+    try:
+        c.execute("ALTER TABLE memoria_extendida ADD COLUMN titulo TEXT DEFAULT ''")
+    except:
+        pass
 
     # Migración: acortar memorias validadas sobrecargadas (1.0.87)
     memorias_limpias = [
@@ -2591,6 +2596,99 @@ animate();
     return html
 
 
+
+
+@app.route('/api/memoria-extendida', methods=['GET'])
+@login_required
+def api_get_memoria_extendida():
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT me.id, me.titulo, me.contenido, me.tipo, me.memoria_validada_id,
+                        h.titulo as mv_titulo,
+                        datetime(me.ts, 'unixepoch', 'localtime') as ts
+                 FROM memoria_extendida me
+                 LEFT JOIN hitos_usuario h ON h.id = me.memoria_validada_id
+                 WHERE me.usuario_id=? AND me.activo=1
+                 ORDER BY me.ts DESC""", (usuario_id,))
+    rows = c.fetchall()
+    conn.close()
+    memorias = [{"id":r[0],"titulo":r[1],"contenido":r[2],"tipo":r[3],
+                 "memoria_validada_id":r[4],"memoria_validada_titulo":r[5],"ts":r[6]} for r in rows]
+    return jsonify({"memorias": memorias})
+
+@app.route('/api/memoria-extendida', methods=['POST'])
+@login_required
+def api_crear_memoria_extendida():
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    contenido = data.get('contenido','').strip()
+    titulo = data.get('titulo','').strip()
+    if not contenido:
+        return jsonify({'ok': False})
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""INSERT INTO memoria_extendida
+                    (usuario_id, memoria_validada_id, tipo, titulo, contenido, ts, activo)
+                    VALUES (?,?,?,?,?,?,1)""",
+                 (usuario_id, data.get('memoria_validada_id'), data.get('tipo','usuario'), titulo, contenido, time.time()))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/memoria-extendida/<int:mid>', methods=['PUT'])
+@login_required
+def api_editar_memoria_extendida(mid):
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    contenido = data.get('contenido','').strip()
+    titulo = data.get('titulo','').strip()
+    conn = sqlite3.connect(DB_PATH)
+    if titulo:
+        conn.execute("UPDATE memoria_extendida SET contenido=?, titulo=? WHERE id=? AND usuario_id=?",
+                     (contenido, titulo, mid, usuario_id))
+    else:
+        conn.execute("UPDATE memoria_extendida SET contenido=? WHERE id=? AND usuario_id=?",
+                     (contenido, mid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/memoria-extendida/<int:mid>', methods=['DELETE'])
+@login_required
+def api_borrar_memoria_extendida(mid):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE memoria_extendida SET activo=0 WHERE id=? AND usuario_id=?", (mid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/personas', methods=['GET'])
+@login_required
+def api_personas():
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT nombre, relacion, tono_predominante, notas, veces_mencionada
+                 FROM personas WHERE usuario_id=? ORDER BY veces_mencionada DESC""", (usuario_id,))
+    rows = c.fetchall()
+    conn.close()
+    personas = [{"nombre": r[0], "relacion": r[1], "tono": r[2], "notas": r[3], "veces_mencionada": r[4]} for r in rows]
+    return jsonify({"personas": personas})
+
+@app.route('/api/observaciones', methods=['GET'])
+@login_required
+def api_observaciones():
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""SELECT id, observacion, datetime(ts, 'unixepoch', 'localtime') as ts
+                 FROM observaciones WHERE usuario_id=? ORDER BY ts DESC LIMIT 30""", (usuario_id,))
+    rows = c.fetchall()
+    conn.close()
+    obs = [{"id": r[0], "observacion": r[1], "ts": r[2]} for r in rows]
+    return jsonify({"observaciones": obs})
+
 @app.route('/api/personas-sin-hito', methods=['GET'])
 @login_required
 def api_personas_sin_hito():
@@ -3412,7 +3510,6 @@ textarea{font-size:16px}}
   <button class='nav-btn' onclick='showPage("tareas")'>TAREAS</button>
   <button class='nav-btn' onclick='showPage("memoria_anni")'>MEMORIA ANNI</button>
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
-  <button class='nav-btn' onclick='showPage("memoria")'>MEMORIA</button>
   <button class='nav-btn' onclick='showPage("diario")'>DIARIO</button>
   <button class='nav-btn' onclick='showPage("universo")'>UNIVERSO</button>
   <button class='nav-btn' onclick='descargarBD()'>BD</button>
@@ -3951,7 +4048,8 @@ function loadMemoriaAnni(){
   var tabDefs=[
     {id:'cruda',label:'Memoria cruda',desc:'Mensajes y conversaciones — lo que pasó'},
     {id:'interpretada',label:'Memoria interpretada',desc:'Observaciones, personas, temas — lo que ANNI cree que pasó'},
-    {id:'validada',label:'Memoria validada',desc:'Anclas cognitivas confirmadas — lo que es verdad operativa'}
+    {id:'validada',label:'Memoria validada',desc:'Anclas cognitivas confirmadas — lo que es verdad operativa'},
+    {id:'extendida',label:'Memoria extendida',desc:'Biografías y contexto profundo por persona o tema'}
   ];
   var activeTab='validada';
 
@@ -3983,7 +4081,7 @@ function loadMemoriaAnni(){
           var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Activar:</b> '+escH(h.cuando)+'</div>':'';
           var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</b> '+escH(h.como)+'</div>':'';
           var pesoBar='<div style="font-size:11px;color:#aaa;margin-top:6px">Peso: <b style="color:#cc0000">'+h.peso.toFixed(1)+'</b></div>';
-          card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+'<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+pesoBar+'<div class="item-actions"><button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button><button class="btn-del" onclick="delHito('+h.id+')">Borrar</button></div>';
+          card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+'<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+pesoBar+'<div class="item-actions"><button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button><button class="btn-del" onclick="delHito('+h.id+')">Borrar</button><button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" onclick="verMemoriaExtendida('+h.id+','+JSON.stringify(h.titulo||h.id)+')">+ Memoria extendida</button></div>';
           content.appendChild(card);
         });
         content.appendChild(pagerEl(d.pages,1,'loadHitos'));
@@ -4000,6 +4098,34 @@ function loadMemoriaAnni(){
         });
         content.appendChild(pagerEl(d.pages,1,'loadChats'));
       });
+
+    } else if(tabId==='extendida'){
+      fetch('/api/memoria-extendida').then(r=>r.json()).then(function(d){
+        content.innerHTML='';
+        var addBtn=document.createElement('div');
+        addBtn.style.cssText='text-align:right;margin-bottom:12px';
+        addBtn.innerHTML='<button onclick="nuevaMemoriaExtendida()" style="font-size:11px;padding:4px 12px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">+ NUEVA</button>';
+        content.appendChild(addBtn);
+        if(!d.memorias||!d.memorias.length){
+          var empty=document.createElement('p');
+          empty.style.cssText='color:#999;padding:20px;font-size:13px';
+          empty.textContent='Sin memorias extendidas aún. Puedes crear una desde aquí o desde una memoria validada.';
+          content.appendChild(empty);return;
+        }
+        d.memorias.forEach(function(m){
+          var card=document.createElement('div');card.className='item-card';
+          var linked=m.memoria_validada_titulo?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(m.memoria_validada_titulo)+'</span>':'';
+          card.innerHTML='<div class="item-meta">'+linked+'#'+m.id+' &middot; '+m.ts+'</div>'+
+            '<div style="font-size:15px;font-weight:900;color:#111;margin-bottom:6px">'+escH(m.titulo||'Sin título')+'</div>'+
+            '<div style="font-size:14px;color:#444;line-height:1.6" id="me-'+m.id+'">'+escH(m.contenido)+'</div>'+
+            '<div style="font-size:11px;color:#aaa;margin-top:6px">Tipo: '+escH(m.tipo)+'</div>'+
+            '<div class="item-actions">'+
+            '<button class="btn-edit" onclick="editMemoriaExtendida('+m.id+',this)">Editar</button>'+
+            '<button class="btn-del" onclick="delMemoriaExtendida('+m.id+')">Borrar</button>'+
+            '</div>';
+          content.appendChild(card);
+        });
+      }).catch(function(){content.innerHTML='<p style="color:#999;padding:20px">Error cargando memoria extendida.</p>';});
 
     } else if(tabId==='interpretada'){
       // Personas + observaciones + temas
@@ -4109,6 +4235,48 @@ var payload={contenido:txt};
 if(tit) payload.titulo=tit;
 fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
 .then(()=>loadHitos(currentPage));};
+}
+
+
+function verMemoriaExtendida(memoriaValidadaId, titulo){
+  showPage('memoria_anni');
+  setTimeout(function(){
+    // Click on extendida tab and pre-filter
+    var tabs=document.querySelectorAll('.mem-tab');
+    tabs.forEach(function(t){if(t.dataset.tab==='extendida')t.click();});
+  },100);
+}
+
+function nuevaMemoriaExtendida(memoriaValidadaId, titulo){
+  var tit=prompt('Título de esta memoria extendida:', titulo||'');
+  if(tit===null)return;
+  var contenido=prompt('Contenido (puedes editarlo después):','');
+  if(contenido===null)return;
+  fetch('/api/memoria-extendida',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({titulo:tit,contenido:contenido,memoria_validada_id:memoriaValidadaId||null,tipo:'usuario'})
+  }).then(r=>r.json()).then(function(d){
+    if(d.ok){showPage('memoria_anni');setTimeout(function(){document.querySelectorAll('.mem-tab').forEach(function(t){if(t.dataset.tab==='extendida')t.click();});},100);}
+  });
+}
+
+function editMemoriaExtendida(id,btn){
+  var card=btn.closest('.item-card');
+  var el=card.querySelector('[id="me-'+id+'"]');
+  if(!el)return;
+  var orig=el.textContent;
+  el.innerHTML='<textarea style="width:100%;border:2px solid #cc0000;border-radius:8px;padding:10px;font-size:14px;font-family:inherit;resize:vertical;min-height:120px">'+escH(orig)+'</textarea>';
+  btn.textContent='Guardar';
+  btn.onclick=function(){
+    var txt=el.querySelector('textarea').value.trim();
+    if(!txt)return;
+    fetch('/api/memoria-extendida/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({contenido:txt})})
+    .then(function(){renderTab('extendida');});
+  };
+}
+
+function delMemoriaExtendida(id){
+  if(!confirm('Borrar esta memoria extendida?'))return;
+  fetch('/api/memoria-extendida/'+id,{method:'DELETE'}).then(function(){renderTab('extendida');});
 }
 
 function delHito(id){
