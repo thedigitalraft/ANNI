@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.17"
+ANNI_VERSION = "1.01.19"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2213,12 +2213,30 @@ def api_crear_hito():
     if not contenido:
         return jsonify({'ok': False, 'error': 'Contenido requerido'})
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("""INSERT INTO hitos_usuario
-                    (usuario_id, tipo, titulo, contenido, categoria, cuando_activarlo, como_usarlo, peso, activo, ts)
-                    VALUES (?,?,?,?,?,?,?,5.0,1,?)""",
+    cursor = conn.execute("INSERT INTO hitos_usuario (usuario_id, tipo, titulo, contenido, categoria, cuando_activarlo, como_usarlo, peso, activo, ts) VALUES (?,?,?,?,?,?,?,5.0,1,?)",
                  (usuario_id, 'manual', titulo, contenido, categoria, cuando, como, time.time()))
+    nuevo_id = cursor.lastrowid
+    conn.execute("DELETE FROM universo_cache WHERE usuario_id=?", (usuario_id,))
     conn.commit()
     conn.close()
+    # Generar embedding en background y luego recalcular universo
+    def generar_embedding_y_recalcular(uid, hid, texto):
+        try:
+            import struct
+            resp = together.embeddings.create(model=EMBED_MODEL, input=[texto[:1600]])
+            vec = resp.data[0].embedding
+            blob = struct.pack(f"{len(vec)}f", *vec)
+            conn2 = sqlite3.connect(DB_PATH)
+            conn2.execute("INSERT OR REPLACE INTO embeddings (usuario_id, tabla_origen, registro_id, embedding) VALUES (?,?,?,?)",
+                         (uid, 'hitos_usuario', hid, blob))
+            conn2.commit()
+            conn2.close()
+            print(f"[ANNI] Embedding generado para hito manual #{hid}")
+        except Exception as e:
+            print(f"[ANNI] Error generando embedding para hito #{hid}: {e}")
+        recalcular_universo(uid)
+    texto_embedding = f"{titulo} {contenido}".strip()
+    threading.Thread(target=generar_embedding_y_recalcular, args=(usuario_id, nuevo_id, texto_embedding), daemon=True).start()
     return jsonify({'ok': True})
 
 @app.route('/api/hitos/<int:hid>', methods=['PUT'])
