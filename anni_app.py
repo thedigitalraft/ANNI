@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.15"
+ANNI_VERSION = "1.01.16"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2743,14 +2743,14 @@ POINTS.filter(p=>!p.isCenter).forEach((p,i)=>{
   const gg=new THREE.SphereGeometry(size*2.5,12,12);
   const gm=new THREE.MeshBasicMaterial({color:col.c,transparent:true,opacity:0.05,side:THREE.BackSide});
   const glow=new THREE.Mesh(gg,gm); glow.position.copy(mesh.position); scene.add(glow);
-  const c2=document.createElement('canvas'); c2.width=512; c2.height=72;
-  const ctx=c2.getContext('2d');
-  ctx.fillStyle='rgba(0,0,0,0)'; ctx.fillRect(0,0,512,72);
-  ctx.fillStyle='#ffffff'; ctx.font='bold 28px Courier New';
-  var displayLabel=p.label.split(' — ')[0].split(' ')[0];ctx.fillText(displayLabel.toUpperCase().substring(0,20),4,48);
-  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c2),transparent:true,opacity:0.8}));
-  sp.scale.set(48,7,1); sp.position.set(p.x,p.y+size+3,p.z); scene.add(sp);
 });
+
+// 2D label overlay
+const labelCanvas=document.createElement('canvas');
+labelCanvas.style.cssText='position:fixed;top:0;left:0;pointer-events:none;z-index:5';
+labelCanvas.width=innerWidth; labelCanvas.height=innerHeight;
+document.body.appendChild(labelCanvas);
+const lctx=labelCanvas.getContext('2d');
 
 const raycaster=new THREE.Raycaster();
 const mouse=new THREE.Vector2();
@@ -2775,12 +2775,43 @@ renderer.domElement.addEventListener('mousemove',e=>{if(!isDrag)return;rotY+=(e.
 renderer.domElement.addEventListener('wheel',e=>{camera.position.z=Math.max(60,Math.min(500,camera.position.z+e.deltaY*0.3));});
 window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 let t=0;
+const tempVec=new THREE.Vector3();
 function animate(){
   requestAnimationFrame(animate); t+=0.004;
   scene.rotation.y=rotY; scene.rotation.x=rotX;
   meshes.forEach((m,i)=>{m.scale.setScalar(1+Math.sin(t*1.2+i*0.8)*0.07);});
   pl.intensity=1.8+Math.sin(t*0.5)*0.4;
+  if(window._bhDiskMeshes) window._bhDiskMeshes.forEach(function(d){d.rotation.z+=0.002;});
   renderer.render(scene,camera);
+  // Draw 2D labels
+  labelCanvas.width=innerWidth; labelCanvas.height=innerHeight;
+  lctx.clearRect(0,0,innerWidth,innerHeight);
+  lctx.font='bold 11px Courier New';
+  lctx.textAlign='center';
+  meshes.forEach(function(m){
+    if(m.userData.isCenter) return;
+    if(!m.userData.label) return;
+    var lbl=m.userData.label.split(' — ')[0].split(' ')[0].toUpperCase().substring(0,18);
+    var sz=m.userData.peso?2.5+(m.userData.peso/10)*3.5:4;
+    tempVec.copy(m.position);
+    scene.localToWorld(tempVec);
+    tempVec.project(camera);
+    var sx=(tempVec.x*0.5+0.5)*innerWidth;
+    var sy=(-tempVec.y*0.5+0.5)*innerHeight;
+    var offset=sz*1.2+14;
+    // Project offset upward
+    var upVec=new THREE.Vector3(0,sz+2,0);
+    scene.localToWorld(upVec);
+    upVec.project(camera);
+    var ux=(upVec.x*0.5+0.5)*innerWidth;
+    var uy=(-upVec.y*0.5+0.5)*innerHeight;
+    var dy=uy-sy;
+    lctx.fillStyle='rgba(0,0,0,0.55)';
+    var tw=lctx.measureText(lbl).width;
+    lctx.fillRect(sx-tw/2-3,sy+dy-13,tw+6,16);
+    lctx.fillStyle='#ffffff';
+    lctx.fillText(lbl,sx,sy+dy);
+  });
 }
 animate();
 </script>
