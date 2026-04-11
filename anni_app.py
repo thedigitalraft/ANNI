@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.91"
+ANNI_VERSION = "1.0.92"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4109,7 +4109,7 @@ function loadMemoriaAnni(){
           var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Activar:</b> '+escH(h.cuando)+'</div>':'';
           var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</b> '+escH(h.como)+'</div>':'';
           var pesoBar='<div style="font-size:11px;color:#aaa;margin-top:6px">Peso: <b style="color:#cc0000">'+h.peso.toFixed(1)+'</b></div>';
-          card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+'<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+pesoBar+'<div class="item-actions"><button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button><button class="btn-del" onclick="delHito('+h.id+')">Borrar</button><button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" onclick="verMemoriaExtendida('+h.id+','+JSON.stringify(h.titulo||h.id)+')">+ Memoria extendida</button></div>';
+          card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+'<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+pesoBar+'<div class="item-actions"><button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button><button class="btn-del" onclick="delHito('+h.id+')">Borrar</button><button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" data-mvid="'+h.id+'" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button></div>';
           content.appendChild(card);
         });
         content.appendChild(pagerEl(d.pages,1,'loadHitos'));
@@ -4293,46 +4293,46 @@ fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'}
 }
 
 
-function verMemoriaExtendida(memoriaValidadaId, titulo){
-  // Fetch existing memorias extendidas for this memoria validada
-  fetch('/api/memoria-extendida?memoria_validada_id='+memoriaValidadaId).then(r=>r.json()).then(function(d){
-    // Build inline panel below the card
-    var existingPanel=document.getElementById('me-panel-'+memoriaValidadaId);
-    if(existingPanel){existingPanel.remove();return;} // toggle off
+function verMemoriaExtendida(memoriaValidadaId){
+  var existingPanel=document.getElementById('me-panel-'+memoriaValidadaId);
+  if(existingPanel){existingPanel.remove();return;}
 
+  fetch('/api/memoria-extendida?memoria_validada_id='+memoriaValidadaId).then(function(r){return r.json();}).then(function(d){
     var panel=document.createElement('div');
     panel.id='me-panel-'+memoriaValidadaId;
     panel.style.cssText='background:#f9f9f9;border:1px solid #e0e0e0;border-radius:8px;padding:16px;margin-top:8px';
 
-    var titulo_panel='<div style="font-size:12px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:12px">MEMORIA EXTENDIDA — '+escH(titulo)+'</div>';
+    var html='<div style="font-size:12px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:12px">MEMORIA EXTENDIDA</div>';
 
-    var memorias_html='';
     if(d.memorias&&d.memorias.length){
       d.memorias.forEach(function(m){
-        memorias_html+='<div style="border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:10px">';
-        memorias_html+='<div style="font-weight:900;font-size:13px;margin-bottom:4px">'+escH(m.titulo||'Sin título')+'</div>';
-        memorias_html+='<div style="font-size:13px;color:#444;line-height:1.6;white-space:pre-wrap" id="mep-'+m.id+'">'+escH(m.contenido)+'</div>';
-        memorias_html+='<div style="margin-top:6px"><button onclick="editMEInline('+m.id+')" style="font-size:10px;padding:2px 8px;border:1px solid #ddd;background:none;cursor:pointer;font-family:monospace;margin-right:4px">Editar</button>';
-        memorias_html+='<button onclick="delMemExt('+m.id+','+memoriaValidadaId+')" style="font-size:10px;padding:2px 8px;border:1px solid #ffcccc;background:none;cursor:pointer;font-family:monospace;color:#cc0000">Borrar</button></div>';
-        memorias_html+='</div>';
+        html+='<div style="border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:10px">';
+        html+='<div style="font-weight:900;font-size:13px;margin-bottom:4px">'+escH(m.titulo||'Sin título')+'</div>';
+        html+='<div style="font-size:13px;color:#444;line-height:1.6;white-space:pre-wrap" id="mep-'+m.id+'">'+escH(m.contenido)+'</div>';
+        html+='<div style="margin-top:6px">';
+        html+='<button onclick="editMEInline('+m.id+')" style="font-size:10px;padding:2px 8px;border:1px solid #ddd;background:none;cursor:pointer;font-family:monospace;margin-right:4px">Editar</button>';
+        html+='<button onclick="delMemExt('+m.id+','+memoriaValidadaId+')" style="font-size:10px;padding:2px 8px;border:1px solid #ffcccc;background:none;cursor:pointer;font-family:monospace;color:#cc0000">Borrar</button>';
+        html+='</div></div>';
       });
     } else {
-      memorias_html='<p style="color:#999;font-size:13px;margin-bottom:12px">Sin memorias extendidas aún.</p>';
+      html+='<p style="color:#999;font-size:13px;margin-bottom:12px">Sin memorias extendidas aún.</p>';
     }
 
-    var form_html='<div style="margin-top:12px;border-top:1px solid #eee;padding-top:12px">';
-    form_html+='<div style="font-size:11px;color:#aaa;margin-bottom:6px">AÑADIR NUEVA ENTRADA</div>';
-    form_html+='<input id="me-tit-'+memoriaValidadaId+'" placeholder="Título (ej: Historia de vida, Relación...)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;margin-bottom:6px"><br>';
-    form_html+='<textarea id="me-body-'+memoriaValidadaId+'" placeholder="Escribe aquí el contexto extendido..." style="width:100%;border:1px solid #ddd;border-radius:4px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:80px"></textarea><br>';
-    form_html+='<button onclick="guardarMEInline('+memoriaValidadaId+')" style="margin-top:6px;font-size:11px;padding:4px 14px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>';
-    form_html+='</div>';
+    html+='<div style="margin-top:12px;border-top:1px solid #eee;padding-top:12px">';
+    html+='<div style="font-size:11px;color:#aaa;margin-bottom:6px">AÑADIR NUEVA ENTRADA</div>';
+    html+='<input id="me-tit-'+memoriaValidadaId+'" placeholder="Título" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;margin-bottom:6px"><br>';
+    html+='<textarea id="me-body-'+memoriaValidadaId+'" placeholder="Escribe aquí el contexto extendido..." style="width:100%;border:1px solid #ddd;border-radius:4px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:80px"></textarea><br>';
+    html+='<button onclick="guardarMEInline('+memoriaValidadaId+')" style="margin-top:6px;font-size:11px;padding:4px 14px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>';
+    html+='</div>';
 
-    panel.innerHTML=titulo_panel+memorias_html+form_html;
+    panel.innerHTML=html;
 
-    // Insert after the card's item-actions
-    var btn=document.querySelector('[onclick*="verMemoriaExtendida('+memoriaValidadaId+',"]');
-    if(btn){btn.closest('.item-card').appendChild(panel);}
-  }).catch(function(){alert('Error cargando memoria extendida.');});
+    // Find the card by data-mvid button and append panel
+    var btn=document.querySelector('[data-mvid="'+memoriaValidadaId+'"]');
+    if(btn){
+      btn.closest('.item-card').appendChild(panel);
+    }
+  }).catch(function(e){alert('Error: '+e);});
 }
 
 function delMemExt(id, memoriaValidadaId){
@@ -4340,7 +4340,7 @@ function delMemExt(id, memoriaValidadaId){
   fetch('/api/memoria-extendida/'+id,{method:'DELETE'}).then(function(){
     var panel=document.getElementById('me-panel-'+memoriaValidadaId);
     if(panel) panel.remove();
-    verMemoriaExtendida(memoriaValidadaId,'');
+    verMemoriaExtendida(memoriaValidadaId);
   });
 }
 
