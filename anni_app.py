@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.93"
+ANNI_VERSION = "1.0.94"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2516,16 +2516,7 @@ const pl = new THREE.PointLight(0xff6633,2,600);
 pl.position.set(0,80,120);
 scene.add(pl);
 
-// Lines
-for(let i=0;i<POINTS.length;i++) for(let j=i+1;j<POINTS.length;j++){
-  const a=POINTS[i],b=POINTS[j];
-  const dist=Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2+(a.z-b.z)**2);
-  if(dist<90){
-    const op=Math.max(0.15,(1-dist/90)*0.6);
-    const lg=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(a.x,a.y,a.z),new THREE.Vector3(b.x,b.y,b.z)]);
-    scene.add(new THREE.Line(lg,new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:op})));
-  }
-}
+// Lines between nodes removed
 
 function pesoColor(p){
   if(p<=5)  return {c:0xac0000,e:0x660000};  // Granate M
@@ -2812,7 +2803,7 @@ def api_universo():
     # Check cache
     c.execute("SELECT puntos_json, estrellas_json, n_hitos FROM universo_cache WHERE usuario_id=?", (usuario_id,))
     cache = c.fetchone()
-    c.execute("SELECT COUNT(*) FROM constelaciones WHERE usuario_id=?", (usuario_id,))
+    # constelaciones removed
     n_cons = c.fetchone()[0]
     conn.close()
 
@@ -2920,25 +2911,13 @@ def recalcular_universo(usuario_id):
         if len(rows) < 3:
             return
 
-        if n_cons == 0:
-            calcular_constelaciones(usuario_id)
+        # calcular_constelaciones removed
 
         conn2 = sqlite3.connect(DB_PATH)
         c2 = conn2.cursor()
-        c2.execute("SELECT id, nombre, descripcion, hitos_ids FROM constelaciones WHERE usuario_id=? ORDER BY id",
-                   (usuario_id,))
-        cons_rows = c2.fetchall()
-        conn2.close()
-
+        constelaciones = []  # constelaciones system removed
         hito_to_con = {}
-        constelaciones = []
         con_colors = ['#cc0000','#ff8800','#ffcc00','#00aaff','#aa44ff','#00cc88']
-        for idx, (cid, nombre, desc, hitos_ids_json) in enumerate(cons_rows):
-            hids = json_mod.loads(hitos_ids_json)
-            constelaciones.append({'id': cid, 'nombre': nombre, 'descripcion': desc,
-                                   'hitos_ids': hids, 'color': con_colors[idx % len(con_colors)]})
-            for hid in hids:
-                hito_to_con[hid] = idx
 
         # PCA puro Python — sin dependencias
         vecs = []
@@ -3103,84 +3082,6 @@ def api_crear_tarea():
     print(f"[ANNI] Tarea #{tarea_id} creada: {titulo}")
     return jsonify({'ok': True, 'id': tarea_id})
 
-
-def calcular_constelaciones(usuario_id):
-    """ANNI agrupa sus propios hitos en constelaciones temáticas usando Sonnet."""
-    import json as json_mod
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("""SELECT h.id, COALESCE(h.titulo, SUBSTR(h.contenido,1,80)) as label, h.tipo
-                     FROM hitos_usuario h
-                     JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
-                     WHERE h.usuario_id=? AND h.activo=1""", (usuario_id,))
-        hitos = c.fetchall()
-        conn.close()
-
-        if len(hitos) < 4:
-            return None
-
-        hitos_txt = "\n".join([f"ID {h[0]}: {h[1]} (tipo: {h[2]})" for h in hitos])
-
-        prompt = f"""Eres ANNI. Tienes estos hitos sobre tu usuario:
-
-{hitos_txt}
-
-Agrúpalos en 4 a 6 temas centrales. Cada tema es una "constelación" — un conjunto de hitos que hablan de lo mismo.
-
-Responde SOLO con este JSON:
-{{
-  "constelaciones": [
-    {{
-      "nombre": "NOMBRE EN MAYÚSCULAS (1-2 palabras)",
-      "descripcion": "qué tienen en común estos hitos",
-      "hitos_ids": [lista de IDs que pertenecen a este grupo]
-    }}
-  ]
-}}
-
-Reglas:
-- Cada hito debe pertenecer exactamente a una constelación
-- Los nombres deben ser concisos: FAMILIA, TRABAJO, IDENTIDAD, ANNI, PENSAMIENTO, etc.
-- No dejes ningún hito sin asignar
-- Solo JSON, sin explicación."""
-
-        if anthropic_client:
-            resp = anthropic_client.messages.create(
-                model=CHAT_MODEL,
-                max_tokens=800,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            raw = resp.content[0].text.strip()
-        else:
-            resp = together.chat.completions.create(
-                model=CHAT_MODEL_FALLBACK,
-                max_tokens=800,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            raw = resp.choices[0].message.content.strip()
-
-        raw = raw.replace("```json","").replace("```","").strip()
-        data = json_mod.loads(raw)
-
-        # Save constelaciones
-        conn2 = sqlite3.connect(DB_PATH)
-        c2 = conn2.cursor()
-        # Clear existing
-        c2.execute("DELETE FROM constelaciones WHERE usuario_id=?", (usuario_id,))
-        for con in data.get("constelaciones", []):
-            c2.execute("""INSERT INTO constelaciones (usuario_id, nombre, descripcion, hitos_ids)
-                         VALUES (?,?,?,?)""",
-                      (usuario_id, con["nombre"], con.get("descripcion",""),
-                       json_mod.dumps(con.get("hitos_ids", []))))
-        conn2.commit()
-        conn2.close()
-        print(f"[ANNI] {len(data.get('constelaciones',[]))} constelaciones calculadas para usuario {usuario_id}")
-        return data.get("constelaciones", [])
-
-    except Exception as e:
-        print(f"[ANNI] Error calculando constelaciones: {e}")
-        return None
 
 def analizar_tarea_completada(usuario_id, tarea_id):
     """Analiza una tarea completada y actualiza el modelo de ejecución del usuario."""
@@ -4544,18 +4445,7 @@ var pl=new THREE.PointLight(0xff6633,2,600);
 pl.position.set(0,80,120);
 scene.add(pl);
 
-// Lines between close pairs
-for(var i=0;i<POINTS.length;i++){
-  for(var j=i+1;j<POINTS.length;j++){
-    var a=POINTS[i],b=POINTS[j];
-    var dist=Math.sqrt(Math.pow(a.x-b.x,2)+Math.pow(a.y-b.y,2)+Math.pow(a.z-b.z,2));
-    if(dist<90){
-      var op=Math.max(0.15,(1-dist/90)*0.6);
-      var lg=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(a.x,a.y,a.z),new THREE.Vector3(b.x,b.y,b.z)]);
-      scene.add(new THREE.Line(lg,new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:op})));
-    }
-  }
-}
+// Lines between nodes removed
 
 // Color by peso
 function pesoColor(peso){
