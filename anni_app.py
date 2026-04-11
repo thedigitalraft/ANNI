@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.21"
+ANNI_VERSION = "1.01.22"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4415,6 +4415,10 @@ function guardarNuevaMV(){
   });
 }
 
+
+var famRels=['pareja','esposa','esposo','hijo','hija','hijastra','hijastro','suegro','suegra','cuñado','cuñada','padre','madre','hermano','hermana'];
+var trabajoRels=['colega','jefe','cliente','socio','socia','fundador','cofundador'];
+var amigosRels=['amigo','amiga'];
 
 function loadMemoriaAnni(){
   var body=document.getElementById('page-body');
