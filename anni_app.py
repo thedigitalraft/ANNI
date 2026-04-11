@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.01"
+ANNI_VERSION = "1.01.02"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -735,12 +735,22 @@ Si no hay nada relevante en alguna categoría, dejar el array vacío."""
     try:
         resp = together.chat.completions.create(
             model=CHAT_MODEL_FALLBACK,
-            max_tokens=500,
+            max_tokens=1200,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = resp.choices[0].message.content.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
+        # Si el JSON está truncado, intentar repararlo
+        if not raw.endswith('}'):
+            # Buscar el último } completo
+            last = raw.rfind('}')
+            if last > 0:
+                raw = raw[:last+1]
+                # Asegurar que cierra el objeto raíz
+                if not raw.startswith('{'):
+                    raw = '{' + raw
         data = json.loads(raw)
+        print(f"[ANNI] analizar_conversacion parsed OK — personas: {len(data.get('personas',[]))}, obs: {len(data.get('observaciones',[]))}, temas: {len(data.get('temas_abiertos',[]))}")
 
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -789,9 +799,10 @@ Si no hay nada relevante en alguna categoría, dejar el array vacío."""
                                  veces_mencionada=veces_mencionada+1 WHERE id=?""",
                               (p.get("tono", "neutro"), ts_now, existe[0]))
                 else:
-                    c.execute("""INSERT INTO personas (usuario_id, nombre, relacion, tono_predominante, ultima_mencion)
-                                 VALUES (?,?,?,?,?)""",
+                    c.execute("""INSERT INTO personas (usuario_id, nombre, relacion, tono_predominante, ultima_mencion, veces_mencionada)
+                                 VALUES (?,?,?,?,?,1)""",
                               (usuario_id, p["nombre"], p.get("relacion", ""), p.get("tono", "neutro"), ts_now))
+                    print(f"[ANNI] Nueva persona detectada: {p['nombre']} ({p.get('relacion','')})")
 
         # Guardar/actualizar temas abiertos
         for t in data.get("temas_abiertos", []):
@@ -812,6 +823,8 @@ Si no hay nada relevante en alguna categoría, dejar el array vacío."""
         conn.close()
         print(f"[ANNI] Análisis completado para usuario {usuario_id}")
 
+    except json.JSONDecodeError as e:
+        print(f"[ANNI] Error JSON en análisis: {e} — raw: {raw[:200]}")
     except Exception as e:
         import traceback
         print(f"[ANNI] Error en análisis: {e}")
@@ -2825,7 +2838,7 @@ def api_personas_sin_hito():
                  WHERE p.usuario_id=?
                  AND p.nombre NOT IN ('Rafa', 'ANNI')
                  AND LOWER(p.relacion) IN ({placeholders})
-                 AND p.veces_mencionada >= 2
+                 AND p.veces_mencionada >= 1
                  AND NOT EXISTS (
                      SELECT 1 FROM hitos_usuario h
                      WHERE h.usuario_id=p.usuario_id
@@ -4209,7 +4222,7 @@ function loadMemoriaAnni(){
         content.innerHTML='';
         // Filtrar solo personas relevantes
         var personasFiltradas=(dp.personas||[]).filter(function(p){
-          if(p.veces_mencionada<2) return false;
+          if(p.veces_mencionada<1) return false;
           var rel=(p.relacion||'').toLowerCase();
           return relacionesPersonales.some(function(r){return rel.indexOf(r)>=0;});
         });
