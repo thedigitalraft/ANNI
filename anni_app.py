@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.97"
+ANNI_VERSION = "1.0.98"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -691,38 +691,60 @@ def analizar_conversacion(usuario_id, ultimos_mensajes):
     if not ultimos_mensajes:
         return
 
-    # Solo analizar mensajes del usuario
+    # Analizar tanto mensajes del usuario como contexto de ANNI
     msgs_usuario = [m[1] for m in ultimos_mensajes if m[0] == 'user']
-    if not msgs_usuario or len(msgs_usuario) < 1:
+    if not msgs_usuario:
         return
     print(f"[ANNI] Analizando conversacion usuario {usuario_id} — {len(msgs_usuario)} msgs")
 
-    texto = "\n".join(msgs_usuario[-10:])
+    # Usar conversación completa (no solo usuario) para captar más contexto
+    texto_completo = "\n".join([
+        f"{'USUARIO' if m[0]=='user' else 'ANNI'}: {m[1][:400]}"
+        for m in ultimos_mensajes[-20:]
+    ])
 
-    prompt = f"""Analiza estos mensajes de un usuario y extrae información estructurada.
+    prompt = f"""Eres el sistema de memoria de ANNI. Analiza esta conversación y extrae información estructurada sobre el usuario.
 
-MENSAJES:
-{texto}
+CONVERSACIÓN:
+{texto_completo}
 
 Responde SOLO con este JSON exacto, sin nada más:
 {{
   "observaciones": [
-    {{"tipo": "patron|emocion|evitacion|energia", "contenido": "descripción concreta observable", "evidencia": "frase exacta que lo demuestra"}}
+    {{"tipo": "patron|emocion|evitacion|energia|velocidad", "contenido": "descripción concreta y específica del patrón observado", "evidencia": "frase exacta del usuario que lo demuestra"}}
   ],
   "personas": [
-    {{"nombre": "nombre", "relacion": "pareja|hijo|amigo|colega|etc", "tono": "positivo|neutro|negativo|ausente|preocupado"}}
+    {{"nombre": "nombre propio", "relacion": "padre|madre|hijo|hija|pareja|esposa|esposo|hermano|hermana|suegro|suegra|amigo|amiga|socio|socia|colega|jefe|cliente|hijastra|hijastro", "tono": "positivo|neutro|negativo|ausente|preocupado", "contexto": "una frase de contexto sobre esta persona"}}
   ],
   "temas_abiertos": [
-    {{"tema": "descripción del tema o decisión pendiente"}}
+    {{"tema": "descripción concisa del tema pendiente accionable"}}
   ]
 }}
 
-Reglas:
-- Solo incluir lo que sea concreto y observable, no inferencias débiles
-- Observaciones: máximo 3, solo las más significativas
-- Personas: solo terceras personas mencionadas explícitamente — NUNCA incluir al propio usuario (Rafa) ni a ANNI/ANI en esta lista
-- Temas abiertos: decisiones o situaciones reales de la vida del usuario mencionadas pero sin cierre claro — NUNCA incluir temas sobre el funcionamiento del sistema, cierres de conversación, o aspectos técnicos de ANNI
-- Si no hay nada relevante en alguna categoría, dejar el array vacío"""
+REGLAS ESTRICTAS:
+
+Para OBSERVACIONES:
+- Máximo 3, solo las más significativas y concretas
+- Deben revelar patrones reales de comportamiento, emoción o energía del usuario
+- NO incluir observaciones triviales como "usa imágenes" o "confirma acciones"
+- NO incluir inferencias sin evidencia directa
+
+Para PERSONAS:
+- Registrar CUALQUIER nombre propio de persona real mencionado en la conversación
+- Incluir figuras familiares aunque ya hayan fallecido (padre fallecido, madre fallecida, ex-pareja)
+- Incluir figuras históricas o académicas SOLO si el usuario tiene una relación personal con ellas
+- NUNCA incluir al propio usuario ni a ANNI/ANI
+- Si el usuario dice "mi padre se llamaba Antonio" → registrar {{"nombre": "Antonio", "relacion": "padre", ...}}
+- Si el usuario dice "mi madre Maruja" → registrar {{"nombre": "Maruja", "relacion": "madre", ...}}
+- El campo "relacion" debe ser siempre el tipo de relación con el usuario, no una descripción
+
+Para TEMAS ABIERTOS:
+- Solo temas accionables o situaciones reales de vida sin cierre
+- Deben ser concretos: "Cobro pendiente de MetLife" es bueno, "Reflexión sobre el tiempo" no
+- NUNCA incluir temas técnicos sobre ANNI, cierres de conversación, o aspectos del sistema
+- Si el tema ya tiene resolución en la conversación, NO incluirlo
+
+Si no hay nada relevante en alguna categoría, dejar el array vacío."""
 
     try:
         resp = together.chat.completions.create(
@@ -1944,6 +1966,59 @@ def api_cerrar_conversacion():
         resumen = "Conversacion sin resumen."
     return jsonify({'ok': True, 'resumen': resumen, 'conv_id': conv_id, 'pendiente': True})
 
+
+def revisar_personas_sin_memoria_validada(usuario_id):
+    """Revisa si hay personas en la tabla personas que merecen una memoria validada
+    y no la tienen. Si encuentra alguna con >= 3 menciones, la propone al usuario."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        relaciones_prioritarias = (
+            'padre','madre','hijo','hija','pareja','esposa','esposo',
+            'hijastra','hijastro','hermano','hermana','suegro','suegra',
+            'amigo','amiga','socio','socia','colega'
+        )
+        placeholders = ','.join(['?' for _ in relaciones_prioritarias])
+
+        # Personas con suficientes menciones que NO tienen memoria validada
+        c.execute(f"""SELECT p.nombre, p.relacion, p.veces_mencionada, p.tono_predominante, p.notas
+                     FROM personas p
+                     WHERE p.usuario_id=?
+                     AND p.nombre NOT IN ('Rafa','ANNI','ANI')
+                     AND LOWER(p.relacion) IN ({placeholders})
+                     AND p.veces_mencionada >= 3
+                     AND NOT EXISTS (
+                         SELECT 1 FROM hitos_usuario h
+                         WHERE h.usuario_id=p.usuario_id AND h.activo=1
+                         AND (LOWER(h.titulo) LIKE '%' || LOWER(p.nombre) || '%'
+                              OR LOWER(h.contenido) LIKE '%' || LOWER(p.nombre) || '%')
+                     )
+                     ORDER BY p.veces_mencionada DESC LIMIT 1""",
+                  (usuario_id,) + relaciones_prioritarias)
+
+        persona = c.fetchone()
+        conn.close()
+
+        if persona:
+            nombre, relacion, veces, tono, notas = persona
+            print(f"[ANNI] Persona sin memoria validada detectada: {nombre} ({relacion}, {veces} menciones)")
+            # Guardar como sugerencia pendiente en temas_abiertos si no existe ya
+            conn2 = sqlite3.connect(DB_PATH)
+            c2 = conn2.cursor()
+            tema = f"Crear memoria validada para {nombre} ({relacion})"
+            c2.execute("SELECT id FROM temas_abiertos WHERE usuario_id=? AND tema LIKE ?",
+                      (usuario_id, f"%{nombre}%memoria validada%"))
+            if not c2.fetchone():
+                c2.execute("""INSERT INTO temas_abiertos (usuario_id, tema, primera_mencion, ultima_mencion)
+                             VALUES (?,?,?,?)""",
+                          (usuario_id, tema, time.time(), time.time()))
+                conn2.commit()
+            conn2.close()
+
+    except Exception as e:
+        print(f"[ANNI] Error en revisar_personas_sin_memoria_validada: {e}")
+
 @app.route('/api/conversacion/guardar-resumen', methods=['POST'])
 @login_required
 def api_guardar_resumen():
@@ -2284,24 +2359,41 @@ def api_detectar_hito():
     if not mensaje or len(mensaje) < 8:
         return jsonify({'hito': None})
 
-    prompt = f"""Analiza este intercambio y determina si contiene informacion importante y duradera sobre el usuario.
+    prompt = f"""Analiza este intercambio y determina si contiene información importante y duradera sobre el usuario.
 
 Usuario: "{mensaje}"
 ANNI: "{respuesta[:300]}"
 
-Un hito vale la pena recordar cuando revela: quien es el usuario, como piensa, personas importantes en su vida (nombres y relacion), patrones de comportamiento, valores, decisiones relevantes, miedos, motivaciones.
+Un hito (memoria validada) vale la pena cuando revela algo ESTABLE sobre el usuario:
+- Quién es, cómo piensa, qué valora
+- Personas importantes en su vida — familiares, pareja, hijos, amigos cercanos, figuras del pasado
+- Patrones de comportamiento recurrentes
+- Decisiones o valores que definen su identidad
+- Figuras del pasado que siguen siendo relevantes (padre fallecido, ex-pareja, mentor)
 
-IMPORTANTE: Si el usuario menciona el nombre de una persona cercana (esposa, hijo, amigo, socio) ESO ES UN HITO de tipo "relacion".
+CRITERIOS PARA PROPONER HITO:
+1. Si el usuario menciona a una persona con relación familiar o cercana (padre, madre, hijo, pareja, amigo) → SIEMPRE proponer hito de tipo "relacion"
+2. Si revela un patrón de comportamiento con evidencia clara → proponer hito de tipo "forma_de_pensar"
+3. Si expresa un valor o creencia central → proponer hito de tipo "lo_que_importa"
 
-Si SI hay un hito, responde SOLO con este JSON (sin markdown):
+CRITERIOS PARA NO PROPONER:
+- Comentarios anecdóticos sin patrón ("hoy llovió")
+- Temas técnicos sobre ANNI o el sistema
+- Información que ya debería estar en memoria validada
+
+Un hito de RELACION debe ser corto y accionable:
+MAL: "El padre de Rafa fue un hombre trabajador que nació durante la guerra civil española y cuya vida estuvo marcada por..."
+BIEN: "Antonio es el padre de Rafa. Falleció en marzo de 2011. Figura central en su identidad."
+
+Si SÍ hay un hito, responde SOLO con este JSON (sin markdown):
 {{
   "hito": true,
-  "titulo": "TITULO EN MAYUSCULAS CORTO",
+  "titulo": "TITULO EN MAYUSCULAS CORTO (máx 5 palabras)",
   "categoria": "forma_de_pensar|toma_de_decisiones|lo_que_importa|energia|relacion|identidad|general",
-  "contenido": "descripcion concisa de lo que revela este hito sobre el usuario",
+  "contenido": "descripcion corta y accionable — máx 2 líneas",
   "evidencia": "frase exacta del usuario que lo demuestra",
-  "cuando_activarlo": "en que situaciones ANNI deberia usar este hito",
-  "como_usarlo": "como deberia actuar ANNI cuando detecte esta situacion"
+  "cuando_activarlo": "en qué situaciones ANNI debería usar este hito",
+  "como_usarlo": "cómo debería actuar ANNI cuando detecte esta situación"
 }}
 
 Si NO hay hito relevante, responde SOLO con:
