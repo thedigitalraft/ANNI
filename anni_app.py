@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.02"
+ANNI_VERSION = "1.01.03"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2820,6 +2820,23 @@ def api_observaciones():
     obs = [{"id": r[0], "tipo": r[1], "contenido": r[2], "evidencia": r[3], "ts": r[4]} for r in rows]
     return jsonify({"observaciones": obs})
 
+
+@app.route('/api/personas/rechazar', methods=['POST'])
+@login_required
+def api_rechazar_persona():
+    """Elimina una persona de la tabla personas para que no vuelva a proponerse."""
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    nombre = data.get('nombre', '').strip()
+    if not nombre:
+        return jsonify({'ok': False})
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("DELETE FROM personas WHERE usuario_id=? AND LOWER(nombre)=LOWER(?)", (usuario_id, nombre))
+    conn.commit()
+    conn.close()
+    print(f"[ANNI] Persona rechazada y eliminada: {nombre}")
+    return jsonify({'ok': True})
+
 @app.route('/api/personas-sin-hito', methods=['GET'])
 @login_required
 def api_personas_sin_hito():
@@ -2862,7 +2879,8 @@ def api_personas_sin_hito():
         'contenido': f'{nombre} es {relacion or "persona importante"} en la vida del usuario. Tono: {tono or "neutro"}. {notas or ""}',
         'evidencia': f'ANNI detectó a {nombre} en conversaciones previas como {relacion}',
         'cuando_activarlo': f'Cuando el usuario mencione a {nombre} o temas relacionados con {relacion}',
-        'como_usarlo': f'Tener en cuenta la relación con {nombre} al responder sobre vida personal o decisiones'
+        'como_usarlo': f'Tener en cuenta la relación con {nombre} al responder sobre vida personal o decisiones',
+        'persona_nombre': nombre
     }
     return jsonify({'hito': hito})
 
@@ -3828,7 +3846,16 @@ body:JSON.stringify({titulo:titulo,categoria:cat,contenido:txt,evidencia:evidenc
 .then(r=>r.json()).then(d=>{
 document.getElementById('modal-hito').classList.remove('open');pendHito=null;});}
 
-function rechazarHito(){document.getElementById('modal-hito').classList.remove('open');pendHito=null;}
+function rechazarHito(){
+  document.getElementById('modal-hito').classList.remove('open');
+  // Si viene de personas-sin-hito, eliminar la persona para que no vuelva a proponerse
+  if(pendHito && pendHito.persona_nombre){
+    fetch('/api/personas/rechazar',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({nombre:pendHito.persona_nombre})
+    }).catch(function(){});
+  }
+  pendHito=null;
+}
 function closeMod(id){document.getElementById(id).classList.remove('open');}
 
 function descargarBD(){
