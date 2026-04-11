@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.09"
+ANNI_VERSION = "1.01.11"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1128,7 +1128,7 @@ def degradar_pesos_hitos(usuario_id, mensajes_conversacion):
 
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT id, titulo, contenido FROM hitos_usuario WHERE usuario_id=? AND activo=1 AND peso > 1",
+        c.execute("SELECT id, titulo, contenido FROM hitos_usuario WHERE usuario_id=? AND activo=1 AND peso > 1 AND id != 1",
                   (usuario_id,))
         hitos = c.fetchall()
 
@@ -2589,9 +2589,14 @@ def universo_page():
 
     points = []
     for i, (hid, label, peso, blob) in enumerate(rows):
+        if hid == 1:
+            px, py, pz, p_final = 0.0, 0.0, 0.0, 50.0
+        else:
+            px, py, pz, p_final = float(coords[i][0]), float(coords[i][1]), float(coords[i][2]), float(peso)
         points.append({
-            'x': float(coords[i][0]), 'y': float(coords[i][1]), 'z': float(coords[i][2]),
-            'label': str(label)[:60], 'peso': float(peso), 'id': hid
+            'x': px, 'y': py, 'z': pz,
+            'label': str(label)[:60], 'peso': p_final, 'id': hid,
+            'isCenter': hid == 1
         })
 
     points_json = json_mod.dumps(points)
@@ -2659,16 +2664,41 @@ scene.add(pl);
 // Lines between nodes removed
 
 function pesoColor(p){
-  if(p<=5)  return {c:0xac0000,e:0x660000};  // Granate M
-  if(p<=10) return {c:0xff0000,e:0x990000};  // Rojo K
-  if(p<=18) return {c:0xffc000,e:0x996000};  // Naranja G
-  if(p<=25) return {c:0xffff00,e:0x999900};  // Amarillo F
-  if(p<=35) return {c:0xcaeefb,e:0x6699aa};  // Azul claro A
-  return            {c:0x00b0f0,e:0x006688};  // Azul cielo B/O
+  if(p<=5)  return {c:0xac0000,e:0x660000};
+  if(p<=10) return {c:0xff0000,e:0x990000};
+  if(p<=18) return {c:0xffc000,e:0x996000};
+  if(p<=25) return {c:0xffff00,e:0x999900};
+  if(p<=35) return {c:0xcaeefb,e:0x6699aa};
+  return            {c:0x00b0f0,e:0x006688};
 }
 
 const meshes=[];
 const tip=document.getElementById('tooltip');
+
+// Render hito #1 as center star first
+const centerPoint = POINTS.find(p => p.isCenter);
+if(centerPoint){
+  const cSize = 12;
+  const cGeo = new THREE.SphereGeometry(cSize, 24, 24);
+  const cMat = new THREE.MeshPhongMaterial({color:0x00b0f0,emissive:0x004488,emissiveIntensity:1.2,shininess:300});
+  const cMesh = new THREE.Mesh(cGeo, cMat);
+  cMesh.position.set(0,0,0);
+  cMesh.userData = {label: centerPoint.label, peso: 50, isCenter: true};
+  scene.add(cMesh); meshes.push(cMesh);
+  // Glow rings
+  [2,3.5,5.5].forEach(function(m,gi){
+    const gg=new THREE.SphereGeometry(cSize*m,12,12);
+    const gm=new THREE.MeshBasicMaterial({color:0x00b0f0,transparent:true,opacity:0.05/(gi+1),side:THREE.BackSide});
+    scene.add(new THREE.Mesh(gg,gm));
+  });
+  // Label
+  const cvC=document.createElement('canvas');cvC.width=512;cvC.height=72;
+  const ctxC=cvC.getContext('2d');ctxC.fillStyle='rgba(0,0,0,0)';ctxC.fillRect(0,0,512,72);
+  ctxC.fillStyle='#00b0f0';ctxC.font='bold 36px Courier New';
+  ctxC.fillText(centerPoint.label.toUpperCase().substring(0,30),4,50);
+  const spC=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cvC),transparent:true,opacity:1}));
+  spC.scale.set(52,8,1);spC.position.set(0,cSize+8,0);scene.add(spC);
+}
 POINTS.forEach((p,i)=>{
   const size=2.5+(p.peso/10)*3.5;
   const col=pesoColor(p.peso);
@@ -2685,7 +2715,7 @@ POINTS.forEach((p,i)=>{
   const ctx=c2.getContext('2d');
   ctx.fillStyle='rgba(0,0,0,0)'; ctx.fillRect(0,0,512,72);
   ctx.fillStyle='#ffffff'; ctx.font='bold 28px Courier New';
-  ctx.fillText(p.label.substring(0,38).toUpperCase(),4,48);
+  var displayLabel=p.label.split(' — ')[0].split(' ')[0];ctx.fillText(displayLabel.toUpperCase().substring(0,20),4,48);
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c2),transparent:true,opacity:0.8}));
   sp.scale.set(48,7,1); sp.position.set(p.x,p.y+size+3,p.z); scene.add(sp);
 });
@@ -3178,13 +3208,20 @@ def recalcular_universo(usuario_id):
         hid_to_idx = {rows[i][0]: i for i in range(n)}
         points = []
         for i, (hid, label, peso, tipo, blob) in enumerate(rows):
-            con_idx = hito_to_con.get(hid, 0)
-            con_color = constelaciones[con_idx]['color'] if constelaciones else '#cc0000'
-            con_nombre = constelaciones[con_idx]['nombre'] if constelaciones else 'GENERAL'
+            con_color = '#cc0000'
+            con_nombre = 'GENERAL'
+            # Hito #1 siempre en el centro con peso máximo
+            if hid == 1:
+                px, py, pz = 0.0, 0.0, 0.0
+                peso_final = 50.0
+            else:
+                px, py, pz = float(coords[i][0]), float(coords[i][1]), float(coords[i][2])
+                peso_final = float(peso)
             points.append({
-                'x': float(coords[i][0]), 'y': float(coords[i][1]), 'z': float(coords[i][2]),
-                'label': str(label)[:60], 'peso': float(peso), 'tipo': tipo,
-                'id': hid, 'constelacion': con_nombre, 'color': con_color
+                'x': px, 'y': py, 'z': pz,
+                'label': str(label)[:60], 'peso': peso_final, 'tipo': tipo,
+                'id': hid, 'constelacion': con_nombre, 'color': con_color,
+                'isCenter': hid == 1
             })
 
         stars = []
@@ -4925,7 +4962,7 @@ function pesoColor(peso){
 }
 
 var meshes=[];
-POINTS.forEach(function(p,idx){
+POINTS.filter(function(p){return !p.isCenter;}).forEach(function(p,idx){
   var size=2.5+(p.peso/10)*3.5;
   var col=pesoColor(p.peso);
   var geo=new THREE.IcosahedronGeometry(size,1);
@@ -4949,7 +4986,7 @@ POINTS.forEach(function(p,idx){
   var ctx=c2.getContext('2d');
   ctx.fillStyle='rgba(0,0,0,0)';ctx.fillRect(0,0,512,72);
   ctx.fillStyle='#ffffff';ctx.font='bold 32px Courier New';
-  ctx.fillText(p.label.substring(0,38).toUpperCase(),4,52);
+  var displayLabel2=p.label.split(' — ')[0].split(' ')[0];ctx.fillText(displayLabel2.toUpperCase().substring(0,20),4,52);
   var tex=new THREE.CanvasTexture(c2);
   var sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0.8}));
   sp.scale.set(52,7,1);
