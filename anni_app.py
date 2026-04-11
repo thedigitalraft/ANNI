@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.06"
+ANNI_VERSION = "1.01.09"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -164,6 +164,14 @@ def init_db():
     )""")
     try:
         c.execute("ALTER TABLE memoria_extendida ADD COLUMN titulo TEXT DEFAULT ''")
+    except:
+        pass
+    try:
+        c.execute("ALTER TABLE personas ADD COLUMN apellidos TEXT DEFAULT ''")
+    except:
+        pass
+    try:
+        c.execute("ALTER TABLE hitos_usuario ADD COLUMN apellidos TEXT DEFAULT ''")
     except:
         pass
 
@@ -2842,11 +2850,11 @@ def api_personas():
     usuario_id = session['usuario_id']
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT nombre, relacion, tono_predominante, notas, veces_mencionada
+    c.execute("""SELECT id, nombre, apellidos, relacion, tono_predominante, notas, veces_mencionada
                  FROM personas WHERE usuario_id=? ORDER BY veces_mencionada DESC""", (usuario_id,))
     rows = c.fetchall()
     conn.close()
-    personas = [{"nombre": r[0], "relacion": r[1], "tono": r[2], "notas": r[3], "veces_mencionada": r[4]} for r in rows]
+    personas = [{"id": r[0], "nombre": r[1], "apellidos": r[2] or '', "relacion": r[3], "tono": r[4], "notas": r[5], "veces_mencionada": r[6]} for r in rows]
     return jsonify({"personas": personas})
 
 @app.route('/api/observaciones', methods=['GET'])
@@ -2893,6 +2901,25 @@ def api_rechazar_hito_propuesto():
         print(f"[ANNI] Persona rechazada: {nombre}")
     conn.close()
     print(f"[ANNI] Hito rechazado guardado: {titulo[:50]}")
+    return jsonify({'ok': True})
+
+
+@app.route('/api/personas/<int:pid>', methods=['PUT'])
+@login_required
+def api_editar_persona(pid):
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    nombre = data.get('nombre', '').strip()
+    apellidos = data.get('apellidos', '').strip()
+    relacion = data.get('relacion', '').strip()
+    if not nombre:
+        return jsonify({'ok': False})
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""UPDATE personas SET nombre=?, apellidos=?, relacion=?
+                    WHERE id=? AND usuario_id=?""",
+                 (nombre, apellidos, relacion, pid, usuario_id))
+    conn.commit()
+    conn.close()
     return jsonify({'ok': True})
 
 @app.route('/api/personas/rechazar', methods=['POST'])
@@ -4357,26 +4384,81 @@ function loadMemoriaAnni(){
       var famRels=['pareja','esposa','esposo','hijo','hija','hijastra','hijastro','suegro','suegra','cuñado','cuñada','padre','madre','hermano','hermana'];
       var trabajoRels=['colega','jefe','cliente','socio','socia','amigo','amiga','fundador','cofundador'];
 
-      // Helper: render section header
-      function secHeader(txt){
-        var h=document.createElement('div');
-        h.style.cssText='font-size:13px;font-weight:900;color:#cc0000;letter-spacing:2px;margin:20px 0 10px';
-        h.textContent=txt;
-        return h;
+      // Helper: collapsible section
+      function makeSection(titulo, items, renderFn){
+        if(!items||!items.length) return null;
+        var wrap=document.createElement('div');
+        wrap.style.cssText='margin-bottom:4px;border:1px solid #eee;border-radius:6px;overflow:hidden';
+
+        var header=document.createElement('div');
+        header.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;background:#fafafa;user-select:none';
+        header.innerHTML='<span style="font-size:12px;font-weight:900;color:#cc0000;letter-spacing:2px">'+titulo+'</span>'+
+          '<span style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;color:#aaa">'+items.length+'</span>'+
+          '<span class="sec-arrow" style="color:#cc0000;font-size:14px;transition:transform 0.2s">&#9660;</span></span>';
+
+        var body=document.createElement('div');
+        body.style.cssText='padding:8px 8px 4px';
+        items.forEach(function(item){ body.appendChild(renderFn(item)); });
+
+        var open=true;
+        header.onclick=function(){
+          open=!open;
+          body.style.display=open?'block':'none';
+          header.querySelector('.sec-arrow').style.transform=open?'rotate(0deg)':'rotate(-90deg)';
+        };
+
+        wrap.appendChild(header);
+        wrap.appendChild(body);
+        return wrap;
       }
 
-      // Helper: persona card
+      // Helper: persona card with edit
       function personaCard(p){
         var card=document.createElement('div');card.className='item-card';
-        card.innerHTML='<div class="item-meta">'+escH(p.relacion||'')+'</div>'+
-          '<div style="font-weight:900;font-size:15px;margin-bottom:4px">'+escH(p.nombre)+'</div>'+
+        var nombreCompleto=p.nombre+(p.apellidos?' '+p.apellidos:'');
+        card.innerHTML='<div class="item-meta" id="pmeta-'+p.id+'">'+escH(p.relacion||'')+'</div>'+
+          '<div style="font-weight:900;font-size:15px;margin-bottom:4px" id="pnom-'+p.id+'">'+escH(nombreCompleto)+'</div>'+
           '<div style="font-size:13px;color:#666">Mencionada '+p.veces_mencionada+' vez'+(p.veces_mencionada!==1?'es':'')+'</div>';
-        if(p.notas) card.innerHTML+='<div style="font-size:12px;color:#888;margin-top:4px">'+escH(p.notas)+'</div>';
         var bBtn=document.createElement('div');bBtn.className='item-actions';
+        var bE=document.createElement('button');bE.className='btn-edit';bE.textContent='Editar';
+        bE.onclick=(function(persona){return function(){editarPersona(persona,card);};})(p);
         var bB=document.createElement('button');bB.className='btn-del';bB.textContent='Borrar';
         bB.onclick=(function(nombre){return function(){borrarPersona(nombre,bB);};})(p.nombre);
-        bBtn.appendChild(bB);card.appendChild(bBtn);
+        bBtn.appendChild(bE);bBtn.appendChild(bB);card.appendChild(bBtn);
         return card;
+      }
+
+      function editarPersona(p, card){
+        // Replace card content with edit form
+        var existing=card.querySelector('.persona-edit-form');
+        if(existing){existing.remove();return;}
+        var form=document.createElement('div');
+        form.className='persona-edit-form';
+        form.style.cssText='margin-top:10px;border-top:1px solid #eee;padding-top:10px';
+        form.innerHTML=
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">'+
+          '<div><label style="font-size:10px;color:#aaa;letter-spacing:1px">NOMBRE</label>'+
+          '<input id="pe-nom-'+p.id+'" value="'+escH(p.nombre)+'" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;font-family:inherit"></div>'+
+          '<div><label style="font-size:10px;color:#aaa;letter-spacing:1px">APELLIDOS</label>'+
+          '<input id="pe-ape-'+p.id+'" value="'+escH(p.apellidos||'')+'" placeholder="Opcional" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;font-family:inherit"></div>'+
+          '</div>'+
+          '<div style="margin-bottom:8px"><label style="font-size:10px;color:#aaa;letter-spacing:1px">RELACIÓN</label>'+
+          '<input id="pe-rel-'+p.id+'" value="'+escH(p.relacion||'')+'" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;font-family:inherit"></div>'+
+          '<button class="btn-save-p" data-pid="'+p.id+'" style="font-size:11px;padding:4px 12px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px">GUARDAR</button>';
+        form.querySelector('.btn-save-p').onclick=function(){guardarPersona(p.id);};
+        card.appendChild(form);
+      }
+
+      function guardarPersona(id){
+        var nom=(document.getElementById('pe-nom-'+id)||{value:''}).value.trim();
+        var ape=(document.getElementById('pe-ape-'+id)||{value:''}).value.trim();
+        var rel=(document.getElementById('pe-rel-'+id)||{value:''}).value.trim();
+        if(!nom) return;
+        fetch('/api/personas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({nombre:nom,apellidos:ape,relacion:rel})
+        }).then(r=>r.json()).then(function(d){
+          if(d.ok) renderTab('interpretada');
+        });
       }
 
       // Helper: observacion card with delete
@@ -4422,7 +4504,8 @@ function loadMemoriaAnni(){
           var rel=(p.relacion||'').toLowerCase();
           var esFam=famRels.some(function(r){return rel.indexOf(r)>=0;});
           var esTrab=trabajoRels.some(function(r){return rel.indexOf(r)>=0;});
-          if(!esFam && !esTrab) return;
+          var esAmigo=amigosRels.some(function(r){return rel.indexOf(r)>=0;});
+          if(!esFam && !esTrab && !esAmigo) return;
           if(!personasMap[key] || p.veces_mencionada > personasMap[key].veces_mencionada){
             personasMap[key]=p;
           }
@@ -4439,31 +4522,32 @@ function loadMemoriaAnni(){
           return trabajoRels.some(function(r){return rel.indexOf(r)>=0;});
         }).sort(function(a,b){return b.veces_mencionada-a.veces_mencionada;});
 
-        // FAMILIA
-        if(familia.length){
-          content.appendChild(secHeader('FAMILIA'));
-          familia.forEach(function(p){content.appendChild(personaCard(p));});
-        }
+        var amigos=personasDedup.filter(function(p){
+          var rel=(p.relacion||'').toLowerCase();
+          return amigosRels.some(function(r){return rel.indexOf(r)>=0;});
+        }).sort(function(a,b){return b.veces_mencionada-a.veces_mencionada;});
 
-        // TRABAJO Y AMIGOS
-        if(trabajo.length){
-          content.appendChild(secHeader('TRABAJO Y AMIGOS'));
-          trabajo.forEach(function(p){content.appendChild(personaCard(p));});
-        }
+        // FAMILIA
+        var secFam=makeSection('FAMILIA', familia, personaCard);
+        if(secFam) content.appendChild(secFam);
+
+        // TRABAJO
+        var secTrab=makeSection('TRABAJO', trabajo, personaCard);
+        if(secTrab) content.appendChild(secTrab);
+
+        // AMIGOS
+        var secAmigos=makeSection('AMIGOS', amigos, personaCard);
+        if(secAmigos) content.appendChild(secAmigos);
 
         // PATRONES
         var patrones=(do2.observaciones||[]).filter(function(o){return o.tipo==='patron'||o.tipo==='velocidad'||o.tipo==='evitacion';});
-        if(patrones.length){
-          content.appendChild(secHeader('PATRONES'));
-          patrones.forEach(function(o){content.appendChild(obsCard(o));});
-        }
+        var secPat=makeSection('PATRONES', patrones, obsCard);
+        if(secPat) content.appendChild(secPat);
 
         // EMOCIONES Y ENERGÍA
         var emociones=(do2.observaciones||[]).filter(function(o){return o.tipo==='emocion'||o.tipo==='energia';});
-        if(emociones.length){
-          content.appendChild(secHeader('EMOCIONES Y ENERGÍA'));
-          emociones.forEach(function(o){content.appendChild(obsCard(o));});
-        }
+        var secEmo=makeSection('EMOCIONES Y ENERGÍA', emociones, obsCard);
+        if(secEmo) content.appendChild(secEmo);
 
         // TEMAS ABIERTOS (filtrar basura)
         var temasBuenos=(dt.temas||[]).filter(function(t){
@@ -4471,12 +4555,10 @@ function loadMemoriaAnni(){
           var basura=['cierre','conversación','conversacion','abordar transporte','partido de fútbol','partido de futbol','workbook','ponderación','ponderacion'];
           return !basura.some(function(b){return tema.indexOf(b)>=0;});
         });
-        if(temasBuenos.length){
-          content.appendChild(secHeader('TEMAS ABIERTOS'));
-          temasBuenos.forEach(function(t){content.appendChild(temaCard(t));});
-        }
+        var secTemas=makeSection('TEMAS ABIERTOS', temasBuenos, temaCard);
+        if(secTemas) content.appendChild(secTemas);
 
-        if(!familia.length && !trabajo.length && !patrones.length && !emociones.length){
+        if(!familia.length && !trabajo.length && !amigos.length && !patrones.length && !emociones.length){
           var empty=document.createElement('p');
           empty.style.cssText='color:#999;padding:20px';
           empty.textContent='Aún no hay información interpretada.';
@@ -4541,15 +4623,27 @@ function editHito(id,btn){
   var comoEl=card.querySelector('[id="hcomo-'+id+'"]');
   if(!contentEl)return;
 
-  // Save original values
   var origTitle=titleEl?titleEl.textContent.trim():'';
   var origContent=contentEl.textContent.trim();
   var origEv=evEl?(evEl.textContent.replace(/^"|"$/g,'').trim()):'';
   var origCuando=cuandoEl?(cuandoEl.textContent.replace(/^Activar:\s*/,'').trim()):'';
   var origComo=comoEl?(comoEl.textContent.replace(/^Uso:\s*/,'').trim()):'';
 
-  // Replace all fields with inputs
-  if(titleEl) titleEl.innerHTML='<input id="edit-tit-'+id+'" type="text" value="'+escH(origTitle)+'" placeholder="Título" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 10px;font-size:16px;font-weight:900;font-family:inherit;margin-bottom:6px">';
+  // Parse nombre/apellidos from titulo (format: "NOMBRE APELLIDOS — RELACION")
+  var dashParts=origTitle.split(' — ');
+  var namePart=dashParts[0]||'';
+  var nameWords=namePart.split(' ');
+  var origNombre=nameWords[0]||'';
+  var origApellidos=nameWords.slice(1).join(' ')||'';
+  var origRelPart=dashParts.slice(1).join(' — ')||'';
+
+  if(titleEl) titleEl.innerHTML=
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">'+
+    '<div><label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">NOMBRE</label>'+
+    '<input id="edit-nom-'+id+'" type="text" value="'+escH(origNombre)+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit"></div>'+
+    '<div><label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">APELLIDOS</label>'+
+    '<input id="edit-ape-'+id+'" type="text" value="'+escH(origApellidos)+'" placeholder="Opcional" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit"></div>'+
+    '</div>';
   contentEl.innerHTML='<textarea id="edit-con-'+id+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:8px 10px;font-size:14px;font-family:inherit;resize:vertical;min-height:60px" rows="3">'+escH(origContent)+'</textarea>';
   if(evEl) evEl.innerHTML='<input id="edit-ev-'+id+'" type="text" value="'+escH(origEv)+'" placeholder="Evidencia (frase exacta)" style="width:100%;border:1px solid #e0e0e0;border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;font-style:italic;margin-top:4px">';
   if(cuandoEl) cuandoEl.innerHTML='<input id="edit-cuan-'+id+'" type="text" value="'+escH(origCuando)+'" placeholder="¿Cuándo activar?" style="width:100%;border:1px solid #e0e0e0;border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;margin-top:4px">';
@@ -4557,8 +4651,11 @@ function editHito(id,btn){
 
   btn.textContent='Guardar';
   btn.onclick=function(){
+    var nom=(document.getElementById('edit-nom-'+id)||{value:origNombre}).value.trim();
+    var ape=(document.getElementById('edit-ape-'+id)||{value:origApellidos}).value.trim();
+    var nuevoTitulo=(nom+(ape?' '+ape:'')+(origRelPart?' — '+origRelPart:'')).trim()||origTitle;
     var payload={
-      titulo: (document.getElementById('edit-tit-'+id)||{value:''}).value.trim(),
+      titulo: nuevoTitulo,
       contenido: (document.getElementById('edit-con-'+id)||{value:''}).value.trim(),
       evidencia: (document.getElementById('edit-ev-'+id)||{value:''}).value.trim(),
       cuando: (document.getElementById('edit-cuan-'+id)||{value:''}).value.trim(),
