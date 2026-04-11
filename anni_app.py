@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.13"
+ANNI_VERSION = "1.01.14"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2587,6 +2587,24 @@ def universo_page():
             for i in range(n):
                 coords[i][axis] = (coords[i][axis] - mn) / (mx - mn) * 160 - 80
 
+    # Force minimum separation
+    MIN_DIST = 20.0
+    for _ in range(30):
+        for i in range(n):
+            for j in range(i+1, n):
+                dx = coords[i][0] - coords[j][0]
+                dy = coords[i][1] - coords[j][1]
+                dz = coords[i][2] - coords[j][2]
+                dist = (dx*dx + dy*dy + dz*dz) ** 0.5
+                if dist < MIN_DIST and dist > 0.001:
+                    factor = (MIN_DIST - dist) / dist * 0.5
+                    coords[i][0] += dx * factor
+                    coords[i][1] += dy * factor
+                    coords[i][2] += dz * factor
+                    coords[j][0] -= dx * factor
+                    coords[j][1] -= dy * factor
+                    coords[j][2] -= dz * factor
+
     points = []
     for i, (hid, label, peso, blob) in enumerate(rows):
         if hid == 1:
@@ -2706,7 +2724,7 @@ if(centerPoint){
   var centerLabel=centerPoint.label.split(' — ')[0].split(' ')[0];
   ctxC.fillText(centerLabel.toUpperCase(),4,40);
   const spC=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cvC),transparent:true,opacity:0.9}));
-  spC.scale.set(30,7,1);spC.position.set(0,42,0);scene.add(spC);
+  spC.scale.set(30,7,1);spC.position.set(0,16,0);scene.add(spC);
   // Invisible click sphere
   const bhC=new THREE.Mesh(new THREE.SphereGeometry(12,16,16),new THREE.MeshBasicMaterial({transparent:true,opacity:0}));
   bhC.userData={label:centerPoint.label,peso:50,isCenter:true};scene.add(bhC);meshes.push(bhC);
@@ -3218,6 +3236,24 @@ def recalcular_universo(usuario_id):
             if mx > mn:
                 for i in range(n):
                     coords[i][axis] = (coords[i][axis] - mn) / (mx - mn) * 200 - 100
+
+        # Force minimum separation between nodes (repulsion passes)
+        MIN_DIST = 22.0
+        for _ in range(30):
+            for i in range(n):
+                for j in range(i+1, n):
+                    dx = coords[i][0] - coords[j][0]
+                    dy = coords[i][1] - coords[j][1]
+                    dz = coords[i][2] - coords[j][2]
+                    dist = (dx*dx + dy*dy + dz*dz) ** 0.5
+                    if dist < MIN_DIST and dist > 0.001:
+                        factor = (MIN_DIST - dist) / dist * 0.5
+                        coords[i][0] += dx * factor
+                        coords[i][1] += dy * factor
+                        coords[i][2] += dz * factor
+                        coords[j][0] -= dx * factor
+                        coords[j][1] -= dy * factor
+                        coords[j][2] -= dz * factor
 
         hid_to_idx = {rows[i][0]: i for i in range(n)}
         points = []
