@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.90"
+ANNI_VERSION = "1.0.91"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4313,7 +4313,7 @@ function verMemoriaExtendida(memoriaValidadaId, titulo){
         memorias_html+='<div style="font-weight:900;font-size:13px;margin-bottom:4px">'+escH(m.titulo||'Sin título')+'</div>';
         memorias_html+='<div style="font-size:13px;color:#444;line-height:1.6;white-space:pre-wrap" id="mep-'+m.id+'">'+escH(m.contenido)+'</div>';
         memorias_html+='<div style="margin-top:6px"><button onclick="editMEInline('+m.id+')" style="font-size:10px;padding:2px 8px;border:1px solid #ddd;background:none;cursor:pointer;font-family:monospace;margin-right:4px">Editar</button>';
-        memorias_html+='<button onclick="delMemoriaExtendida('+m.id+');document.getElementById('me-panel-'+memoriaValidadaId+'').remove();" style="font-size:10px;padding:2px 8px;border:1px solid #ffcccc;background:none;cursor:pointer;font-family:monospace;color:#cc0000">Borrar</button></div>';
+        memorias_html+='<button onclick="delMemExt('+m.id+','+memoriaValidadaId+')" style="font-size:10px;padding:2px 8px;border:1px solid #ffcccc;background:none;cursor:pointer;font-family:monospace;color:#cc0000">Borrar</button></div>';
         memorias_html+='</div>';
       });
     } else {
@@ -4324,7 +4324,7 @@ function verMemoriaExtendida(memoriaValidadaId, titulo){
     form_html+='<div style="font-size:11px;color:#aaa;margin-bottom:6px">AÑADIR NUEVA ENTRADA</div>';
     form_html+='<input id="me-tit-'+memoriaValidadaId+'" placeholder="Título (ej: Historia de vida, Relación...)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;margin-bottom:6px"><br>';
     form_html+='<textarea id="me-body-'+memoriaValidadaId+'" placeholder="Escribe aquí el contexto extendido..." style="width:100%;border:1px solid #ddd;border-radius:4px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:80px"></textarea><br>';
-    form_html+='<button onclick="guardarMEInline('+memoriaValidadaId+',''+escH(titulo)+'')" style="margin-top:6px;font-size:11px;padding:4px 14px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>';
+    form_html+='<button onclick="guardarMEInline('+memoriaValidadaId+')" style="margin-top:6px;font-size:11px;padding:4px 14px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>';
     form_html+='</div>';
 
     panel.innerHTML=titulo_panel+memorias_html+form_html;
@@ -4335,8 +4335,17 @@ function verMemoriaExtendida(memoriaValidadaId, titulo){
   }).catch(function(){alert('Error cargando memoria extendida.');});
 }
 
-function guardarMEInline(memoriaValidadaId, titulo){
-  var tit=document.getElementById('me-tit-'+memoriaValidadaId).value.trim()||titulo;
+function delMemExt(id, memoriaValidadaId){
+  if(!confirm('Borrar esta memoria extendida?'))return;
+  fetch('/api/memoria-extendida/'+id,{method:'DELETE'}).then(function(){
+    var panel=document.getElementById('me-panel-'+memoriaValidadaId);
+    if(panel) panel.remove();
+    verMemoriaExtendida(memoriaValidadaId,'');
+  });
+}
+
+function guardarMEInline(memoriaValidadaId){
+  var tit=document.getElementById('me-tit-'+memoriaValidadaId).value.trim()||'Sin título';
   var body=document.getElementById('me-body-'+memoriaValidadaId).value.trim();
   if(!body){alert('El contenido no puede estar vacío.');return;}
   fetch('/api/memoria-extendida',{method:'POST',headers:{'Content-Type':'application/json'},
