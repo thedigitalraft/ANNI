@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.95"
+ANNI_VERSION = "1.0.96"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3997,7 +3997,10 @@ function loadMemoriaAnni(){
     content.innerHTML='<p style="color:#555;padding:20px;font-family:monospace">Cargando...</p>';
 
     if(tabId==='validada'){
-      fetch('/api/hitos?page=1&per_page=50').then(r=>r.json()).then(function(d){
+      var currentMVPage = 1;
+      function loadMVPage(page){
+        currentMVPage = page;
+        fetch('/api/hitos?page='+page).then(r=>r.json()).then(function(d){
         content.innerHTML='';
         // Repair button
         var repDiv=document.createElement('div');
@@ -4016,8 +4019,10 @@ function loadMemoriaAnni(){
           card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+'<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+pesoBar+'<div class="item-actions"><button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button><button class="btn-del" onclick="delHito('+h.id+')">Borrar</button><button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" data-mvid="'+h.id+'" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button></div>';
           content.appendChild(card);
         });
-        content.appendChild(pagerEl(d.pages,1,'loadHitos'));
-      });
+          content.appendChild(pagerEl(d.pages,page,'loadMVPage'));
+        });
+      }
+      loadMVPage(1);
 
     } else if(tabId==='cruda'){
       fetch('/api/chats?page=1&per_page=20').then(r=>r.json()).then(function(d){
