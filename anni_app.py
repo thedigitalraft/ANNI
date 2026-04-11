@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.19"
+ANNI_VERSION = "1.01.20"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2925,8 +2925,12 @@ def api_personas():
     usuario_id = session['usuario_id']
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT id, nombre, apellidos, relacion, tono_predominante, notas, veces_mencionada
-                 FROM personas WHERE usuario_id=? ORDER BY veces_mencionada DESC""", (usuario_id,))
+    try:
+        c.execute("""SELECT id, nombre, COALESCE(apellidos,''), relacion, tono_predominante, notas, veces_mencionada
+                     FROM personas WHERE usuario_id=? ORDER BY veces_mencionada DESC""", (usuario_id,))
+    except Exception:
+        c.execute("""SELECT id, nombre, '' , relacion, tono_predominante, notas, veces_mencionada
+                     FROM personas WHERE usuario_id=? ORDER BY veces_mencionada DESC""", (usuario_id,))
     rows = c.fetchall()
     conn.close()
     personas = [{"id": r[0], "nombre": r[1], "apellidos": r[2] or '', "relacion": r[3], "tono": r[4], "notas": r[5], "veces_mencionada": r[6]} for r in rows]
@@ -2938,10 +2942,13 @@ def api_observaciones():
     usuario_id = session['usuario_id']
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT id, tipo, contenido, evidencia,
-                        datetime(ts, 'unixepoch', 'localtime') as ts
-                 FROM observaciones WHERE usuario_id=? AND activa=1
-                 ORDER BY ts DESC LIMIT 30""", (usuario_id,))
+    try:
+        c.execute("""SELECT id, tipo, contenido, evidencia,
+                            datetime(ts, 'unixepoch', 'localtime') as ts
+                     FROM observaciones WHERE usuario_id=? AND activa=1
+                     ORDER BY ts DESC LIMIT 30""", (usuario_id,))
+    except Exception:
+        c.execute("SELECT id, tipo, contenido, evidencia, ts FROM observaciones WHERE usuario_id=? AND activa=1 ORDER BY ts DESC LIMIT 30", (usuario_id,))
     rows = c.fetchall()
     conn.close()
     obs = [{"id": r[0], "tipo": r[1], "contenido": r[2], "evidencia": r[3], "ts": r[4]} for r in rows]
