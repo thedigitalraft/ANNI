@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.0.98"
+ANNI_VERSION = "1.0.99"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2133,20 +2133,15 @@ def delete_persona(persona_id):
 @login_required
 def api_hitos():
     usuario_id = session['usuario_id']
-    page = int(request.args.get('page', 1))
-    per_page = 15
-    offset = (page - 1) * per_page
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM hitos_usuario WHERE usuario_id=? AND activo=1", (usuario_id,))
-    total = c.fetchone()[0]
     c.execute("""SELECT id, tipo, titulo, categoria, contenido, evidencia, peso, cuando_activarlo, como_usarlo, ts
-        FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY ts DESC LIMIT ? OFFSET ?""",
-              (usuario_id, per_page, offset))
+        FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY peso DESC, ts DESC""",
+              (usuario_id,))
     hitos = [{'id': r[0], 'tipo': r[1], 'titulo': r[2] or '', 'categoria': r[3] or '', 'contenido': r[4],
               'evidencia': r[5] or '', 'peso': r[6], 'cuando': r[7] or '', 'como': r[8] or '', 'ts': ts_format(r[9])} for r in c.fetchall()]
     conn.close()
-    return jsonify({'hitos': hitos, 'total': total, 'page': page, 'pages': (total + per_page - 1) // per_page})
+    return jsonify({'hitos': hitos, 'total': len(hitos), 'pages': 1})
 
 @app.route('/api/hitos/aprobar', methods=['POST'])
 @login_required
@@ -2189,6 +2184,27 @@ def api_aprobar_hito():
         print(f"[ANNI] Error embedding hito #{hid}: {e}")
     return jsonify({'ok': True, 'id': hid})
 
+@app.route('/api/hitos', methods=['POST'])
+@login_required
+def api_crear_hito():
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    titulo = data.get('titulo', '').strip()
+    contenido = data.get('contenido', '').strip()
+    categoria = data.get('categoria', 'general').strip()
+    cuando = data.get('cuando', '').strip()
+    como = data.get('como', '').strip()
+    if not contenido:
+        return jsonify({'ok': False, 'error': 'Contenido requerido'})
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""INSERT INTO hitos_usuario
+                    (usuario_id, tipo, titulo, contenido, categoria, cuando_activarlo, como_usarlo, peso, activo, ts)
+                    VALUES (?,?,?,?,?,?,?,5.0,1,?)""",
+                 (usuario_id, 'manual', titulo, contenido, categoria, cuando, como, time.time()))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 @app.route('/api/hitos/<int:hid>', methods=['PUT'])
 @login_required
 def api_editar_hito(hid):
@@ -2196,15 +2212,17 @@ def api_editar_hito(hid):
     data = request.json or {}
     contenido = data.get('contenido', '').strip()
     titulo = data.get('titulo', '').strip()
+    categoria = data.get('categoria', '').strip()
+    cuando = data.get('cuando', '').strip()
+    como = data.get('como', '').strip()
+    evidencia = data.get('evidencia', '').strip()
     if not contenido:
         return jsonify({'ok': False})
     conn = sqlite3.connect(DB_PATH)
-    if titulo:
-        conn.execute("UPDATE hitos_usuario SET contenido=?, titulo=? WHERE id=? AND usuario_id=?",
-                     (contenido, titulo, hid, usuario_id))
-    else:
-        conn.execute("UPDATE hitos_usuario SET contenido=? WHERE id=? AND usuario_id=?",
-                     (contenido, hid, usuario_id))
+    conn.execute("""UPDATE hitos_usuario
+                    SET contenido=?, titulo=?, categoria=?, cuando_activarlo=?, como_usarlo=?, evidencia=?
+                    WHERE id=? AND usuario_id=?""",
+                 (contenido, titulo, categoria, cuando, como, evidencia, hid, usuario_id))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -4062,26 +4080,41 @@ function repararEmbeddings(){
 }
 
 
-function loadMVPage(page){
+function loadMVPage(){
   var content=document.getElementById('mem-content');
   if(!content) return;
-  fetch('/api/hitos?page='+page).then(r=>r.json()).then(function(d){
-    content.innerHTML='';
-    var repDiv=document.createElement('div');
-    repDiv.style.cssText='text-align:right;margin-bottom:10px';
-    repDiv.innerHTML='<button onclick="repararEmbeddings()" style="font-size:10px;padding:3px 10px;background:none;border:1px solid #ddd;cursor:pointer;font-family:monospace;color:#aaa;border-radius:4px">&#8635; Reparar embeddings</button>';
-    content.appendChild(repDiv);
-    if(!d.hitos||!d.hitos.length){content.innerHTML='<p style="color:#999;padding:20px">Sin memorias validadas aún.</p>';return;}
+
+  content.innerHTML='';
+
+  // Formulario nueva memoria validada
+  var formCard=document.createElement('div');
+  formCard.style.cssText='background:#fff8f8;border:1px solid #ffcccc;border-radius:8px;padding:16px;margin-bottom:16px';
+  formCard.innerHTML=
+    '<div style="font-size:12px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:10px">¿QUIERES AÑADIR UNA MEMORIA IMPORTANTE QUE ANNI RECUERDE SIEMPRE?</div>'+
+    '<input id="mv-titulo" placeholder="Título (ej: ANTONIO — PADRE)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;margin-bottom:6px"><br>'+
+    '<textarea id="mv-contenido" placeholder="Describe en 1-2 líneas lo esencial. Ej: Antonio es el padre de Rafa. Falleció en 2011. Figura central en su identidad." style="width:100%;border:1px solid #ddd;border-radius:4px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:60px;margin-bottom:6px"></textarea>'+
+    '<input id="mv-cuando" placeholder="¿Cuándo activar? (opcional)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:12px;font-family:inherit;margin-bottom:6px"><br>'+
+    '<input id="mv-como" placeholder="¿Cómo usar? (opcional)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:12px;font-family:inherit;margin-bottom:8px"><br>'+
+    '<button onclick="guardarNuevaMV()" style="font-size:11px;padding:5px 16px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR MEMORIA</button>'+
+    '<button onclick="repararEmbeddings()" style="font-size:10px;padding:3px 10px;background:none;border:1px solid #ddd;cursor:pointer;font-family:monospace;color:#aaa;border-radius:4px;margin-left:8px">&#8635; Reparar embeddings</button>';
+  content.appendChild(formCard);
+
+  fetch('/api/hitos').then(r=>r.json()).then(function(d){
+    if(!d.hitos||!d.hitos.length){
+      var empty=document.createElement('p');empty.style.cssText='color:#999;padding:20px';empty.textContent='Sin memorias validadas aún.';
+      content.appendChild(empty);return;
+    }
     d.hitos.forEach(function(h){
       var card=document.createElement('div');card.className='item-card';
       var titulo='<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+(h.titulo?escH(h.titulo):'')+'</div>';
       var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(h.categoria)+'</span>':'';
       var ev=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px">"'+escH(h.evidencia)+'"</div>':'';
-      var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px"><b>Activar:</b> '+escH(h.cuando)+'</div>':'';
-      var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</b> '+escH(h.como)+'</div>':'';
+      var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px" id="hcuando-'+h.id+'"><b>Activar:</b> '+escH(h.cuando)+'</div>':'<div style="font-size:12px;color:#aaa;margin-top:6px" id="hcuando-'+h.id+'"></div>';
+      var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px" id="hcomo-'+h.id+'"><b>Uso:</b> '+escH(h.como)+'</div>':'<div style="font-size:12px;color:#aaa;margin-top:2px" id="hcomo-'+h.id+'"></div>';
+      var ev2=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px" id="hev-'+h.id+'">"'+escH(h.evidencia)+'"</div>':'<div id="hev-'+h.id+'"></div>';
       var pesoBar='<div style="font-size:11px;color:#aaa;margin-top:6px">Peso: <b style="color:#cc0000">'+h.peso.toFixed(1)+'</b></div>';
       card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
-        '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+pesoBar+
+        '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev2+cuando+como+pesoBar+
         '<div class="item-actions">'+
         '<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
         '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
@@ -4089,7 +4122,25 @@ function loadMVPage(page){
         '</div>';
       content.appendChild(card);
     });
-    content.appendChild(pagerEl(d.pages,page,'loadMVPage'));
+  });
+}
+
+function guardarNuevaMV(){
+  var titulo=document.getElementById('mv-titulo').value.trim();
+  var contenido=document.getElementById('mv-contenido').value.trim();
+  var cuando=document.getElementById('mv-cuando').value.trim();
+  var como=document.getElementById('mv-como').value.trim();
+  if(!contenido){alert('El contenido es obligatorio.');return;}
+  fetch('/api/hitos',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({titulo:titulo,contenido:contenido,cuando:cuando,como:como,categoria:'manual'})
+  }).then(r=>r.json()).then(function(d){
+    if(d.ok){
+      document.getElementById('mv-titulo').value='';
+      document.getElementById('mv-contenido').value='';
+      document.getElementById('mv-cuando').value='';
+      document.getElementById('mv-como').value='';
+      loadMVPage();
+    }
   });
 }
 
@@ -4121,7 +4172,7 @@ function loadMemoriaAnni(){
     content.innerHTML='<p style="color:#555;padding:20px;font-family:monospace">Cargando...</p>';
 
     if(tabId==='validada'){
-      loadMVPage(1);
+      loadMVPage();
 
     } else if(tabId==='cruda'){
       fetch('/api/chats?page=1&per_page=20').then(r=>r.json()).then(function(d){
@@ -4279,29 +4330,41 @@ body.appendChild(card);});
 body.appendChild(pagerEl(d.pages,page,'loadHitos'));});}
 
 function editHito(id,btn){
-var card=btn.closest('.item-card');
-var contentEl=card.querySelector('[id="hc-'+id+'"]');
-var titleEl=card.querySelector('[id="ht-'+id+'"]');
-if(!contentEl)return;
-var origContent=contentEl.textContent;
-var origTitle=titleEl?titleEl.textContent:'';
+  var card=btn.closest('.item-card');
+  var titleEl=card.querySelector('[id="ht-'+id+'"]');
+  var contentEl=card.querySelector('[id="hc-'+id+'"]');
+  var evEl=card.querySelector('[id="hev-'+id+'"]');
+  var cuandoEl=card.querySelector('[id="hcuando-'+id+'"]');
+  var comoEl=card.querySelector('[id="hcomo-'+id+'"]');
+  if(!contentEl)return;
 
-// Replace title with input
-if(titleEl){
-  titleEl.innerHTML='<input type="text" value="'+escH(origTitle)+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 10px;font-size:16px;font-weight:900;font-family:inherit;margin-bottom:8px">';
-}
-// Replace content with textarea
-contentEl.innerHTML='<textarea style="width:100%;border:2px solid #cc0000;border-radius:8px;padding:10px;font-size:15px;font-family:inherit;resize:vertical" rows="4">'+escH(origContent)+'</textarea>';
+  // Save original values
+  var origTitle=titleEl?titleEl.textContent.trim():'';
+  var origContent=contentEl.textContent.trim();
+  var origEv=evEl?(evEl.textContent.replace(/^"|"$/g,'').trim()):'';
+  var origCuando=cuandoEl?(cuandoEl.textContent.replace(/^Activar:\s*/,'').trim()):'';
+  var origComo=comoEl?(comoEl.textContent.replace(/^Uso:\s*/,'').trim()):'';
 
-btn.textContent='Guardar';
-btn.onclick=function(){
-var txt=contentEl.querySelector('textarea').value.trim();
-var tit=titleEl?titleEl.querySelector('input').value.trim():'';
-if(!txt)return;
-var payload={contenido:txt};
-if(tit) payload.titulo=tit;
-fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-.then(()=>loadHitos(currentPage));};
+  // Replace all fields with inputs
+  if(titleEl) titleEl.innerHTML='<input id="edit-tit-'+id+'" type="text" value="'+escH(origTitle)+'" placeholder="Título" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 10px;font-size:16px;font-weight:900;font-family:inherit;margin-bottom:6px">';
+  contentEl.innerHTML='<textarea id="edit-con-'+id+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:8px 10px;font-size:14px;font-family:inherit;resize:vertical;min-height:60px" rows="3">'+escH(origContent)+'</textarea>';
+  if(evEl) evEl.innerHTML='<input id="edit-ev-'+id+'" type="text" value="'+escH(origEv)+'" placeholder="Evidencia (frase exacta)" style="width:100%;border:1px solid #e0e0e0;border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;font-style:italic;margin-top:4px">';
+  if(cuandoEl) cuandoEl.innerHTML='<input id="edit-cuan-'+id+'" type="text" value="'+escH(origCuando)+'" placeholder="¿Cuándo activar?" style="width:100%;border:1px solid #e0e0e0;border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;margin-top:4px">';
+  if(comoEl) comoEl.innerHTML='<input id="edit-como-'+id+'" type="text" value="'+escH(origComo)+'" placeholder="¿Cómo usar?" style="width:100%;border:1px solid #e0e0e0;border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;margin-top:4px">';
+
+  btn.textContent='Guardar';
+  btn.onclick=function(){
+    var payload={
+      titulo: (document.getElementById('edit-tit-'+id)||{value:''}).value.trim(),
+      contenido: (document.getElementById('edit-con-'+id)||{value:''}).value.trim(),
+      evidencia: (document.getElementById('edit-ev-'+id)||{value:''}).value.trim(),
+      cuando: (document.getElementById('edit-cuan-'+id)||{value:''}).value.trim(),
+      como: (document.getElementById('edit-como-'+id)||{value:''}).value.trim()
+    };
+    if(!payload.contenido){alert('El contenido no puede estar vacío.');return;}
+    fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(()=>loadMVPage());
+  };
 }
 
 
@@ -4421,7 +4484,7 @@ function delMemoriaExtendida(id){
 
 function delHito(id){
 if(!confirm('Borrar este hito?'))return;
-fetch('/api/hitos/'+id,{method:'DELETE'}).then(()=>loadHitos(currentPage));}
+fetch('/api/hitos/'+id,{method:'DELETE'}).then(()=>loadMVPage());}
 
 function loadChats(page){
 fetch('/api/chats?page='+page).then(r=>r.json()).then(d=>{
