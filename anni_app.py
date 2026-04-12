@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.22"
+ANNI_VERSION = "1.01.23"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2603,10 +2603,10 @@ def universo_page():
         mn, mx = min(vals), max(vals)
         if mx > mn:
             for i in range(n):
-                coords[i][axis] = (coords[i][axis] - mn) / (mx - mn) * 160 - 80
+                coords[i][axis] = (coords[i][axis] - mn) / (mx - mn) * 300 - 150
 
     # Force minimum separation
-    MIN_DIST = 20.0
+    MIN_DIST = 28.0
     for _ in range(30):
         for i in range(n):
             for j in range(i+1, n):
@@ -3249,16 +3249,16 @@ def recalcular_universo(usuario_id):
         n = len(vecs)
         coords = pca_python(vecs, n_components=3)
 
-        # Normalize to -100..100
+        # Normalize to -150..150
         for axis in range(3):
             vals = [coords[i][axis] for i in range(n)]
             mn, mx = min(vals), max(vals)
             if mx > mn:
                 for i in range(n):
-                    coords[i][axis] = (coords[i][axis] - mn) / (mx - mn) * 200 - 100
+                    coords[i][axis] = (coords[i][axis] - mn) / (mx - mn) * 300 - 150
 
         # Force minimum separation between nodes (repulsion passes)
-        MIN_DIST = 22.0
+        MIN_DIST = 28.0
         for _ in range(30):
             for i in range(n):
                 for j in range(i+1, n):
