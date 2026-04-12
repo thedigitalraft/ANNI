@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.28"
+ANNI_VERSION = "1.01.30"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4407,7 +4407,7 @@ function loadMVPage(){
       card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
         '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev2+cuando+como+pesoBar+
         '<div class="item-actions">'+
-        '<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
+        '<button class="btn-edit" onclick="editHito('+h.id+',this,\''+escH(h.categoria||'')+'\')">Editar</button>'+
         '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
         '<button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" data-mvid="'+h.id+'" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button>'+
         '</div>';
@@ -4771,7 +4771,7 @@ card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'
 body.appendChild(card);});
 body.appendChild(pagerEl(d.pages,page,'loadHitos'));});}
 
-function editHito(id,btn){
+function editHito(id,btn,categoria){
   var card=btn.closest('.item-card');
   var titleEl=card.querySelector('[id="ht-'+id+'"]');
   var contentEl=card.querySelector('[id="hc-'+id+'"]');
@@ -4786,7 +4786,7 @@ function editHito(id,btn){
   var origCuando=cuandoEl?(cuandoEl.textContent.replace(/^Activar:\s*/,'').trim()):'';
   var origComo=comoEl?(comoEl.textContent.replace(/^Uso:\s*/,'').trim()):'';
 
-  // Parse nombre/apellidos from titulo (format: "NOMBRE APELLIDOS — RELACION")
+  var esRelacion=(categoria||'').toLowerCase()==='relacion';
   var dashParts=origTitle.split(' — ');
   var namePart=dashParts[0]||'';
   var nameWords=namePart.split(' ');
@@ -4794,13 +4794,22 @@ function editHito(id,btn){
   var origApellidos=nameWords.slice(1).join(' ')||'';
   var origRelPart=dashParts.slice(1).join(' — ')||'';
 
-  if(titleEl) titleEl.innerHTML=
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">'+
-    '<div><label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">NOMBRE</label>'+
-    '<input id="edit-nom-'+id+'" type="text" value="'+escH(origNombre)+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit"></div>'+
-    '<div><label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">APELLIDOS</label>'+
-    '<input id="edit-ape-'+id+'" type="text" value="'+escH(origApellidos)+'" placeholder="Opcional" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit"></div>'+
-    '</div>';
+  if(titleEl){
+    if(esRelacion){
+      titleEl.innerHTML=
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">'+
+        '<div><label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">NOMBRE</label>'+
+        '<input id="edit-nom-'+id+'" type="text" value="'+escH(origNombre)+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit"></div>'+
+        '<div><label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">APELLIDOS</label>'+
+        '<input id="edit-ape-'+id+'" type="text" value="'+escH(origApellidos)+'" placeholder="Opcional" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit"></div>'+
+        '</div>';
+    } else {
+      titleEl.innerHTML=
+        '<div style="margin-bottom:6px">'+
+        '<label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">TÍTULO</label>'+
+        '<input id="edit-tit-'+id+'" type="text" value="'+escH(origTitle)+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit"></div>';
+    }
+  }
   contentEl.innerHTML='<textarea id="edit-con-'+id+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:8px 10px;font-size:14px;font-family:inherit;resize:vertical;min-height:60px" rows="3">'+escH(origContent)+'</textarea>';
   if(evEl) evEl.innerHTML='<input id="edit-ev-'+id+'" type="text" value="'+escH(origEv)+'" placeholder="Evidencia (frase exacta)" style="width:100%;border:1px solid #e0e0e0;border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;font-style:italic;margin-top:4px">';
   if(cuandoEl) cuandoEl.innerHTML='<input id="edit-cuan-'+id+'" type="text" value="'+escH(origCuando)+'" placeholder="¿Cuándo activar?" style="width:100%;border:1px solid #e0e0e0;border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;margin-top:4px">';
@@ -4808,19 +4817,36 @@ function editHito(id,btn){
 
   btn.textContent='Guardar';
   btn.onclick=function(){
-    var nom=(document.getElementById('edit-nom-'+id)||{value:origNombre}).value.trim();
-    var ape=(document.getElementById('edit-ape-'+id)||{value:origApellidos}).value.trim();
-    var nuevoTitulo=(nom+(ape?' '+ape:'')+(origRelPart?' — '+origRelPart:'')).trim()||origTitle;
+    var nomEl=document.getElementById('edit-nom-'+id);
+    var apeEl=document.getElementById('edit-ape-'+id);
+    var titEl=document.getElementById('edit-tit-'+id);
+    var conEl=document.getElementById('edit-con-'+id);
+    var evEl2=document.getElementById('edit-ev-'+id);
+    var cuanEl=document.getElementById('edit-cuan-'+id);
+    var comoEl=document.getElementById('edit-como-'+id);
+    var nuevoTitulo;
+    if(esRelacion){
+      var nom=nomEl?nomEl.value.trim():origNombre;
+      var ape=apeEl?apeEl.value.trim():origApellidos;
+      nuevoTitulo=nom+(ape?' '+ape:'')+(origRelPart?' — '+origRelPart:'');
+    } else {
+      nuevoTitulo=titEl?titEl.value.trim():origTitle;
+    }
+    if(!nuevoTitulo.trim()) nuevoTitulo=origTitle;
+    var contenido=conEl?conEl.value.trim():'';
+    if(!contenido){alert('El contenido no puede estar vacío.');return;}
     var payload={
-      titulo: nuevoTitulo,
-      contenido: (document.getElementById('edit-con-'+id)||{value:''}).value.trim(),
-      evidencia: (document.getElementById('edit-ev-'+id)||{value:''}).value.trim(),
-      cuando: (document.getElementById('edit-cuan-'+id)||{value:''}).value.trim(),
-      como: (document.getElementById('edit-como-'+id)||{value:''}).value.trim()
+      titulo: nuevoTitulo.trim(),
+      contenido: contenido,
+      evidencia: evEl2?evEl2.value.trim():'',
+      cuando: cuanEl?cuanEl.value.trim():'',
+      como: comoEl?comoEl.value.trim():''
     };
-    if(!payload.contenido){alert('El contenido no puede estar vacío.');return;}
     fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-    .then(()=>loadMVPage());
+    .then(r=>r.json()).then(function(d){
+      if(d.ok) loadMVPage();
+      else alert('Error al guardar');
+    });
   };
 }
 
