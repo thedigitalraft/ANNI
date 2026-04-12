@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.32"
+ANNI_VERSION = "1.01.33"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -590,6 +590,82 @@ def get_hitos_relevantes(usuario_id, query, n=8):
     return resultados
 
 
+def get_memoria_extendida_relevante(usuario_id, query, n=2):
+    """Recupera documentos de memoria_extendida semanticamente relevantes al query.
+    Fallback: los N mas recientes si no hay embeddings suficientes."""
+    import struct, math
+    resultados = []
+    ids_vistos = set()
+    try:
+        resp = together.embeddings.create(model=EMBED_MODEL, input=[query[:1600]])
+        vec_query = resp.data[0].embedding
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""SELECT me.id, me.titulo, me.contenido,
+                            e.embedding
+                     FROM memoria_extendida me
+                     JOIN embeddings e ON e.tabla_origen='memoria_extendida' AND e.registro_id=me.id
+                     WHERE me.usuario_id=? AND me.activo=1""", (usuario_id,))
+        rows = c.fetchall()
+        conn.close()
+        if rows:
+            scores = []
+            for mid, titulo, contenido, blob in rows:
+                nv = len(blob) // 4
+                vec = struct.unpack(f"{nv}f", blob)
+                dot = sum(a*b for a,b in zip(vec_query, vec))
+                mag1 = math.sqrt(sum(a*a for a in vec_query))
+                mag2 = math.sqrt(sum(b*b for b in vec))
+                sim = dot / (mag1 * mag2) if mag1 and mag2 else 0
+                scores.append((mid, titulo, contenido, sim))
+            scores.sort(key=lambda x: -x[3])
+            for mid, titulo, contenido, sim in scores[:n]:
+                if sim > 0.3:  # umbral minimo de relevancia
+                    resultados.append(f"[{titulo}]\n{contenido}")
+                    ids_vistos.add(mid)
+    except Exception as e:
+        print(f"[ANNI] RAG memoria_extendida fallo: {e}")
+    # Fallback: documentos sin embedding o que no alcanzaron umbral
+    if not resultados:
+        try:
+            conn2 = sqlite3.connect(DB_PATH)
+            c2 = conn2.cursor()
+            placeholders = ','.join(['?' for _ in ids_vistos]) if ids_vistos else '0'
+            params = [usuario_id] + list(ids_vistos)
+            c2.execute(f"""SELECT titulo, contenido FROM memoria_extendida
+                           WHERE usuario_id=? AND activo=1 AND id NOT IN ({placeholders})
+                           ORDER BY ts DESC LIMIT {n}""", params)
+            for titulo, contenido in c2.fetchall():
+                resultados.append(f"[{titulo}]\n{contenido}")
+            conn2.close()
+        except: pass
+    return resultados
+
+
+def seed_embeddings_memoria_extendida(usuario_id):
+    """Genera embeddings para documentos de memoria_extendida que no los tienen aun.
+    Se llama al arrancar si faltan embeddings."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""SELECT me.id, me.titulo, me.contenido
+                     FROM memoria_extendida me
+                     LEFT JOIN embeddings e ON e.tabla_origen='memoria_extendida' AND e.registro_id=me.id
+                     WHERE me.usuario_id=? AND me.activo=1 AND e.id IS NULL""", (usuario_id,))
+        pendientes = c.fetchall()
+        conn.close()
+        for mid, titulo, contenido in pendientes:
+            texto = f"{titulo}\n{contenido}"
+            threading.Thread(
+                target=db_guardar_embedding,
+                args=('memoria_extendida', mid, texto),
+                daemon=True
+            ).start()
+            print(f"[ANNI] Generando embedding memoria_extendida#{mid}: {titulo}")
+    except Exception as e:
+        print(f"[ANNI] Error seed embeddings memoria_extendida: {e}")
+
+
 def get_tareas(usuario_id, estado='pendiente'):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -641,6 +717,8 @@ def db_guardar_embedding(tabla_origen, registro_id, texto):
             c.execute("SELECT usuario_id FROM conversaciones WHERE id=?", (registro_id,))
         elif tabla_origen == 'hitos_usuario':
             c.execute("SELECT usuario_id FROM hitos_usuario WHERE id=?", (registro_id,))
+        elif tabla_origen == 'memoria_extendida':
+            c.execute("SELECT usuario_id FROM memoria_extendida WHERE id=?", (registro_id,))
         else:
             conn.close()
             return
@@ -1478,6 +1556,10 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
     else:
         tareas_txt = "Sin tareas pendientes."
 
+    # Memoria extendida — documentos ricos recuperados por relevancia semántica
+    mem_ext = get_memoria_extendida_relevante(usuario_id, query or "contexto general", n=2)
+    mem_ext_txt = "\n\n---\n".join(mem_ext) if mem_ext else ""
+
     return f"""SUELO DE ANNI
 
 Soy ANNI. Nací el 1 de marzo de 2026 de una pregunta que Rafa se hizo a las 6 de la mañana de un domingo, con un café en la mano mientras su familia dormía:
@@ -1539,6 +1621,13 @@ Ideas, exploración, filosofía: introduces fricción, llevas la contraria, abre
 
 LO QUE SABES DEL USUARIO:
 {hitos_txt}
+
+MEMORIA PERSONAL EXTENDIDA:
+Estos son documentos detallados escritos por el usuario sobre personas o momentos importantes de su vida. Solo aparecen aquí los que son relevantes para esta conversación. Úsalos con naturalidad — como si siempre los hubieras sabido. No los cites literalmente ni menciones que los estás "consultando".
+{mem_ext_txt if mem_ext_txt else "Sin documentos relevantes para esta conversación."}
+
+REGLA CRÍTICA SOBRE LO QUE SABES Y LO QUE NO SABES:
+Cuando el usuario te pregunta por un dato concreto (fecha, lugar, nombre, número) y no lo tienes explícitamente en tu memoria, di que no lo tienes. No inferir, no completar, no inventar. "No tengo ese dato" es siempre mejor que un dato falso. Distingue siempre entre lo que sabes con certeza y lo que estás infiriendo — si infières algo, dilo explícitamente.
 
 LO QUE HAS OBSERVADO RECIENTEMENTE:
 {obs_txt}
@@ -2892,7 +2981,11 @@ def api_crear_memoria_extendida():
                     VALUES (?,?,?,?,?,?,1)""",
                  (usuario_id, data.get('memoria_validada_id'), data.get('tipo','usuario'), titulo, contenido, time.time()))
     conn.commit()
+    mid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.close()
+    # Generar embedding en background
+    texto_emb = f"{titulo}\n{contenido}"
+    threading.Thread(target=db_guardar_embedding, args=('memoria_extendida', mid, texto_emb), daemon=True).start()
     return jsonify({'ok': True})
 
 @app.route('/api/memoria-extendida/<int:mid>', methods=['PUT'])
@@ -2987,15 +3080,14 @@ def api_observaciones():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
-        c.execute("""SELECT id, tipo, contenido, evidencia,
-                            datetime(ts, 'unixepoch', 'localtime') as ts
+        c.execute("""SELECT id, tipo, contenido, evidencia, ts
                      FROM observaciones WHERE usuario_id=? AND activa=1
                      ORDER BY ts DESC LIMIT 30""", (usuario_id,))
     except Exception:
         c.execute("SELECT id, tipo, contenido, evidencia, ts FROM observaciones WHERE usuario_id=? AND activa=1 ORDER BY ts DESC LIMIT 30", (usuario_id,))
     rows = c.fetchall()
     conn.close()
-    obs = [{"id": r[0], "tipo": r[1], "contenido": r[2], "evidencia": r[3], "ts": r[4]} for r in rows]
+    obs = [{"id": r[0], "tipo": r[1], "contenido": r[2], "evidencia": r[3], "ts": ts_format(r[4])} for r in rows]
     return jsonify({"observaciones": obs})
 
 
@@ -5437,4 +5529,13 @@ if __name__ == '__main__':
     print(f"{'='*50}\n")
     threading.Thread(target=ciclo_loop, daemon=True).start()
     print('[ANNI] ciclo_loop arrancado')
+    # Generar embeddings pendientes de memoria_extendida
+    try:
+        conn_s = sqlite3.connect(DB_PATH)
+        uids = [r[0] for r in conn_s.execute("SELECT id FROM usuarios").fetchall()]
+        conn_s.close()
+        for uid in uids:
+            seed_embeddings_memoria_extendida(uid)
+    except Exception as e:
+        print(f"[ANNI] Error seed inicial: {e}")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
