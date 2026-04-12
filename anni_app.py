@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.44"
+ANNI_VERSION = "1.01.45"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1333,11 +1333,12 @@ def degradar_pesos_hitos(usuario_id, mensajes_conversacion):
             mencionado = False
 
             if tipo == 'relacion':
-                # Hitos de persona: solo detectar por nombre propio en el texto
-                # NO usar keyword match — evita que mencionar a Bosco cuente como mención de Erika
+                # Hitos de persona: solo detectar por nombre propio EN EL TÍTULO
+                # NO buscar en contenido — evita que el hito de Erika ("madre de Bosco")
+                # se considere mencionado cuando solo se habló de Bosco
                 for nombre in personas:
                     nombre_lower = nombre.lower()
-                    if nombre_lower in titulo_lower or nombre_lower in contenido_lower:
+                    if nombre_lower in titulo_lower:
                         if nombre_lower in texto_conv:
                             mencionado = True
                             break
@@ -1444,11 +1445,12 @@ def incrementar_hitos_mencionados(usuario_id, mensaje):
                     print(f"[ANNI] Peso +0.3 al hito top de '{nombre}' (id={top[0]}, sin contexto de relación)")
                 continue
 
-            # Con relación confirmada — incrementar hitos que coinciden
+            # Con relación confirmada — incrementar solo hitos cuyo TÍTULO contiene el nombre
+            # NO usar contenido — evita subir hitos de otras personas que mencionan este nombre
             c.execute("""UPDATE hitos_usuario SET peso = MIN(peso + 0.3, 50)
                          WHERE usuario_id=? AND activo=1
-                         AND (LOWER(titulo) LIKE ? OR LOWER(contenido) LIKE ?)""",
-                      (usuario_id, f'%{nombre_lower}%', f'%{nombre_lower}%'))
+                         AND LOWER(titulo) LIKE ?""",
+                      (usuario_id, f'%{nombre_lower}%'))
             updated = conn.execute("SELECT changes()").fetchone()[0]
             if updated:
                 print(f"[ANNI] Peso +0.3 por mención de {nombre} con relación '{relacion_lower}' ({updated} hitos)")
