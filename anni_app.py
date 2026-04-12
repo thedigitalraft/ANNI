@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.33"
+ANNI_VERSION = "1.01.36"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -764,6 +764,26 @@ def degradar_observaciones(usuario_id):
     except Exception as e:
         print(f"[ANNI] Error degradando observaciones: {e}")
 
+def db_guardar_embedding_observacion(obs_id, usuario_id, contenido):
+    """Genera y guarda embedding para una observación. Corre en background thread."""
+    if not contenido or not contenido.strip():
+        return
+    try:
+        import struct
+        resp = together.embeddings.create(model=EMBED_MODEL, input=[contenido[:1600]])
+        vec = resp.data[0].embedding
+        blob = struct.pack(f"{len(vec)}f", *vec)
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO embeddings (usuario_id, tabla_origen, registro_id, embedding) VALUES (?,?,?,?)",
+                  (usuario_id, 'observaciones', obs_id, blob))
+        conn.commit()
+        conn.close()
+        print(f"[ANNI] Embedding observacion#{obs_id} guardado")
+    except Exception as e:
+        print(f"[ANNI] Error embedding observacion#{obs_id}: {e}")
+
+
 def analizar_conversacion(usuario_id, ultimos_mensajes, resumen=''):
     """Analiza los últimos mensajes y extrae observaciones, personas y temas."""
     if not ultimos_mensajes:
@@ -854,34 +874,100 @@ Si no hay nada relevante en alguna categoría, dejar el array vacío."""
         # Degradar observaciones antes de añadir nuevas
         degradar_observaciones(usuario_id)
 
-        # Guardar observaciones — reforzar si ya existe algo similar, crear si no
+        # Guardar observaciones — deduplicación por embeddings (umbral 0.80)
+        # Fallback a string matching para observaciones sin embedding todavía
         for obs in data.get("observaciones", []):
-            if obs.get("contenido"):
-                contenido_nuevo = obs["contenido"].lower()
-                tipo_nuevo = obs.get("tipo", "patron")
-                # Buscar observacion similar por tipo + keywords (3+ palabras en común)
-                c.execute("SELECT id, contenido FROM observaciones WHERE usuario_id=? AND activa=1 AND tipo=?",
+            if not obs.get("contenido"):
+                continue
+            contenido_nuevo = obs["contenido"]
+            tipo_nuevo = obs.get("tipo", "patron")
+
+            reforzada = False
+
+            # ── Intentar deduplicación por embeddings ──
+            try:
+                import struct, math
+                resp_emb = together.embeddings.create(model=EMBED_MODEL, input=[contenido_nuevo[:1600]])
+                vec_nuevo = resp_emb.data[0].embedding
+
+                # Observaciones del mismo tipo que tienen embedding
+                c.execute("""SELECT o.id, o.contenido, e.embedding
+                             FROM observaciones o
+                             JOIN embeddings e ON e.tabla_origen='observaciones' AND e.registro_id=o.id
+                             WHERE o.usuario_id=? AND o.activa=1 AND o.tipo=?""",
                           (usuario_id, tipo_nuevo))
-                existentes = c.fetchall()
-                reforzada = False
-                palabras_nuevas = [w for w in contenido_nuevo.split() if len(w) > 4]
-                for obs_id, contenido_exist in existentes:
-                    matches = sum(1 for p in palabras_nuevas if p in contenido_exist.lower())
-                    if matches >= 2:
-                        # Reforzar: subir peso (máx 10) y actualizar timestamp
+                con_emb = c.fetchall()
+
+                for obs_id, contenido_exist, blob in con_emb:
+                    nv = len(blob) // 4
+                    vec_exist = struct.unpack(f"{nv}f", blob)
+                    dot = sum(a*b for a,b in zip(vec_nuevo, vec_exist))
+                    mag1 = math.sqrt(sum(a*a for a in vec_nuevo))
+                    mag2 = math.sqrt(sum(b*b for b in vec_exist))
+                    sim = dot / (mag1 * mag2) if mag1 and mag2 else 0
+                    if sim >= 0.80:
                         c.execute("""UPDATE observaciones
                                      SET peso = MIN(peso + 0.4, 10),
                                          ts_ultima_vez = ?,
                                          veces_confirmada = veces_confirmada + 1
                                      WHERE id=?""", (ts_now, obs_id))
                         reforzada = True
-                        print(f"[ANNI] Observación reforzada #{obs_id}: {contenido_exist[:40]}")
+                        print(f"[ANNI] Observación reforzada por embedding (sim={sim:.2f}) #{obs_id}: {contenido_exist[:40]}")
                         break
+
+                # Si no reforzada, guardar embedding para la nueva cuando se inserte
                 if not reforzada:
-                    c.execute("""INSERT INTO observaciones (usuario_id, tipo, contenido, evidencia, peso, ts, ts_ultima_vez)
-                                 VALUES (?,?,?,?,5,?,?)""",
-                              (usuario_id, tipo_nuevo, obs["contenido"],
-                               obs.get("evidencia", ""), ts_now, ts_now))
+                    # Fallback string matching para obs SIN embedding del mismo tipo
+                    c.execute("""SELECT o.id, o.contenido FROM observaciones o
+                                 WHERE o.usuario_id=? AND o.activa=1 AND o.tipo=?
+                                 AND o.id NOT IN (
+                                     SELECT registro_id FROM embeddings WHERE tabla_origen='observaciones'
+                                 )""", (usuario_id, tipo_nuevo))
+                    sin_emb = c.fetchall()
+                    palabras_nuevas = [w for w in contenido_nuevo.lower().split() if len(w) > 4]
+                    for obs_id, contenido_exist in sin_emb:
+                        matches = sum(1 for p in palabras_nuevas if p in contenido_exist.lower())
+                        if matches >= 3:  # umbral más alto que antes (era 2)
+                            c.execute("""UPDATE observaciones
+                                         SET peso = MIN(peso + 0.4, 10),
+                                             ts_ultima_vez = ?,
+                                             veces_confirmada = veces_confirmada + 1
+                                         WHERE id=?""", (ts_now, obs_id))
+                            reforzada = True
+                            print(f"[ANNI] Observación reforzada por string matching #{obs_id}: {contenido_exist[:40]}")
+                            break
+
+            except Exception as e_emb:
+                print(f"[ANNI] Error embedding observación, usando string matching: {e_emb}")
+                # Fallback completo a string matching si falla la API de embeddings
+                c.execute("SELECT id, contenido FROM observaciones WHERE usuario_id=? AND activa=1 AND tipo=?",
+                          (usuario_id, tipo_nuevo))
+                existentes = c.fetchall()
+                palabras_nuevas = [w for w in contenido_nuevo.lower().split() if len(w) > 4]
+                for obs_id, contenido_exist in existentes:
+                    matches = sum(1 for p in palabras_nuevas if p in contenido_exist.lower())
+                    if matches >= 2:
+                        c.execute("""UPDATE observaciones
+                                     SET peso = MIN(peso + 0.4, 10),
+                                         ts_ultima_vez = ?,
+                                         veces_confirmada = veces_confirmada + 1
+                                     WHERE id=?""", (ts_now, obs_id))
+                        reforzada = True
+                        print(f"[ANNI] Observación reforzada (fallback) #{obs_id}: {contenido_exist[:40]}")
+                        break
+
+            if not reforzada:
+                c.execute("""INSERT INTO observaciones (usuario_id, tipo, contenido, evidencia, peso, ts, ts_ultima_vez)
+                             VALUES (?,?,?,?,5,?,?)""",
+                          (usuario_id, tipo_nuevo, contenido_nuevo,
+                           obs.get("evidencia", ""), ts_now, ts_now))
+                obs_id_nuevo = c.lastrowid
+                # Guardar embedding en background
+                threading.Thread(
+                    target=db_guardar_embedding_observacion,
+                    args=(obs_id_nuevo, usuario_id, contenido_nuevo),
+                    daemon=True
+                ).start()
 
         # Guardar/actualizar personas
         for p in data.get("personas", []):
@@ -1246,30 +1332,101 @@ def degradar_pesos_hitos(usuario_id, mensajes_conversacion):
         print(f"[ANNI] Error degradando pesos: {e}")
 
 def incrementar_hitos_mencionados(usuario_id, mensaje):
-    """Incrementa peso de hitos cuando se mencionan personas o contenido relevante."""
+    """Incrementa peso de hitos cuando se mencionan personas o contenido relevante.
+    Fix #15: distingue relación antes de incrementar para no subir todos los hitos
+    de personas con el mismo nombre."""
     if not mensaje or len(mensaje) < 5:
         return
+
+    # Mapa de palabras clave en el mensaje → tipo de relación normalizado
+    # Permite detectar "mi padre Antonio" y subir solo el hito padre, no todos los Antonios
+    RELACION_KEYWORDS = {
+        'padre':    ['padre', 'papá', 'papa', 'jefe de familia', 'mi viejo'],
+        'madre':    ['madre', 'mamá', 'mama', 'mi vieja'],
+        'hijo':     ['hijo', 'mi hijo', 'el chico', 'el pequeño'],
+        'hija':     ['hija', 'mi hija', 'la chica', 'la pequeña'],
+        'hermano':  ['hermano'],
+        'hermana':  ['hermana'],
+        'pareja':   ['pareja', 'novia', 'esposa', 'mujer', 'compañera'],
+        'esposo':   ['esposo', 'marido', 'novio'],
+        'suegro':   ['suegro'],
+        'suegra':   ['suegra'],
+        'cuñado':   ['cuñado'],
+        'cuñada':   ['cuñada'],
+        'tío':      ['tío', 'tio'],
+        'tía':      ['tía', 'tia'],
+        'sobrino':  ['sobrino'],
+        'sobrina':  ['sobrina'],
+        'abuelo':   ['abuelo'],
+        'abuela':   ['abuela'],
+        'colega':   ['colega', 'socio', 'compañero', 'colaborador'],
+        'cliente':  ['cliente'],
+        'hijastra': ['hijastra'],
+        'hijastro': ['hijastro'],
+    }
+
+    def detectar_relacion_en_mensaje(msg_lower):
+        """Devuelve lista de relaciones mencionadas en el mensaje."""
+        relaciones_detectadas = []
+        for relacion, keywords in RELACION_KEYWORDS.items():
+            for kw in keywords:
+                if kw in msg_lower:
+                    relaciones_detectadas.append(relacion)
+                    break
+        return relaciones_detectadas
+
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         mensaje_lower = mensaje.lower()
+        relaciones_en_mensaje = detectar_relacion_en_mensaje(mensaje_lower)
 
-        # 1. Personas mencionadas por nombre — suma a todos sus hitos relacionados
+        # 1. Personas mencionadas por nombre — con lógica de relación
         c.execute("SELECT nombre, relacion FROM personas WHERE usuario_id=?", (usuario_id,))
         personas = c.fetchall()
+
         for nombre, relacion in personas:
             nombre_lower = nombre.lower()
-            if nombre_lower in mensaje_lower and nombre_lower not in ('rafa', 'anni'):
-                # Incrementar todos los hitos que mencionan esta persona
-                c.execute("""UPDATE hitos_usuario SET peso = MIN(peso + 0.3, 50)
-                             WHERE usuario_id=? AND activo=1
-                             AND (LOWER(titulo) LIKE ? OR LOWER(contenido) LIKE ?)""",
-                          (usuario_id, f'%{nombre_lower}%', f'%{nombre_lower}%'))
-                updated = conn.execute("SELECT changes()").fetchone()[0]
-                if updated:
-                    print(f"[ANNI] Peso +0.3 por mención de {nombre} ({updated} hitos)")
+            if nombre_lower not in mensaje_lower or nombre_lower in ('rafa', 'anni'):
+                continue
 
-        # 2. Keywords del hito en el mensaje (lógica original mejorada)
+            relacion_lower = (relacion or '').lower()
+
+            if relaciones_en_mensaje:
+                # Hay contexto de relación en el mensaje
+                # Solo incrementar si la relación del hito coincide con alguna detectada
+                relacion_coincide = any(
+                    rel in relacion_lower or relacion_lower in rel
+                    for rel in relaciones_en_mensaje
+                )
+                if not relacion_coincide:
+                    print(f"[ANNI] Skipping {nombre} — relación '{relacion_lower}' no coincide con {relaciones_en_mensaje}")
+                    continue
+
+            else:
+                # Sin contexto de relación — solo subir el hito de mayor peso con ese nombre
+                # Primero buscar qué hitos tienen este nombre
+                c.execute("""SELECT id, peso FROM hitos_usuario
+                             WHERE usuario_id=? AND activo=1
+                             AND (LOWER(titulo) LIKE ? OR LOWER(contenido) LIKE ?)
+                             ORDER BY peso DESC LIMIT 1""",
+                          (usuario_id, f'%{nombre_lower}%', f'%{nombre_lower}%'))
+                top = c.fetchone()
+                if top:
+                    c.execute("UPDATE hitos_usuario SET peso = MIN(peso + 0.3, 50) WHERE id=?", (top[0],))
+                    print(f"[ANNI] Peso +0.3 al hito top de '{nombre}' (id={top[0]}, sin contexto de relación)")
+                continue
+
+            # Con relación confirmada — incrementar hitos que coinciden
+            c.execute("""UPDATE hitos_usuario SET peso = MIN(peso + 0.3, 50)
+                         WHERE usuario_id=? AND activo=1
+                         AND (LOWER(titulo) LIKE ? OR LOWER(contenido) LIKE ?)""",
+                      (usuario_id, f'%{nombre_lower}%', f'%{nombre_lower}%'))
+            updated = conn.execute("SELECT changes()").fetchone()[0]
+            if updated:
+                print(f"[ANNI] Peso +0.3 por mención de {nombre} con relación '{relacion_lower}' ({updated} hitos)")
+
+        # 2. Keywords del hito en el mensaje (sin cambios)
         c.execute("SELECT id, contenido, titulo FROM hitos_usuario WHERE usuario_id=? AND activo=1", (usuario_id,))
         hitos = c.fetchall()
         for hid, contenido, titulo in hitos:
@@ -2500,38 +2657,54 @@ def api_detectar_hito():
     if not mensaje or len(mensaje) < 8:
         return jsonify({'hito': None})
 
-    prompt = f"""Analiza este intercambio y determina si contiene información importante y duradera sobre el usuario.
+    prompt = f"""Analiza este intercambio y decide si hay un hito que vale la pena proponer.
 
 Usuario: "{mensaje}"
 ANNI: "{respuesta[:300]}"
 
-Un hito (memoria validada) vale la pena cuando revela algo ESTABLE sobre el usuario:
-- Quién es, cómo piensa, qué valora
-- Personas importantes en su vida — familiares, pareja, hijos, amigos cercanos, figuras del pasado
-- Patrones de comportamiento recurrentes
-- Decisiones o valores que definen su identidad
-- Figuras del pasado que siguen siendo relevantes (padre fallecido, ex-pareja, mentor)
+Hay DOS tipos de hito con criterios distintos. Aplica el criterio correcto según el tipo.
 
-CRITERIOS PARA PROPONER HITO:
-1. Si el usuario menciona a una persona con relación familiar o cercana (padre, madre, hijo, pareja, amigo) → SIEMPRE proponer hito de tipo "relacion"
-2. Si revela un patrón de comportamiento con evidencia clara → proponer hito de tipo "forma_de_pensar"
-3. Si expresa un valor o creencia central → proponer hito de tipo "lo_que_importa"
+═══════════════════════════════════════
+TIPO A — PERSONA (umbral bajo)
+═══════════════════════════════════════
+Proponer SI el usuario menciona a alguien con nombre propio Y relación clara (padre, madre, hijo, pareja, hermano, amigo, colega, cliente, suegro, etc.).
 
-CRITERIOS PARA NO PROPONER:
-- Comentarios anecdóticos sin patrón ("hoy llovió")
-- Temas técnicos sobre ANNI o el sistema
-- Información que ya debería estar en memoria validada
+REGLAS para hitos de persona:
+- Título = nombre propio en mayúsculas. Máximo 4 palabras. Ejemplos: "BOSCO", "ERIKA SOLÍS", "DANI CUENCA"
+- NUNCA un título abstracto para una persona: "FIGURA PATERNA INFLUYENTE" es MAL. "ANTONIO TORRIJOS" es BIEN.
+- Contenido: 1-2 frases con quién es y qué relación tiene con el usuario. Concreto.
+- Si el usuario solo menciona el nombre de pasada sin dar ningún dato nuevo → NO proponer.
 
-Un hito de RELACION debe ser corto y accionable:
-MAL: "El padre de Rafa fue un hombre trabajador que nació durante la guerra civil española y cuya vida estuvo marcada por..."
-BIEN: "Antonio es el padre de Rafa. Falleció en marzo de 2011. Figura central en su identidad."
+═══════════════════════════════════════
+TIPO B — CONCEPTO / PATRÓN / IDENTIDAD
+═══════════════════════════════════════
+Proponer si el usuario revela un patrón de comportamiento, valor o forma de pensar con evidencia clara en el mensaje. No hace falta que lo diga explícitamente — el modelo puede inferirlo SI hay evidencia directa en sus palabras.
 
-Si SÍ hay un hito, responde SOLO con este JSON (sin markdown):
+REGLAS para hitos de concepto:
+- Título = las palabras del usuario, no la interpretación del modelo.
+  BIEN: "PRIMERO LOS FUNDAMENTOS" (el usuario habló de construir bases antes de subir pisos)
+  BIEN: "SALIR DEL BARRIO" (frase literal del usuario)
+  BIEN: "ARRANCO RÁPIDO, REINICIO CUANDO ALGO NO VA" (patrón descrito por el usuario)
+  MAL: "PATRÓN DE BÚSQUEDA DE CRECIMIENTO MEDIANTE EXPOSICIÓN EXTERNA"
+  MAL: "VALORACIÓN DE LA INTIMIDAD COGNITIVA"
+  MAL: cualquier título que suene a resumen académico o de chatbot
+- Si no encuentras palabras del usuario para el título → usa una frase corta y directa que cualquier persona diría. Nunca tecnicismos.
+- Si el patrón es real pero tienes dudas del título → propón con el título más simple posible.
+
+═══════════════════════════════════════
+NUNCA PROPONER si:
+═══════════════════════════════════════
+- El intercambio es sobre ANNI, el sistema, la memoria o aspectos técnicos
+- Es un comentario anecdótico sin patrón estable ("hoy llovió", "qué buena película")
+- La información ya está documentada claramente en memoria
+
+═══════════════════════════════════════
+Si SÍ hay hito, responde SOLO con este JSON (sin markdown):
 {{
   "hito": true,
-  "titulo": "TITULO EN MAYUSCULAS CORTO (máx 5 palabras)",
-  "categoria": "forma_de_pensar|toma_de_decisiones|lo_que_importa|energia|relacion|identidad|general",
-  "contenido": "descripcion corta y accionable — máx 2 líneas",
+  "titulo": "TITULO EN MAYUSCULAS (máx 4 palabras, en lenguaje del usuario)",
+  "categoria": "relacion|forma_de_pensar|toma_de_decisiones|lo_que_importa|energia|identidad|general",
+  "contenido": "descripcion concreta y accionable — máx 2 líneas",
   "evidencia": "frase exacta del usuario que lo demuestra",
   "cuando_activarlo": "en qué situaciones ANNI debería usar este hito",
   "como_usarlo": "cómo debería actuar ANNI cuando detecte esta situación"
@@ -2540,7 +2713,7 @@ Si SÍ hay un hito, responde SOLO con este JSON (sin markdown):
 Si NO hay hito relevante, responde SOLO con:
 {{"hito": false}}
 
-Solo JSON."""
+Solo JSON. Sin explicaciones."""
 
     try:
         resp = together.chat.completions.create(
