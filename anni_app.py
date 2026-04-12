@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.40"
+ANNI_VERSION = "1.01.42"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2976,7 +2976,7 @@ body { background: #000; overflow: hidden; font-family: 'Courier New', monospace
 <div id="ui">
   <div id="title">UNIVERSO ANNI</div>
   <div id="subtitle">Memoria validada en el espacio semántico</div>
-  <div style="color:#ffffff;font-size:13px;margin-top:6px;opacity:0.6;max-width:280px;line-height:1.5">La distancia entre puntos refleja similitud de contenido, no importancia ni relación familiar. El mapa cambia a medida que ANNI aprende más.</div>
+  <div style="color:#ffffff;font-size:15px;margin-top:8px;opacity:0.6;max-width:490px;line-height:1.6">Proyección 3D de los embeddings de tu memoria validada. Cada estrella es una memoria validada por ti. Los puntos cercanos comparten significado semántico — no necesariamente importancia ni relación familiar. El mapa se recalcula automáticamente a medida que ANNI aprende más de ti.</div>
 </div>
 <div id="scale">
   <div style="margin-bottom:4px;color:#ffffff">PESO</div>
@@ -4457,7 +4457,7 @@ loadPage(sec,1);}
 function closePage(){document.getElementById('page').classList.remove('open');}
 function loadPage(sec,page){
 document.getElementById('page-body').innerHTML='<p style="color:#999;padding:20px">Cargando...</p>';
-if(sec==='universo')loadUniverso();
+if(sec==='universo'){window.location.href='/universo';return;}
 else if(sec==='mundo')loadMundo(page);
 else if(sec==='tareas')loadTareas(page);
 else if(sec==='memoria_anni')loadMemoriaAnni();
@@ -5365,152 +5365,6 @@ fetch('/api/mundo/estado').then(r=>r.json()).then(est=>{
 }
 
 
-function loadUniverso(){
-window.location.href='/universo';
-}
-
-function hexToThree(hex){
-  return parseInt(hex.replace('#',''), 16);
-}
-
-function renderUniverso(container, tip, POINTS, STARS){
-var W=container.clientWidth||window.innerWidth;
-var H=container.clientHeight||Math.floor(window.innerHeight*0.75);
-if(W<100){W=window.innerWidth-80;}
-if(H<100){H=500;}
-var scene=new THREE.Scene();
-var camera=new THREE.PerspectiveCamera(55,W/H,0.1,2000);
-camera.position.set(0,0,220);
-
-var renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});
-renderer.setSize(W,H);
-renderer.setClearColor(0x000000,1);
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-container.appendChild(renderer.domElement);
-renderer.domElement.style.width='100%';
-renderer.domElement.style.height='100%';
-
-// Stars
-var sg=new THREE.BufferGeometry();
-var sv=[];
-for(var i=0;i<15000;i++) sv.push((Math.random()-0.5)*2000,(Math.random()-0.5)*2000,(Math.random()-0.5)*2000);
-sg.setAttribute('position',new THREE.Float32BufferAttribute(sv,3));
-scene.add(new THREE.Points(sg,new THREE.PointsMaterial({color:0xffffff,size:0.6,transparent:true,opacity:0.85})));
-
-// Lights
-scene.add(new THREE.AmbientLight(0x110000,3));
-var pl=new THREE.PointLight(0xff6633,2,600);
-pl.position.set(0,80,120);
-scene.add(pl);
-
-// Lines between nodes removed
-
-// Color by peso
-function pesoColor(peso){
-  if(peso<=5)  return {c:0x0d2a6b,e:0x061440};
-  if(peso<=10) return {c:0x1e6bbf,e:0x0d3d7a};
-  if(peso<=18) return {c:0xd4aa00,e:0x7a6000};
-  if(peso<=25) return {c:0xff8c00,e:0x994d00};
-  if(peso<=35) return {c:0xff4400,e:0xcc2200};
-  return             {c:0xff0000,e:0xcc0000};
-}
-
-var meshes=[];
-POINTS.filter(function(p){return !p.isCenter;}).forEach(function(p,idx){
-  var size=2.0+Math.pow(p.peso/50,0.5)*10;  // range ~2 to 12, nonlinear
-  var col=pesoColor(p.peso);
-  var geo=new THREE.SphereGeometry(size,20,20);
-  var mat=new THREE.MeshPhongMaterial({color:col.c,emissive:col.e,emissiveIntensity:0.8,shininess:200,transparent:true,opacity:0.96});
-  var mesh=new THREE.Mesh(geo,mat);
-  mesh.position.set(p.x,p.y,p.z);
-  mesh.userData={label:p.label,peso:p.peso,col:col};
-  scene.add(mesh);
-  meshes.push(mesh);
-
-  // Glow
-  var gg=new THREE.SphereGeometry(size*2.5,12,12);
-  var gm=new THREE.MeshBasicMaterial({color:col.c,transparent:true,opacity:0.05,side:THREE.BackSide});
-  var glow=new THREE.Mesh(gg,gm);
-  glow.position.copy(mesh.position);
-  scene.add(glow);
-
-
-});
-
-// Raycaster
-var raycaster=new THREE.Raycaster();
-var mouse=new THREE.Vector2();
-var hovered=null;
-
-renderer.domElement.addEventListener('mousemove',function(e){
-  var rect=container.getBoundingClientRect();
-  mouse.x=((e.clientX-rect.left)/W)*2-1;
-  mouse.y=-((e.clientY-rect.top)/H)*2+1;
-  raycaster.setFromCamera(mouse,camera);
-  var hits=raycaster.intersectObjects(meshes);
-  if(hits.length>0){
-    var obj=hits[0].object;
-    if(hovered!==obj){
-      if(hovered) hovered.material.emissiveIntensity=0.7;
-      hovered=obj; obj.material.emissiveIntensity=1.8;
-    }
-    tip.style.display='block';
-    tip.style.left=(e.clientX-rect.left+15)+'px';
-    tip.style.top=(e.clientY-rect.top-10)+'px';
-    if(obj.userData.isStar){
-      tip.innerHTML='<b style="color:'+obj.userData.color+'">★ CONSTELACIÓN: '+escH(obj.userData.label)+'</b><br>'+
-        escH(obj.userData.desc||'')+'<br><span style="color:#444;font-size:10px">'+obj.userData.n+' hitos</span>';
-    } else {
-      tip.innerHTML='<b style="color:'+obj.userData.color+'">🪐 '+escH(obj.userData.label.toUpperCase())+'</b><br>'+
-        '<span style="color:#666;font-size:10px">'+escH(obj.userData.constelacion||'')+'</span>'+
-        ' <span style="color:#444;font-size:10px">· peso: '+obj.userData.peso.toFixed(1)+'</span>';
-    }
-  } else {
-    if(hovered){hovered.material.emissiveIntensity=0.7;hovered=null;}
-    tip.style.display='none';
-  }
-});
-
-// Drag & zoom
-var isDrag=false,prevX=0,prevY=0,rotX=0,rotY=0,autoRot=true;
-renderer.domElement.addEventListener('mousedown',function(e){isDrag=true;autoRot=false;prevX=e.clientX;prevY=e.clientY;});
-renderer.domElement.addEventListener('mouseup',function(){isDrag=false;});
-renderer.domElement.addEventListener('mousemove',function(e){
-  if(!isDrag)return;
-  rotY+=(e.clientX-prevX)*0.005;rotX+=(e.clientY-prevY)*0.005;prevX=e.clientX;prevY=e.clientY;
-});
-renderer.domElement.addEventListener('wheel',function(e){
-  camera.position.z=Math.max(60,Math.min(500,camera.position.z+e.deltaY*0.3));
-});
-
-var t=0;
-var animId=null;
-function animate(){
-  animId=requestAnimationFrame(animate);
-  t+=0.004;
-  if(autoRot) rotY+=0.0008;
-  scene.rotation.y=rotY; scene.rotation.x=rotX;
-  meshes.forEach(function(m,i){
-    if(m.userData.isStar){
-      m.scale.setScalar(1+Math.sin(t*0.8+i)*0.04);
-      m.rotation.y+=0.002;
-    } else {
-      m.scale.setScalar(1+Math.sin(t*1.2+i*1.1)*0.05);
-      m.rotation.y+=0.004;
-    }
-  });
-  pl.intensity=1.8+Math.sin(t*0.5)*0.4;
-  renderer.render(scene,camera);
-}
-animate();
-
-// Stop animation when page changes
-var origClose=window.closePage||function(){};
-window.closeUniverso=function(){
-  if(animId) cancelAnimationFrame(animId);
-  renderer.dispose();
-};
-}
 
 var diarioOrden='desc';
 
