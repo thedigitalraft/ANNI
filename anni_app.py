@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.45"
+ANNI_VERSION = "1.01.46"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1432,13 +1432,14 @@ def incrementar_hitos_mencionados(usuario_id, mensaje):
                     continue
 
             else:
-                # Sin contexto de relación — solo subir el hito de mayor peso con ese nombre
-                # Primero buscar qué hitos tienen este nombre
+                # Sin contexto de relación — subir el hito cuyo TÍTULO contiene el nombre
+                # Solo por título — evita que el hito de Bea ("madrastra de Bosco") suba
+                # cuando se menciona "Bosco" sin contexto de relación
                 c.execute("""SELECT id, peso FROM hitos_usuario
                              WHERE usuario_id=? AND activo=1
-                             AND (LOWER(titulo) LIKE ? OR LOWER(contenido) LIKE ?)
+                             AND LOWER(titulo) LIKE ?
                              ORDER BY peso DESC LIMIT 1""",
-                          (usuario_id, f'%{nombre_lower}%', f'%{nombre_lower}%'))
+                          (usuario_id, f'%{nombre_lower}%'))
                 top = c.fetchone()
                 if top:
                     c.execute("UPDATE hitos_usuario SET peso = MIN(peso + 0.3, 50) WHERE id=?", (top[0],))
