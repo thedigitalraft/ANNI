@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.26"
+ANNI_VERSION = "1.01.27"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2699,12 +2699,22 @@ const sg=new THREE.BufferGeometry();
 sg.setAttribute('position',new THREE.Float32BufferAttribute(sv,3));
 sg.setAttribute('color',new THREE.Float32BufferAttribute(sc,3));
 scene.add(new THREE.Points(sg,new THREE.PointsMaterial({vertexColors:true,size:0.7,transparent:true,opacity:0.9})));
-// Nebulas
-[{x:-300,y:200,z:-400,r:180,c:0x1a0044,o:0.025},{x:400,y:-150,z:-350,r:150,c:0x003322,o:0.020},
- {x:-200,y:-300,z:200,r:200,c:0x220011,o:0.018},{x:300,y:300,z:100,r:160,c:0x001133,o:0.022}
-].forEach(n=>{
-  const nb=new THREE.Mesh(new THREE.SphereGeometry(n.r,8,8),new THREE.MeshBasicMaterial({color:n.c,transparent:true,opacity:n.o,side:THREE.BackSide}));
-  nb.position.set(n.x,n.y,n.z);scene.add(nb);
+// Nebulas — multi-layer soft clouds
+const nebulaConfigs=[
+  {x:-320,y:180,z:-380, layers:[{r:220,c:0x2200aa,o:0.04},{r:160,c:0x4400ff,o:0.06},{r:90,c:0x6633ff,o:0.08}]},
+  {x:380,y:-130,z:-320, layers:[{r:190,c:0x004422,o:0.04},{r:130,c:0x006633,o:0.07},{r:70,c:0x00aa55,o:0.09}]},
+  {x:-180,y:-280,z:180, layers:[{r:210,c:0x330011,o:0.04},{r:140,c:0x660022,o:0.07},{r:80,c:0xaa0033,o:0.09}]},
+  {x:280,y:280,z:80,    layers:[{r:180,c:0x001144,o:0.04},{r:120,c:0x002266,o:0.07},{r:65,c:0x0044aa,o:0.09}]}
+];
+nebulaConfigs.forEach(n=>{
+  n.layers.forEach(l=>{
+    const nb=new THREE.Mesh(
+      new THREE.SphereGeometry(l.r,16,16),
+      new THREE.MeshBasicMaterial({color:l.c,transparent:true,opacity:l.o,side:THREE.FrontSide,depthWrite:false})
+    );
+    nb.position.set(n.x,n.y,n.z);
+    scene.add(nb);
+  });
 });
 
 scene.add(new THREE.AmbientLight(0x110000,3));
