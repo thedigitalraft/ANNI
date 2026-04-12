@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.38"
+ANNI_VERSION = "1.01.39"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2976,6 +2976,7 @@ body { background: #000; overflow: hidden; font-family: 'Courier New', monospace
 <div id="ui">
   <div id="title">UNIVERSO ANNI</div>
   <div id="subtitle">Memoria validada en el espacio semántico</div>
+  <div style="color:#ffffff;font-size:11px;margin-top:6px;opacity:0.6;max-width:280px;line-height:1.5">La distancia entre puntos refleja similitud de contenido, no importancia ni relación familiar. El mapa cambia a medida que ANNI aprende más.</div>
 </div>
 <div id="scale">
   <div style="margin-bottom:4px;color:#ffffff">PESO</div>
