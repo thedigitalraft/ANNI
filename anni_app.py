@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.42"
+ANNI_VERSION = "1.01.43"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1447,10 +1447,14 @@ def incrementar_hitos_mencionados(usuario_id, mensaje):
             if updated:
                 print(f"[ANNI] Peso +0.3 por mención de {nombre} con relación '{relacion_lower}' ({updated} hitos)")
 
-        # 2. Keywords del hito en el mensaje (sin cambios)
-        c.execute("SELECT id, contenido, titulo FROM hitos_usuario WHERE usuario_id=? AND activo=1", (usuario_id,))
+        # 2. Keywords del hito en el mensaje
+        # Excluir tipo 'relacion' — esos suben por mención de nombre (parte 1), no por keywords
+        # Evita que mencionar a Bosco suba el peso de Erika porque su hito dice "madre de Bosco"
+        c.execute("SELECT id, contenido, titulo, tipo FROM hitos_usuario WHERE usuario_id=? AND activo=1", (usuario_id,))
         hitos = c.fetchall()
-        for hid, contenido, titulo in hitos:
+        for hid, contenido, titulo, tipo in hitos:
+            if tipo == 'relacion':
+                continue
             palabras = [w for w in (contenido or '').lower().split() if len(w) > 4]
             palabras += [w for w in (titulo or '').lower().split() if len(w) > 4]
             matches = sum(1 for p in palabras if p in mensaje_lower)
