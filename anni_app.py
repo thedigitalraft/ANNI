@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.27"
+ANNI_VERSION = "1.01.28"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2679,7 +2679,7 @@ const POINTS = """ + points_json + """;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 2000);
-camera.position.set(0, 0, 250);
+camera.position.set(0, 0, 380);
 const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
@@ -2783,9 +2783,12 @@ POINTS.filter(p=>!p.isCenter).forEach((p,i)=>{
   mesh.position.set(p.x,p.y,p.z);
   mesh.userData={label:p.label,peso:p.peso};
   scene.add(mesh); meshes.push(mesh);
-  const gg=new THREE.SphereGeometry(size*2.2,12,12);
-  const gm=new THREE.MeshBasicMaterial({color:col.c,transparent:true,opacity:0.04,side:THREE.BackSide});
-  const glow=new THREE.Mesh(gg,gm); glow.position.copy(mesh.position); scene.add(glow);
+  // Multi-layer glow for all stars
+  [{mult:2.0,op:0.08},{mult:3.2,op:0.04},{mult:5.0,op:0.02}].forEach(function(g){
+    const gg=new THREE.SphereGeometry(size*g.mult,10,10);
+    const gm=new THREE.MeshBasicMaterial({color:col.c,transparent:true,opacity:g.op,side:THREE.BackSide,depthWrite:false});
+    const glow=new THREE.Mesh(gg,gm); glow.position.copy(mesh.position); scene.add(glow);
+  });
 });
 
 const raycaster=new THREE.Raycaster();
@@ -2808,7 +2811,7 @@ let isDrag=false,prevX=0,prevY=0,rotX=0,rotY=0,autoRot=true;
 renderer.domElement.addEventListener('mousedown',e=>{isDrag=true;autoRot=false;prevX=e.clientX;prevY=e.clientY;});
 renderer.domElement.addEventListener('mouseup',()=>isDrag=false);
 renderer.domElement.addEventListener('mousemove',e=>{if(!isDrag)return;rotY+=(e.clientX-prevX)*0.005;rotX+=(e.clientY-prevY)*0.005;prevX=e.clientX;prevY=e.clientY;});
-renderer.domElement.addEventListener('wheel',e=>{camera.position.z=Math.max(60,Math.min(500,camera.position.z+e.deltaY*0.3));});
+renderer.domElement.addEventListener('wheel',e=>{camera.position.z=Math.max(80,Math.min(700,camera.position.z+e.deltaY*0.4));});
 window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 // Label sprites
 const labelSprites=[];
