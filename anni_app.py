@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.30"
+ANNI_VERSION = "1.01.31"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4765,7 +4765,7 @@ var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</
 card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
 '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+
 '<div class="item-actions">'+
-'<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
+'<button class="btn-edit" onclick="editHito('+h.id+',this,\''+escH(h.categoria||'')+'\')">Editar</button>'+
 '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
 '</div>';
 body.appendChild(card);});
@@ -4832,7 +4832,7 @@ function editHito(id,btn,categoria){
     } else {
       nuevoTitulo=titEl?titEl.value.trim():origTitle;
     }
-    if(!nuevoTitulo.trim()) nuevoTitulo=origTitle;
+    if(!nuevoTitulo||!nuevoTitulo.trim()) nuevoTitulo=origTitle;
     var contenido=conEl?conEl.value.trim():'';
     if(!contenido){alert('El contenido no puede estar vacío.');return;}
     var payload={
