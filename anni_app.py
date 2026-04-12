@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.43"
+ANNI_VERSION = "1.01.44"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1321,30 +1321,36 @@ def degradar_pesos_hitos(usuario_id, mensajes_conversacion):
         c.execute("SELECT nombre FROM personas WHERE usuario_id=?", (usuario_id,))
         personas = [r[0].lower() for r in c.fetchall()]
 
-        for hid, titulo, contenido in hitos:
+        c.execute("SELECT id, titulo, contenido, tipo FROM hitos_usuario WHERE usuario_id=? AND activo=1 AND peso > 1 AND id != 1",
+                  (usuario_id,))
+        hitos = c.fetchall()
+
+        for hid, titulo, contenido, tipo in hitos:
             titulo_lower = (titulo or '').lower()
             contenido_lower = (contenido or '').lower()
 
             # ¿Se mencionó este hito en la conversación?
             mencionado = False
 
-            # Por palabras clave del hito
-            palabras = [w for w in contenido_lower.split() if len(w) > 4]
-            palabras += [w for w in titulo_lower.split() if len(w) > 4]
-            if sum(1 for p in palabras if p in texto_conv) >= 2:
-                mencionado = True
-
-            # Por nombre de persona asociada
-            if not mencionado:
+            if tipo == 'relacion':
+                # Hitos de persona: solo detectar por nombre propio en el texto
+                # NO usar keyword match — evita que mencionar a Bosco cuente como mención de Erika
                 for nombre in personas:
-                    if nombre in titulo_lower or nombre in contenido_lower:
-                        if nombre in texto_conv:
+                    nombre_lower = nombre.lower()
+                    if nombre_lower in titulo_lower or nombre_lower in contenido_lower:
+                        if nombre_lower in texto_conv:
                             mencionado = True
                             break
+            else:
+                # Hitos de concepto/identidad: keyword match normal
+                palabras = [w for w in contenido_lower.split() if len(w) > 4]
+                palabras += [w for w in titulo_lower.split() if len(w) > 4]
+                if sum(1 for p in palabras if p in texto_conv) >= 2:
+                    mencionado = True
 
             # Degradar si no se mencionó
             if not mencionado:
-                c.execute("UPDATE hitos_usuario SET peso = MAX(peso - 0.05, 1) WHERE id=?", (hid,))
+                c.execute("UPDATE hitos_usuario SET peso = MAX(peso - 0.1, 1) WHERE id=?", (hid,))
 
         conn.commit()
         conn.close()
@@ -2392,6 +2398,11 @@ def api_guardar_resumen():
         if msgs_conv:
             threading.Thread(target=analizar_conversacion, args=(usuario_id, msgs_conv, resumen), daemon=True).start()
             print(f"[ANNI] analizar_conversacion disparado para conv #{conv_id} ({len(msgs_conv)} msgs)")
+    # Incrementar pesos de hitos mencionados en la conversación completa
+    if msgs_conv:
+        texto_completo = ' '.join([m[1] for m in msgs_conv if m[0] == 'user' and m[1]])
+        if texto_completo.strip():
+            threading.Thread(target=incrementar_hitos_mencionados, args=(usuario_id, texto_completo), daemon=True).start()
     # Cerrar temas caducados en background
     threading.Thread(target=cerrar_temas_caducados, args=(usuario_id,), daemon=True).start()
     return jsonify({'ok': True})
