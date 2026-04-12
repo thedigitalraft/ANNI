@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.39"
+ANNI_VERSION = "1.01.40"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2976,7 +2976,7 @@ body { background: #000; overflow: hidden; font-family: 'Courier New', monospace
 <div id="ui">
   <div id="title">UNIVERSO ANNI</div>
   <div id="subtitle">Memoria validada en el espacio semántico</div>
-  <div style="color:#ffffff;font-size:11px;margin-top:6px;opacity:0.6;max-width:280px;line-height:1.5">La distancia entre puntos refleja similitud de contenido, no importancia ni relación familiar. El mapa cambia a medida que ANNI aprende más.</div>
+  <div style="color:#ffffff;font-size:13px;margin-top:6px;opacity:0.6;max-width:280px;line-height:1.5">La distancia entre puntos refleja similitud de contenido, no importancia ni relación familiar. El mapa cambia a medida que ANNI aprende más.</div>
 </div>
 <div id="scale">
   <div style="margin-bottom:4px;color:#ffffff">PESO</div>
@@ -3131,17 +3131,6 @@ renderer.domElement.addEventListener('wheel',e=>{camera.position.z=Math.max(80,M
 window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
 // Label sprites
 const labelSprites=[];
-POINTS.filter(p=>!p.isCenter).forEach((p,i)=>{
-  const cv=document.createElement('canvas');cv.width=256;cv.height=48;
-  const cx=cv.getContext('2d');cx.fillStyle='rgba(0,0,0,0)';cx.fillRect(0,0,256,48);
-  cx.fillStyle='#ffffff';cx.font='bold 22px Courier New';cx.textAlign='center';
-  const lbl=p.label.split(' — ')[0].split(' ')[0].toUpperCase().substring(0,16);
-  cx.fillText(lbl,128,36);
-  const sz=2.0+Math.pow(p.peso/50,0.5)*10;
-  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),transparent:true,opacity:0.9,depthTest:false}));
-  sp.scale.set(22,6,1);sp.position.set(p.x,p.y+sz+5,p.z);sp.renderOrder=999;
-  scene.add(sp);labelSprites.push({sp,p,sz});
-});
 
 let t=0;
 function animate(){
@@ -5445,19 +5434,7 @@ POINTS.filter(function(p){return !p.isCenter;}).forEach(function(p,idx){
   glow.position.copy(mesh.position);
   scene.add(glow);
 
-  // Label
-  var c2=document.createElement('canvas');
-  c2.width=512;c2.height=72;
-  var ctx=c2.getContext('2d');
-  ctx.fillStyle='rgba(0,0,0,0)';ctx.fillRect(0,0,512,72);
-  ctx.fillStyle='#ffffff';ctx.font='bold 32px Courier New';
-  var displayLabel2=p.label.split(' — ')[0].split(' ')[0].toUpperCase().substring(0,20);
-  ctx.textAlign='center';ctx.fillText(displayLabel2,256,52);
-  var tex=new THREE.CanvasTexture(c2);
-  var sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0.85}));
-  sp.scale.set(52,7,1);
-  sp.position.set(p.x,p.y+size+4,p.z);
-  scene.add(sp);
+
 });
 
 // Raycaster
