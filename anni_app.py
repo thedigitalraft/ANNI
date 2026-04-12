@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.37"
+ANNI_VERSION = "1.01.38"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -736,6 +736,27 @@ def db_guardar_embedding(tabla_origen, registro_id, texto):
         print(f"[ANNI] Error embedding {tabla_origen}#{registro_id}: {e}")
 
 # ── ANÁLISIS POST-CONVERSACIÓN ────────────────────────────────────────────────
+
+
+def cerrar_temas_caducados(usuario_id, dias=14):
+    """Cierra temas abiertos que no se han mencionado en N días.
+    Se llama al cerrar una conversación — limpieza automática."""
+    try:
+        umbral = time.time() - (dias * 86400)
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""UPDATE temas_abiertos
+                     SET estado='cerrado'
+                     WHERE usuario_id=? AND estado='abierto'
+                     AND (ultima_mencion < ? OR (ultima_mencion IS NULL AND primera_mencion < ?))""",
+                  (usuario_id, umbral, umbral))
+        cerrados = c.rowcount
+        conn.commit()
+        conn.close()
+        if cerrados:
+            print(f"[ANNI] {cerrados} temas cerrados por caducidad ({dias}d sin mención)")
+    except Exception as e:
+        print(f"[ANNI] Error cerrando temas caducados: {e}")
 
 
 def degradar_observaciones(usuario_id):
@@ -2367,6 +2388,8 @@ def api_guardar_resumen():
         if msgs_conv:
             threading.Thread(target=analizar_conversacion, args=(usuario_id, msgs_conv, resumen), daemon=True).start()
             print(f"[ANNI] analizar_conversacion disparado para conv #{conv_id} ({len(msgs_conv)} msgs)")
+    # Cerrar temas caducados en background
+    threading.Thread(target=cerrar_temas_caducados, args=(usuario_id,), daemon=True).start()
     return jsonify({'ok': True})
 
 @app.route('/api/memoria')
