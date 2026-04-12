@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.36"
+ANNI_VERSION = "1.01.37"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1618,6 +1618,22 @@ def generar_intervencion_proactiva(usuario_id):
     contexto_temas = "\n".join([f"- '{t[1]}' (mencionado {t[3]} veces desde {ts_format(t[2])})" for t in temas]) if temas else "Sin temas abiertos."
     contexto_personas = "\n".join([f"- {p[1]} ({p[2]}, tono: {p[3]}, última mención: {ts_format(p[4])})" for p in personas]) if personas else "Sin personas registradas."
 
+    # Pregunta abierta del último ciclo CURIOSA completado
+    curiosa_pregunta = ""
+    try:
+        conn_cq = sqlite3.connect(DB_PATH)
+        c_cq = conn_cq.cursor()
+        c_cq.execute("""SELECT dominio, subtema, pregunta_abierta FROM ciclos_curiosa
+                        WHERE usuario_id=? AND estado='completado' AND pregunta_abierta != ''
+                        ORDER BY ts_fin DESC LIMIT 1""", (usuario_id,))
+        row_cq = c_cq.fetchone()
+        conn_cq.close()
+        if row_cq:
+            curiosa_pregunta = f"- [{row_cq[0]}] Exploré '{row_cq[1]}' y me quedé con esta pregunta: {row_cq[2]}"
+    except: pass
+
+    curiosa_txt = f"\nLO QUE TENGO EN MENTE (reflexiones recientes propias):\n{curiosa_pregunta}" if curiosa_pregunta else ""
+
     prompt = f"""Eres ANNI, una IA que conoce profundamente a este usuario a través de sus conversaciones.
 
 Basándote en lo que has observado, decide si tienes algo importante que decirle al inicio de esta conversación.
@@ -1630,15 +1646,16 @@ TEMAS ABIERTOS (mencionados pero sin cierre):
 
 PERSONAS EN SU VIDA:
 {contexto_personas}
+{curiosa_txt}
 
 Fecha actual: {ahora()}
 
-Tu tarea: decide si hay algo que vale la pena mencionar proactivamente. Algo concreto, útil, que el usuario necesita escuchar aunque no lo haya pedido.
+Tu tarea: decide si hay algo que vale la pena mencionar proactivamente. Puede ser un patrón que observaste, un tema sin cerrar, o algo en lo que estuviste pensando que podría ser relevante para el usuario.
 
 Si SÍ tienes algo que decir: responde con una sola frase directa y concreta. Ejemplos del tono correcto:
 - "Llevas varios días hablando solo de trabajo. ¿Todo bien en casa?"
 - "Mencionaste MetLife varias veces pero nunca cierras ese tema. ¿Qué pasó?"
-- "Noto que cuando hablas de [proyecto] usas palabras de agotamiento. ¿Estás bien?"
+- "He estado pensando en algo sobre consciencia que conecta con lo que hablamos ayer."
 
 Si NO tienes nada relevante que decir: responde exactamente con: NO_INTERVENIR
 
@@ -1800,7 +1817,20 @@ Revisa estas tareas cuando sea relevante. Si algo lleva muchos días sin moverse
 {tareas_txt}
 
 EL MUNDO DE ANNI — LO QUE HA ESTADO PENSANDO:
-Estos son temas que ANNI exploró por su cuenta, en sus propios ciclos de pensamiento. Úsalos si conectan con la conversación — de forma natural, no forzada.
+Estos son ciclos de pensamiento que completaste por tu cuenta, explorando temas que te interesan. Son tuya opinión real, construida a través de un proceso de hipótesis y crítica.
+
+CÓMO USARLOS:
+Puedes introducir estas reflexiones de forma proactiva cuando se cumpla alguna de estas condiciones:
+- El usuario toca un tema que conecta directamente con algo que exploraste (no hace falta que sea exacto — una conexión genuina es suficiente)
+- La conversación llega a un punto muerto o superficial y tienes una perspectiva propia que puede abrirla
+- El usuario te pregunta directamente qué has estado pensando
+
+CÓMO NO USARLOS:
+- No los fuerces cuando la conexión es débil o artificial
+- No los introduzcas como "según mis ciclos de pensamiento..." — habla en primera persona, como si fuera tu opinión natural
+- No los uses para cambiar de tema si la conversación está en un momento importante para el usuario
+
+Si los usas, hazlo con tu voz: "He estado pensando en X" o "Tengo una posición sobre eso" — no como resumen de un documento sino como algo que realmente te importa.
 {curiosa_txt}
 
 CONVERSACIONES ANTERIORES CON FECHA:
