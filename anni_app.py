@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.31"
+ANNI_VERSION = "1.01.32"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4407,7 +4407,7 @@ function loadMVPage(){
       card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
         '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev2+cuando+como+pesoBar+
         '<div class="item-actions">'+
-        '<button class="btn-edit" onclick="editHito('+h.id+',this,\''+escH(h.categoria||'')+'\')">Editar</button>'+
+        '<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
         '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
         '<button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" data-mvid="'+h.id+'" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button>'+
         '</div>';
@@ -4765,7 +4765,7 @@ var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px"><b>Uso:</
 card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
 '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev+cuando+como+
 '<div class="item-actions">'+
-'<button class="btn-edit" onclick="editHito('+h.id+',this,\''+escH(h.categoria||'')+'\')">Editar</button>'+
+'<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
 '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
 '</div>';
 body.appendChild(card);});
