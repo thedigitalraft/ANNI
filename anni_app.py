@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.25"
+ANNI_VERSION = "1.01.26"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2685,12 +2685,27 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
-// Stars
-const sg = new THREE.BufferGeometry();
-const sv = [];
-for(let i=0;i<15000;i++) sv.push((Math.random()-0.5)*2000,(Math.random()-0.5)*2000,(Math.random()-0.5)*2000);
-sg.setAttribute('position', new THREE.Float32BufferAttribute(sv,3));
-scene.add(new THREE.Points(sg, new THREE.PointsMaterial({color:0xffffff,size:0.6,transparent:true,opacity:0.85})));
+// Stars — dense colored field
+const sv=[], sc=[];
+for(let i=0;i<25000;i++){
+  sv.push((Math.random()-0.5)*3000,(Math.random()-0.5)*3000,(Math.random()-0.5)*3000);
+  const r=Math.random();
+  if(r<0.6){sc.push(1,1,1);}
+  else if(r<0.75){sc.push(0.7,0.8,1);}
+  else if(r<0.88){sc.push(1,0.9,0.7);}
+  else{sc.push(1,0.5,0.4);}
+}
+const sg=new THREE.BufferGeometry();
+sg.setAttribute('position',new THREE.Float32BufferAttribute(sv,3));
+sg.setAttribute('color',new THREE.Float32BufferAttribute(sc,3));
+scene.add(new THREE.Points(sg,new THREE.PointsMaterial({vertexColors:true,size:0.7,transparent:true,opacity:0.9})));
+// Nebulas
+[{x:-300,y:200,z:-400,r:180,c:0x1a0044,o:0.025},{x:400,y:-150,z:-350,r:150,c:0x003322,o:0.020},
+ {x:-200,y:-300,z:200,r:200,c:0x220011,o:0.018},{x:300,y:300,z:100,r:160,c:0x001133,o:0.022}
+].forEach(n=>{
+  const nb=new THREE.Mesh(new THREE.SphereGeometry(n.r,8,8),new THREE.MeshBasicMaterial({color:n.c,transparent:true,opacity:n.o,side:THREE.BackSide}));
+  nb.position.set(n.x,n.y,n.z);scene.add(nb);
+});
 
 scene.add(new THREE.AmbientLight(0x110000,3));
 const pl = new THREE.PointLight(0xff6633,2,600);
@@ -2750,16 +2765,16 @@ if(centerPoint){
   window._bhDiskMeshes=diskMeshes;
 }
 POINTS.filter(p=>!p.isCenter).forEach((p,i)=>{
-  const size=2.5+(p.peso/10)*3.5;
+  const size=2.0+Math.pow(p.peso/50,0.5)*10;
   const col=pesoColor(p.peso);
-  const geo=new THREE.IcosahedronGeometry(size,1);
-  const mat=new THREE.MeshPhongMaterial({color:col.c,emissive:col.e,emissiveIntensity:0.7,shininess:150,transparent:true,opacity:0.95});
+  const geo=new THREE.SphereGeometry(size,20,20);
+  const mat=new THREE.MeshPhongMaterial({color:col.c,emissive:col.e,emissiveIntensity:0.8,shininess:200,transparent:true,opacity:0.96});
   const mesh=new THREE.Mesh(geo,mat);
   mesh.position.set(p.x,p.y,p.z);
   mesh.userData={label:p.label,peso:p.peso};
   scene.add(mesh); meshes.push(mesh);
-  const gg=new THREE.SphereGeometry(size*2.5,12,12);
-  const gm=new THREE.MeshBasicMaterial({color:col.c,transparent:true,opacity:0.05,side:THREE.BackSide});
+  const gg=new THREE.SphereGeometry(size*2.2,12,12);
+  const gm=new THREE.MeshBasicMaterial({color:col.c,transparent:true,opacity:0.04,side:THREE.BackSide});
   const glow=new THREE.Mesh(gg,gm); glow.position.copy(mesh.position); scene.add(glow);
 });
 
@@ -2779,21 +2794,37 @@ window.addEventListener('mousemove',e=>{
     tip.innerHTML='<b style="color:'+pc+'">⭐ '+obj.userData.label.toUpperCase()+'</b><br><span style="color:#555;font-size:10px">peso: '+obj.userData.peso.toFixed(1)+'</span>';
   } else { if(hovered){hovered.material.emissiveIntensity=0.7;hovered=null;} tip.style.display='none'; }
 });
-let isDrag=false,prevX=0,prevY=0,rotX=0,rotY=0;
-renderer.domElement.addEventListener('mousedown',e=>{isDrag=true;prevX=e.clientX;prevY=e.clientY;});
+let isDrag=false,prevX=0,prevY=0,rotX=0,rotY=0,autoRot=true;
+renderer.domElement.addEventListener('mousedown',e=>{isDrag=true;autoRot=false;prevX=e.clientX;prevY=e.clientY;});
 renderer.domElement.addEventListener('mouseup',()=>isDrag=false);
 renderer.domElement.addEventListener('mousemove',e=>{if(!isDrag)return;rotY+=(e.clientX-prevX)*0.005;rotX+=(e.clientY-prevY)*0.005;prevX=e.clientX;prevY=e.clientY;});
 renderer.domElement.addEventListener('wheel',e=>{camera.position.z=Math.max(60,Math.min(500,camera.position.z+e.deltaY*0.3));});
 window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+// Label sprites
+const labelSprites=[];
+POINTS.filter(p=>!p.isCenter).forEach((p,i)=>{
+  const cv=document.createElement('canvas');cv.width=256;cv.height=48;
+  const cx=cv.getContext('2d');cx.fillStyle='rgba(0,0,0,0)';cx.fillRect(0,0,256,48);
+  cx.fillStyle='#ffffff';cx.font='bold 22px Courier New';cx.textAlign='center';
+  const lbl=p.label.split(' — ')[0].split(' ')[0].toUpperCase().substring(0,16);
+  cx.fillText(lbl,128,36);
+  const sz=2.0+Math.pow(p.peso/50,0.5)*10;
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),transparent:true,opacity:0.9,depthTest:false}));
+  sp.scale.set(22,6,1);sp.position.set(p.x,p.y+sz+5,p.z);sp.renderOrder=999;
+  scene.add(sp);labelSprites.push({sp,p,sz});
+});
+
 let t=0;
 function animate(){
   requestAnimationFrame(animate); t+=0.004;
+  if(autoRot) rotY+=0.0008;
   scene.rotation.y=rotY; scene.rotation.x=rotX;
-  meshes.forEach((m,i)=>{m.scale.setScalar(1+Math.sin(t*1.2+i*0.8)*0.07);});
+  meshes.forEach((m,i)=>{
+    if(!m.userData.isCenter) m.scale.setScalar(1+Math.sin(t*1.2+i*0.8)*0.05);
+  });
   pl.intensity=1.8+Math.sin(t*0.5)*0.4;
-  if(window._bhDiskMeshes) window._bhDiskMeshes.forEach(function(d){d.rotation.z+=0.002;});
+  if(window._bhDiskMeshes) window._bhDiskMeshes.forEach(d=>{d.rotation.z+=0.002;});
   renderer.render(scene,camera);
-
 }
 animate();
 </script>
