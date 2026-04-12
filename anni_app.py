@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.23"
+ANNI_VERSION = "1.01.24"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5039,10 +5039,10 @@ function pesoColor(peso){
 
 var meshes=[];
 POINTS.filter(function(p){return !p.isCenter;}).forEach(function(p,idx){
-  var size=2.5+(p.peso/10)*3.5;
+  var size=2.0+Math.pow(p.peso/50,0.5)*10;  // range ~2 to 12, nonlinear
   var col=pesoColor(p.peso);
-  var geo=new THREE.IcosahedronGeometry(size,1);
-  var mat=new THREE.MeshPhongMaterial({color:col.c,emissive:col.e,emissiveIntensity:0.7,shininess:150,transparent:true,opacity:0.95});
+  var geo=new THREE.SphereGeometry(size,20,20);
+  var mat=new THREE.MeshPhongMaterial({color:col.c,emissive:col.e,emissiveIntensity:0.8,shininess:200,transparent:true,opacity:0.96});
   var mesh=new THREE.Mesh(geo,mat);
   mesh.position.set(p.x,p.y,p.z);
   mesh.userData={label:p.label,peso:p.peso,col:col};
@@ -5106,8 +5106,8 @@ renderer.domElement.addEventListener('mousemove',function(e){
 });
 
 // Drag & zoom
-var isDrag=false,prevX=0,prevY=0,rotX=0,rotY=0;
-renderer.domElement.addEventListener('mousedown',function(e){isDrag=true;prevX=e.clientX;prevY=e.clientY;});
+var isDrag=false,prevX=0,prevY=0,rotX=0,rotY=0,autoRot=true;
+renderer.domElement.addEventListener('mousedown',function(e){isDrag=true;autoRot=false;prevX=e.clientX;prevY=e.clientY;});
 renderer.domElement.addEventListener('mouseup',function(){isDrag=false;});
 renderer.domElement.addEventListener('mousemove',function(e){
   if(!isDrag)return;
@@ -5122,14 +5122,15 @@ var animId=null;
 function animate(){
   animId=requestAnimationFrame(animate);
   t+=0.004;
+  if(autoRot) rotY+=0.0008;
   scene.rotation.y=rotY; scene.rotation.x=rotX;
   meshes.forEach(function(m,i){
     if(m.userData.isStar){
-      m.scale.setScalar(1+Math.sin(t*0.8+i)*0.05);
-      m.rotation.y += 0.003;
+      m.scale.setScalar(1+Math.sin(t*0.8+i)*0.04);
+      m.rotation.y+=0.002;
     } else {
-      m.scale.setScalar(1+Math.sin(t*1.5+i*1.2)*0.06);
-      m.rotation.y += 0.006;
+      m.scale.setScalar(1+Math.sin(t*1.2+i*1.1)*0.05);
+      m.rotation.y+=0.004;
     }
   });
   pl.intensity=1.8+Math.sin(t*0.5)*0.4;
