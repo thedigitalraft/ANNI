@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.52"
+ANNI_VERSION = "1.01.53"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5354,6 +5354,12 @@ function mkGrid3(a,b,c){
   return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:0">'+a+b+c+'</div>';
 }
 
+function mvGuardar(btn){
+  var tipo=btn.getAttribute('data-tipo');
+  var def=MV_TIPOS.filter(function(t){return t.tipo===tipo;})[0];
+  if(def) def.guardar();
+}
+
 function guardarHitoTipado(payload){
   var tipo=payload.tipo_nuevo||payload.categoria||'manual';
   delete payload.tipo_nuevo;
@@ -5440,7 +5446,7 @@ function loadMVPage(){
         '<div style="font-size:10px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:10px">+ AÑADIR '+escH(def.label.toUpperCase())+'</div>'+
         def.campos()+
         '<div style="margin-top:10px">'+
-        '<button onclick="MV_TIPOS.filter(function(t){return t.tipo===''+def.tipo+'';})[0].guardar()" style="font-size:11px;padding:5px 16px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>'+
+        '<button data-tipo="'+def.tipo+'" onclick="mvGuardar(this)" style="font-size:11px;padding:5px 16px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>'
         '</div>';
       body.appendChild(formDiv);
 
