@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.55"
+ANNI_VERSION = "1.01.56"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5354,6 +5354,41 @@ function mkGrid3(a,b,c){
   return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:0">'+a+b+c+'</div>';
 }
 
+function guardarEditMV(btn, hid){
+  var formDiv=btn.closest('[data-form-tipo]');
+  var tipo=btn.getAttribute('data-tipo');
+  var def=MV_TIPOS.filter(function(t){return t.tipo===tipo;})[0];
+  if(!def) return;
+  // Construir payload igual que guardar() pero con método PUT
+  var payload={};
+  // Leer todos los data-fname del formDiv
+  formDiv.querySelectorAll('[data-fname]').forEach(function(el){
+    var name=el.getAttribute('data-fname');
+    if(el.type==='checkbox') payload[name.replace('mv-','').replace('mvo-','')]=el.checked?1:0;
+    else payload[name.replace('mv-','').replace('mvo-','')]=el.value||'';
+  });
+  // Asegurar titulo y contenido
+  if(!payload.titulo&&!payload['mvo-titulo']) return alert('El título es obligatorio');
+  // Normalizar claves de organización (mvo- prefix)
+  Object.keys(payload).forEach(function(k){
+    if(k.indexOf('mvo-')===0){
+      payload[k.slice(4)]=payload[k];
+      delete payload[k];
+    }
+  });
+  // Mapear campos específicos de organización
+  if(tipo==='organizacion'){
+    payload.profesion=payload.sector||payload.profesion||'';
+    payload.contenido=payload.contenido||payload.titulo||'';
+  }
+  fetch('/api/hitos/'+hid,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload)
+  }).then(r=>r.json()).then(function(d){
+    if(d.ok) loadMVPage();
+    else alert('Error al guardar');
+  });
+}
+
 function mvGuardar(btn){
   var tipo=btn.getAttribute('data-tipo');
   var def=MV_TIPOS.filter(function(t){return t.tipo===tipo;})[0];
@@ -5846,6 +5881,29 @@ function editHito(id,btn,categoria){
   var origComo=comoEl?(comoEl.textContent.replace(/^Uso:\s*/,'').trim()):'';
 
   var esRelacion=(categoria||'').toLowerCase()==='relacion';
+  var tiposMV=['organizacion','proyecto','lugar','evento','forma_de_pensar','valor','patron'];
+  var esTipoMV=tiposMV.indexOf((categoria||'').toLowerCase())>=0;
+
+  // Para tipos no-persona, usar el formulario de MV_TIPOS directamente
+  if(esTipoMV){
+    var def=MV_TIPOS.filter(function(t){return t.tipo===(categoria||'').toLowerCase();})[0];
+    if(def && card){
+      // Reemplazar el card entero con el formulario de edición
+      var editDiv=document.createElement('div');
+      editDiv.style.cssText='background:#fff8f8;border:2px solid #cc0000;border-radius:8px;padding:16px;margin-bottom:8px';
+      editDiv.setAttribute('data-form-tipo', def.tipo);
+      editDiv.innerHTML=
+        '<div style="font-size:10px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:10px">EDITANDO: '+escH(def.label.toUpperCase())+'</div>'+
+        def.campos(h)+
+        '<div style="margin-top:10px;display:flex;gap:8px">'+
+        '<button onclick="guardarEditMV(this,'+h.id+')" data-tipo="'+def.tipo+'" style="font-size:11px;padding:5px 16px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>'+
+        '<button onclick="loadMVPage()" style="font-size:11px;padding:5px 12px;background:none;border:1px solid #ccc;cursor:pointer;font-family:monospace;border-radius:3px;color:#888">CANCELAR</button>'+
+        '</div>';
+      card.parentNode.insertBefore(editDiv, card);
+      card.style.display='none';
+    }
+    return;
+  }
   var dashParts=origTitle.split(' — ');
   var namePart=dashParts[0]||'';
   var nameWords=namePart.split(' ');
