@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.54"
+ANNI_VERSION = "1.01.55"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5443,8 +5443,8 @@ function loadMVPage(){
         '<div style="font-size:11px;color:#aaa;margin-top:1px">'+escH(def.desc)+'</div>'+
         '</div></div>'+
         '<div style="display:flex;align-items:center;gap:8px">'+
-        '<span style="font-size:12px;color:#888;background:#f0f0f0;border-radius:10px;padding:2px 8px">'+del_tipo.length+'</span>'+
-        '<span class="acc-arrow" style="font-size:14px;color:#aaa;transition:transform 0.2s">▼</span>'+
+        '<span style="font-size:12px;color:#fff;background:#cc0000;border-radius:10px;padding:2px 10px;font-weight:700">'+del_tipo.length+'</span>'+
+        '<span class="acc-arrow" style="font-size:14px;color:#cc0000;transition:transform 0.2s;font-weight:900">▼</span>'+
         '</div>';
 
       // Cuerpo
@@ -5482,13 +5482,7 @@ function loadMVPage(){
         header.style.background=abierto?'#fff':'#fafafa';
       };
 
-      // Abrir automáticamente si tiene memorias
-      if(del_tipo.length>0){
-        abierto=true;
-        body.style.display='block';
-        header.querySelector('.acc-arrow').style.transform='rotate(180deg)';
-        header.style.background='#fff';
-      }
+      // Todos los acordeones cerrados por defecto
 
       acc.appendChild(header);
       acc.appendChild(body);
