@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.49"
+ANNI_VERSION = "1.01.50"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4930,6 +4930,7 @@ function loadMVPage(){
       // Guardar datos completos en el card para que editHito pueda leerlos
       card.dataset.hito=JSON.stringify(h);
       var esRelacion=(h.tipo||'').toLowerCase()==='relacion';
+      var hitoTipo=h.tipo||'';
       var titulo='<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+(h.titulo?escH(h.titulo):'')+'</div>';
       var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(h.categoria)+'</span>':'';
       // Badge de subtipo para hitos de persona
@@ -4944,7 +4945,7 @@ function loadMVPage(){
       card.innerHTML='<div class="item-meta">'+cat+subtipoBadge+fallBadge+inactivaBadge+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
         '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev2+cuando+como+pesoBar+
         '<div class="item-actions">'+
-        '<button class="btn-edit" onclick="editHito('+h.id+',this,''+escH(h.tipo||'')+'')">Editar</button>'+
+        '<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
         '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
         '<button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" data-mvid="'+h.id+'" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button>'+
         '</div>';
@@ -5310,6 +5311,7 @@ body.appendChild(pagerEl(d.pages,page,'loadHitos'));});}
 
 function editHito(id,btn,categoria){
   var card=btn.closest('.item-card');
+  if(!categoria&&card.dataset.hito){try{categoria=JSON.parse(card.dataset.hito).tipo||'';}catch(e){}}
   var titleEl=card.querySelector('[id="ht-'+id+'"]');
   var contentEl=card.querySelector('[id="hc-'+id+'"]');
   var evEl=card.querySelector('[id="hev-'+id+'"]');
