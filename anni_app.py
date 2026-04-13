@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.46"
+ANNI_VERSION = "1.01.47"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3452,25 +3452,61 @@ def api_personas_sin_hito():
 @app.route('/api/embeddings/repair', methods=['POST'])
 @login_required
 def api_embeddings_repair():
-    """Genera embeddings para todos los hitos que no los tienen."""
+    """Regenera embeddings para hitos sin embedding O con embedding desactualizado.
+    Fuerza recalc del universo al terminar."""
     usuario_id = session['usuario_id']
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Hitos sin embedding
     c.execute("""SELECT h.id, h.titulo, h.contenido FROM hitos_usuario h
                  WHERE h.usuario_id=? AND h.activo=1
                  AND h.id NOT IN (
                      SELECT registro_id FROM embeddings WHERE tabla_origen='hitos_usuario'
                  )""", (usuario_id,))
-    hitos = c.fetchall()
+    sin_emb = c.fetchall()
+    # Hitos con embedding desactualizado (hito editado despues del embedding)
+    c.execute("""SELECT h.id, h.titulo, h.contenido FROM hitos_usuario h
+                 JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
+                 WHERE h.usuario_id=? AND h.activo=1 AND h.ts > e.ts""", (usuario_id,))
+    desactualizados = c.fetchall()
     conn.close()
 
-    for hid, titulo, contenido in hitos:
-        texto = f"{titulo}. {contenido}" if titulo else contenido
-        threading.Thread(target=db_guardar_embedding,
-                        args=('hitos_usuario', hid, texto), daemon=True).start()
+    hitos = sin_emb + desactualizados
+    vistos = set()
+    hitos_uniq = []
+    for row in hitos:
+        if row[0] not in vistos:
+            vistos.add(row[0])
+            hitos_uniq.append(row)
 
-    return jsonify({'ok': True, 'reparando': len(hitos),
-                    'msg': f'Generando embeddings para {len(hitos)} hitos...'})
+    def regenerar_y_recalcular():
+        import time as time_mod
+        for hid, titulo, contenido in hitos_uniq:
+            try:
+                conn_del = sqlite3.connect(DB_PATH)
+                conn_del.execute("DELETE FROM embeddings WHERE tabla_origen='hitos_usuario' AND registro_id=?", (hid,))
+                conn_del.commit()
+                conn_del.close()
+            except: pass
+            texto = f"{titulo}. {contenido}" if titulo else contenido
+            db_guardar_embedding('hitos_usuario', hid, texto)
+            time_mod.sleep(0.3)
+        try:
+            conn_u = sqlite3.connect(DB_PATH)
+            conn_u.execute("DELETE FROM universo_cache WHERE usuario_id=?", (usuario_id,))
+            conn_u.commit()
+            conn_u.close()
+        except: pass
+        recalcular_universo(usuario_id)
+        print(f"[ANNI] Repair completo — {len(hitos_uniq)} embeddings regenerados, universo recalculado")
+
+    if hitos_uniq:
+        threading.Thread(target=regenerar_y_recalcular, daemon=True).start()
+
+    return jsonify({'ok': True, 'reparando': len(hitos_uniq),
+                    'sin_embedding': len(sin_emb),
+                    'desactualizados': len(desactualizados),
+                    'msg': f'Regenerando {len(hitos_uniq)} embeddings y recalculando universo...'})
 
 # ── UNIVERSO ──────────────────────────────────────────────────────────────────
 
@@ -4691,9 +4727,18 @@ function borrarTarea(id){
 }
 
 function repararEmbeddings(){
+  var btn=event.target;
+  btn.textContent='⏳ Procesando...';btn.disabled=true;
   fetch('/api/embeddings/repair',{method:'POST'}).then(r=>r.json()).then(function(d){
-    if(d.ok) alert('Generando embeddings para '+d.reparando+' hitos. Espera unos segundos y recarga el UNIVERSO.');
-  });
+    if(d.ok){
+      if(d.reparando===0){
+        alert('Todo está al día. Ningún embedding necesita regenerarse.');
+      } else {
+        alert('Regenerando '+d.reparando+' embeddings ('+d.sin_embedding+' nuevos, '+d.desactualizados+' desactualizados). El universo se recalculará automáticamente en unos segundos.');
+      }
+    }
+    btn.textContent='↻ Reparar embeddings';btn.disabled=false;
+  }).catch(function(){btn.textContent='↻ Reparar embeddings';btn.disabled=false;});
 }
 
 
