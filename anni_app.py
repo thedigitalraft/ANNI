@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.53"
+ANNI_VERSION = "1.01.54"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5073,30 +5073,30 @@ var MV_TIPOS = [
       mkF('TEMAS RECURRENTES', mkI('mv-temas_recurrentes', h.temas_recurrentes||'', 'Fútbol y trabajo, familia, proyectos...'))+
       mkF('NOTAS ADICIONALES', mkTA('mv-contenido', h.contenido||'', 'Cualquier cosa relevante que ANNI deba saber'));
     },
-    guardar: function(){
-      var nom=(document.getElementById('mv-nombre_propio')||{}).value||'';
-      var ape=(document.getElementById('mv-apellidos')||{}).value||'';
+    guardar: function(form){
+      var nom=fval(form,'mv-nombre_propio');
+      var ape=fval(form,'mv-apellidos');
       var titulo=(nom+' '+ape).trim().toUpperCase();
       if(!titulo){alert('El nombre es obligatorio');return;}
       var payload={
         titulo:titulo, categoria:'relacion', tipo_nuevo:'relacion',
-        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
+        contenido:fval(form,'mv-contenido')||titulo,
         nombre_propio:nom, apellidos:ape,
-        mote:(document.getElementById('mv-mote')||{}).value||'',
-        subtipo_relacion:(document.getElementById('mv-subtipo_relacion')||{}).value||'',
-        relacion_especifica:(document.getElementById('mv-relacion_especifica')||{}).value||'',
-        fallecido:document.getElementById('mv-fallecido')&&document.getElementById('mv-fallecido').checked?1:0,
-        relacion_activa:document.getElementById('mv-relacion_activa')&&document.getElementById('mv-relacion_activa').checked?1:0,
-        profesion:(document.getElementById('mv-profesion')||{}).value||'',
-        donde_vive:(document.getElementById('mv-donde_vive')||{}).value||'',
-        fecha_nacimiento:(document.getElementById('mv-fecha_nacimiento')||{}).value||'',
-        personalidad:(document.getElementById('mv-personalidad')||{}).value||'',
-        como_se_conocieron:(document.getElementById('mv-como_se_conocieron')||{}).value||'',
-        desde_cuando:(document.getElementById('mv-desde_cuando')||{}).value||'',
-        frecuencia_contacto:(document.getElementById('mv-frecuencia_contacto')||{}).value||'',
-        ultimo_contacto:(document.getElementById('mv-ultimo_contacto')||{}).value||'',
-        como_habla_rafa:(document.getElementById('mv-como_habla_rafa')||{}).value||'',
-        temas_recurrentes:(document.getElementById('mv-temas_recurrentes')||{}).value||''
+        mote:fval(form,'mv-mote'),
+        subtipo_relacion:fval(form,'mv-subtipo_relacion'),
+        relacion_especifica:fval(form,'mv-relacion_especifica'),
+        fallecido:fcheck(form,'mv-fallecido')?1:0,
+        relacion_activa:fcheck(form,'mv-relacion_activa')?1:0,
+        profesion:fval(form,'mv-profesion'),
+        donde_vive:fval(form,'mv-donde_vive'),
+        fecha_nacimiento:fval(form,'mv-fecha_nacimiento'),
+        personalidad:fval(form,'mv-personalidad'),
+        como_se_conocieron:fval(form,'mv-como_se_conocieron'),
+        desde_cuando:fval(form,'mv-desde_cuando'),
+        frecuencia_contacto:fval(form,'mv-frecuencia_contacto'),
+        ultimo_contacto:fval(form,'mv-ultimo_contacto'),
+        como_habla_rafa:fval(form,'mv-como_habla_rafa'),
+        temas_recurrentes:fval(form,'mv-temas_recurrentes')
       };
       guardarHitoTipado(payload);
     }
@@ -5108,33 +5108,33 @@ var MV_TIPOS = [
     desc: 'Empresas, instituciones y organizaciones relevantes',
     campos: function(h){
       h=h||{};
-      return mkF('NOMBRE', mkI('mv-titulo', h.titulo||'', 'Nombre de la organización', true))+
+      return mkF('NOMBRE', mkI('mvo-titulo', h.titulo||'', 'Nombre de la organización', true))+
       mkGrid2(
-        mkF('SECTOR', mkI('mv-sector', h.profesion||'', 'Marketing, Tecnología, Salud...')),
-        mkF('DÓNDE OPERA', mkI('mv-donde_vive', h.donde_vive||'', 'Ciudad, País, Global'))
+        mkF('SECTOR', mkI('mvo-sector', h.profesion||'', 'Marketing, Tecnología, Salud...')),
+        mkF('DÓNDE OPERA', mkI('mvo-donde_vive', h.donde_vive||'', 'Ciudad, País, Global'))
       )+
-      mkF('ROL DE RAFA', mkI('mv-relacion_especifica', h.relacion_especifica||'', 'Fundador, Cliente, Colaborador, Empleado...'))+
-      mkF('PERSONAS CLAVE', mkI('mv-personalidad', h.personalidad||'', 'Quién trabaja ahí o es contacto clave'))+
+      mkF('ROL DE RAFA', mkI('mvo-relacion_especifica', h.relacion_especifica||'', 'Fundador, Cliente, Colaborador, Empleado...'))+
+      mkF('PERSONAS CLAVE', mkI('mvo-personalidad', h.personalidad||'', 'Quién trabaja ahí o es contacto clave'))+
       mkGrid2(
-        mkF('DESDE CUÁNDO', mkI('mv-desde_cuando', h.desde_cuando||'', 'Año o época')),
-        mkF('ESTADO', mkSel('mv-frecuencia_contacto', h.frecuencia_contacto||'', [
+        mkF('DESDE CUÁNDO', mkI('mvo-desde_cuando', h.desde_cuando||'', 'Año o época')),
+        mkF('ESTADO', mkSel('mvo-frecuencia_contacto', h.frecuencia_contacto||'', [
           ['','Seleccionar...'],['activa','Activa'],['pausada','Pausada'],['cerrada','Cerrada']
         ]))
       )+
-      mkF('QUÉ REPRESENTA PARA RAFA', mkTA('mv-contenido', h.contenido||'', 'Por qué es importante esta organización'));
+      mkF('QUÉ REPRESENTA PARA RAFA', mkTA('mvo-contenido', h.contenido||'', 'Por qué es importante esta organización'));
     },
-    guardar: function(){
-      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+    guardar: function(form){
+      var titulo=fval(form,'mvo-titulo');
       if(!titulo){alert('El nombre es obligatorio');return;}
       var payload={
         titulo:titulo.toUpperCase(), categoria:'organizacion', tipo_nuevo:'organizacion',
-        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
-        profesion:(document.getElementById('mv-sector')||{}).value||'',
-        donde_vive:(document.getElementById('mv-donde_vive')||{}).value||'',
-        relacion_especifica:(document.getElementById('mv-relacion_especifica')||{}).value||'',
-        personalidad:(document.getElementById('mv-personalidad')||{}).value||'',
-        desde_cuando:(document.getElementById('mv-desde_cuando')||{}).value||'',
-        frecuencia_contacto:(document.getElementById('mv-frecuencia_contacto')||{}).value||''
+        contenido:fval(form,'mvo-contenido')||titulo,
+        profesion:fval(form,'mvo-sector'),
+        donde_vive:fval(form,'mvo-donde_vive'),
+        relacion_especifica:fval(form,'mvo-relacion_especifica'),
+        personalidad:fval(form,'mvo-personalidad'),
+        desde_cuando:fval(form,'mvo-desde_cuando'),
+        frecuencia_contacto:fval(form,'mvo-frecuencia_contacto')
       };
       guardarHitoTipado(payload);
     }
@@ -5162,19 +5162,19 @@ var MV_TIPOS = [
       mkF('POR QUÉ IMPORTA', mkI('mv-importa', h.como_habla_rafa||'', 'Qué problema resuelve o qué representa'))+
       mkF('PRÓXIMO PASO', mkTA('mv-contenido', h.contenido||'', 'Qué hay que hacer ahora mismo'));
     },
-    guardar: function(){
-      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+    guardar: function(form){
+      var titulo=fval(form,'mv-titulo');
       if(!titulo){alert('El nombre es obligatorio');return;}
       var payload={
         titulo:titulo.toUpperCase(), categoria:'proyecto', tipo_nuevo:'proyecto',
-        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
-        personalidad:(document.getElementById('mv-descripcion')||{}).value||'',
-        frecuencia_contacto:(document.getElementById('mv-estado')||{}).value||'',
-        donde_vive:(document.getElementById('mv-org')||{}).value||'',
-        desde_cuando:(document.getElementById('mv-inicio')||{}).value||'',
-        ultimo_contacto:(document.getElementById('mv-fin')||{}).value||'',
-        como_se_conocieron:(document.getElementById('mv-personas')||{}).value||'',
-        como_habla_rafa:(document.getElementById('mv-importa')||{}).value||''
+        contenido:fval(form,'mv-contenido')||titulo,
+        personalidad:fval(form,'mv-descripcion'),
+        frecuencia_contacto:fval(form,'mv-estado'),
+        donde_vive:fval(form,'mv-org'),
+        desde_cuando:fval(form,'mv-inicio'),
+        ultimo_contacto:fval(form,'mv-fin'),
+        como_se_conocieron:fval(form,'mv-personas'),
+        como_habla_rafa:fval(form,'mv-importa')
       };
       guardarHitoTipado(payload);
     }
@@ -5202,17 +5202,17 @@ var MV_TIPOS = [
       )+
       mkF('NOTAS', mkTA('mv-contenido', h.contenido||'', 'Cualquier cosa relevante sobre este lugar'));
     },
-    guardar: function(){
-      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+    guardar: function(form){
+      var titulo=fval(form,'mv-titulo');
       if(!titulo){alert('El nombre es obligatorio');return;}
       var payload={
         titulo:titulo.toUpperCase(), categoria:'lugar', tipo_nuevo:'lugar',
-        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
-        subtipo_relacion:(document.getElementById('mv-tipo_lugar')||{}).value||'',
-        relacion_especifica:(document.getElementById('mv-relevancia')||{}).value||'',
-        como_se_conocieron:(document.getElementById('mv-momentos')||{}).value||'',
-        frecuencia_contacto:(document.getElementById('mv-vivio')||{}).value||'',
-        desde_cuando:(document.getElementById('mv-freq_visita')||{}).value||''
+        contenido:fval(form,'mv-contenido')||titulo,
+        subtipo_relacion:fval(form,'mv-tipo_lugar'),
+        relacion_especifica:fval(form,'mv-relevancia'),
+        como_se_conocieron:fval(form,'mv-momentos'),
+        frecuencia_contacto:fval(form,'mv-vivio'),
+        desde_cuando:fval(form,'mv-freq_visita')
       };
       guardarHitoTipado(payload);
     }
@@ -5233,16 +5233,16 @@ var MV_TIPOS = [
       mkF('POR QUÉ FUE IMPORTANTE', mkI('mv-importa', h.como_habla_rafa||'', 'Qué cambió o qué significó'))+
       mkF('CÓMO LO RECUERDA RAFA', mkI('mv-recuerda', h.personalidad||'', 'Con nostalgia, con orgullo, con dolor...'));
     },
-    guardar: function(){
-      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+    guardar: function(form){
+      var titulo=fval(form,'mv-titulo');
       if(!titulo){alert('El título es obligatorio');return;}
       var payload={
         titulo:titulo.toUpperCase(), categoria:'evento', tipo_nuevo:'evento',
-        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
-        fecha_nacimiento:(document.getElementById('mv-fecha')||{}).value||'',
-        como_se_conocieron:(document.getElementById('mv-personas')||{}).value||'',
-        como_habla_rafa:(document.getElementById('mv-importa')||{}).value||'',
-        personalidad:(document.getElementById('mv-recuerda')||{}).value||''
+        contenido:fval(form,'mv-contenido')||titulo,
+        fecha_nacimiento:fval(form,'mv-fecha'),
+        como_se_conocieron:fval(form,'mv-personas'),
+        como_habla_rafa:fval(form,'mv-importa'),
+        personalidad:fval(form,'mv-recuerda')
       };
       guardarHitoTipado(payload);
     }
@@ -5259,14 +5259,14 @@ var MV_TIPOS = [
       mkF('EVIDENCIA', mkI('mv-evidencia', h.evidencia||'', 'Frase concreta que lo demuestra'))+
       mkF('CUÁNDO ACTIVARLO', mkI('mv-cuando', h.cuando||'', 'En qué situaciones ANNI debe usar esto'));
     },
-    guardar: function(){
-      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+    guardar: function(form){
+      var titulo=fval(form,'mv-titulo');
       if(!titulo){alert('El título es obligatorio');return;}
       var payload={
         titulo:titulo.toUpperCase(), categoria:'forma_de_pensar', tipo_nuevo:'forma_de_pensar',
-        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
-        evidencia:(document.getElementById('mv-evidencia')||{}).value||'',
-        cuando:(document.getElementById('mv-cuando')||{}).value||''
+        contenido:fval(form,'mv-contenido')||titulo,
+        evidencia:fval(form,'mv-evidencia'),
+        cuando:fval(form,'mv-cuando')
       };
       guardarHitoTipado(payload);
     }
@@ -5283,14 +5283,14 @@ var MV_TIPOS = [
       mkF('CÓMO SE MANIFIESTA', mkI('mv-manifesta', h.como_habla_rafa||'', 'Cómo aparece esto en tus decisiones'))+
       mkF('ORIGEN', mkI('mv-origen', h.como_se_conocieron||'', 'De dónde viene este valor, si lo sabes'));
     },
-    guardar: function(){
-      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+    guardar: function(form){
+      var titulo=fval(form,'mv-titulo');
       if(!titulo){alert('El título es obligatorio');return;}
       var payload={
         titulo:titulo.toUpperCase(), categoria:'valor', tipo_nuevo:'valor',
-        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
-        como_habla_rafa:(document.getElementById('mv-manifesta')||{}).value||'',
-        como_se_conocieron:(document.getElementById('mv-origen')||{}).value||''
+        contenido:fval(form,'mv-contenido')||titulo,
+        como_habla_rafa:fval(form,'mv-manifesta'),
+        como_se_conocieron:fval(form,'mv-origen')
       };
       guardarHitoTipado(payload);
     }
@@ -5310,15 +5310,15 @@ var MV_TIPOS = [
       ]))+
       mkF('CÓMO DEBE USARLO ANNI', mkI('mv-cuando', h.cuando||'', 'Señalarlo, preguntar, dejar pasar...'));
     },
-    guardar: function(){
-      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+    guardar: function(form){
+      var titulo=fval(form,'mv-titulo');
       if(!titulo){alert('El título es obligatorio');return;}
       var payload={
         titulo:titulo.toUpperCase(), categoria:'patron', tipo_nuevo:'patron',
-        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
-        evidencia:(document.getElementById('mv-evidencia')||{}).value||'',
-        relacion_especifica:(document.getElementById('mv-consciente')||{}).value||'',
-        cuando:(document.getElementById('mv-cuando')||{}).value||''
+        contenido:fval(form,'mv-contenido')||titulo,
+        evidencia:fval(form,'mv-evidencia'),
+        relacion_especifica:fval(form,'mv-consciente'),
+        cuando:fval(form,'mv-cuando')
       };
       guardarHitoTipado(payload);
     }
@@ -5333,19 +5333,19 @@ function mkI(id, val, placeholder, bold){
   var s=bold
     ?'width:100%;border:2px solid #cc0000;border-radius:5px;padding:6px 8px;font-size:13px;font-family:inherit'
     :'width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;font-family:inherit';
-  return '<input id="'+id+'" type="text" value="'+escH(val)+'" placeholder="'+escH(placeholder||'')+'" style="'+s+'">';
+  return '<input data-fname="'+id+'" type="text" value="'+escH(val)+'" placeholder="'+escH(placeholder||'')+'" style="'+s+'">';
 }
 function mkTA(id, val, placeholder){
-  return '<textarea id="'+id+'" placeholder="'+escH(placeholder||'')+'" rows="3" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 8px;font-size:13px;font-family:inherit;resize:vertical">'+escH(val)+'</textarea>';
+  return '<textarea data-fname="'+id+'" placeholder="'+escH(placeholder||'')+'" rows="3" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 8px;font-size:13px;font-family:inherit;resize:vertical">'+escH(val)+'</textarea>';
 }
 function mkSel(id, val, opts){
   var s='width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;font-family:inherit;background:#fff';
-  var html='<select id="'+id+'" style="'+s+'">';
+  var html='<select data-fname="'+id+'" style="'+s+'">';
   opts.forEach(function(o){html+='<option value="'+escH(o[0])+'"'+(o[0]===val?' selected':'')+'>'+escH(o[1])+'</option>';});
   return html+'</select>';
 }
 function mkChk(id, checked, label){
-  return '<label style="font-size:13px;color:#444;cursor:pointer"><input id="'+id+'" type="checkbox"'+(checked?' checked':'')+' style="margin-right:5px">'+escH(label)+'</label>';
+  return '<label style="font-size:13px;color:#444;cursor:pointer"><input data-fname="'+id+'" type="checkbox"'+(checked?' checked':'')+' style="margin-right:5px">'+escH(label)+'</label>';
 }
 function mkGrid2(a,b){
   return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:0">'+a+b+'</div>';
@@ -5357,7 +5357,19 @@ function mkGrid3(a,b,c){
 function mvGuardar(btn){
   var tipo=btn.getAttribute('data-tipo');
   var def=MV_TIPOS.filter(function(t){return t.tipo===tipo;})[0];
-  if(def) def.guardar();
+  if(def){
+    var formDiv=btn.closest('[data-form-tipo]');
+    def.guardar(formDiv);
+  }
+}
+
+function fval(form, name){
+  var el=form?form.querySelector('[data-fname="'+name+'"]'):null;
+  return el?el.value:'';
+}
+function fcheck(form, name){
+  var el=form?form.querySelector('[data-fname="'+name+'"]'):null;
+  return el?el.checked:false;
 }
 
 function guardarHitoTipado(payload){
@@ -5442,6 +5454,7 @@ function loadMVPage(){
       // Formulario nueva memoria de este tipo
       var formDiv=document.createElement('div');
       formDiv.style.cssText='background:#fff8f8;border:1px solid #ffcccc;border-radius:6px;padding:14px;margin-bottom:14px';
+      formDiv.setAttribute('data-form-tipo', def.tipo);
       formDiv.innerHTML=
         '<div style="font-size:10px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:10px">+ AÑADIR '+escH(def.label.toUpperCase())+'</div>'+
         def.campos()+
