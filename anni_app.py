@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.51"
+ANNI_VERSION = "1.01.52"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1812,8 +1812,86 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
                 linea += " | " + " | ".join(detalles)
             if cuando:
                 linea += f" | Activar: {cuando}"
+        elif tipo == 'organizacion':
+            profesion = h[11] or ''
+            donde_vive = h[12] or ''
+            rel_especifica = h[8] or ''
+            personalidad = h[13] or ''
+            desde_cuando = h[15] or ''
+            frecuencia = h[16] or ''
+            linea = f"[ORGANIZACIÓN] {titulo or contenido}"
+            detalles = []
+            if rel_especifica: detalles.append(f"Rol de Rafa: {rel_especifica}")
+            if profesion: detalles.append(f"Sector: {profesion}")
+            if donde_vive: detalles.append(f"Opera en: {donde_vive}")
+            if personalidad: detalles.append(f"Personas clave: {personalidad}")
+            if desde_cuando: detalles.append(f"Desde: {desde_cuando}")
+            if frecuencia: detalles.append(f"Estado: {frecuencia}")
+            if detalles: linea += " | " + " | ".join(detalles)
+            if cuando: linea += f" | Activar: {cuando}"
+
+        elif tipo == 'proyecto':
+            personalidad = h[13] or ''
+            frecuencia = h[16] or ''
+            donde_vive = h[12] or ''
+            desde_cuando = h[15] or ''
+            ultimo_contacto = h[17] or ''  # usado como fecha fin
+            como_conocieron = h[14] or ''  # usado como personas involucradas
+            como_habla = h[18] or ''       # usado como por qué importa
+            linea = f"[PROYECTO] {titulo or contenido}"
+            detalles = []
+            if personalidad: detalles.append(f"Qué es: {personalidad}")
+            if frecuencia: detalles.append(f"Estado: {frecuencia}")
+            if donde_vive: detalles.append(f"Organización: {donde_vive}")
+            if desde_cuando: detalles.append(f"Inicio: {desde_cuando}")
+            if como_conocieron: detalles.append(f"Personas: {como_conocieron}")
+            if como_habla: detalles.append(f"Por qué importa: {como_habla}")
+            if detalles: linea += " | " + " | ".join(detalles)
+            if cuando: linea += f" | Activar: {cuando}"
+
+        elif tipo == 'lugar':
+            subtipo = h[7] or ''
+            rel_especifica = h[8] or ''
+            como_conocieron = h[14] or ''
+            frecuencia = h[16] or ''
+            linea = f"[LUGAR] {titulo or contenido}"
+            detalles = []
+            if subtipo: detalles.append(f"Tipo: {subtipo}")
+            if rel_especifica: detalles.append(f"Relevancia: {rel_especifica}")
+            if como_conocieron: detalles.append(f"Momentos: {como_conocieron}")
+            if frecuencia: detalles.append(f"Relación: {frecuencia}")
+            if detalles: linea += " | " + " | ".join(detalles)
+            if cuando: linea += f" | Activar: {cuando}"
+
+        elif tipo == 'evento':
+            fecha_nac = h[11] or ''
+            como_conocieron = h[14] or ''
+            como_habla = h[17] or ''
+            personalidad = h[13] or ''
+            linea = f"[EVENTO] {titulo or contenido}"
+            detalles = []
+            if fecha_nac: detalles.append(f"Fecha: {fecha_nac}")
+            if como_conocieron: detalles.append(f"Personas: {como_conocieron}")
+            if como_habla: detalles.append(f"Por qué importó: {como_habla}")
+            if personalidad: detalles.append(f"Cómo lo recuerda: {personalidad}")
+            if detalles: linea += " | " + " | ".join(detalles)
+            if cuando: linea += f" | Activar: {cuando}"
+
+        elif tipo in ('forma_de_pensar', 'valor', 'patron', 'identidad', 'energia', 'evitacion', 'velocidad'):
+            tipo_label = {
+                'forma_de_pensar': 'FORMA DE PENSAR',
+                'valor': 'VALOR',
+                'patron': 'PATRÓN',
+                'identidad': 'IDENTIDAD',
+                'energia': 'ENERGÍA',
+                'evitacion': 'EVITACIÓN',
+                'velocidad': 'VELOCIDAD',
+            }.get(tipo, tipo.upper())
+            linea = f"[{tipo_label}] {titulo or contenido}"
+            if cuando: linea += f" | Activar: {cuando}"
+
         else:
-            linea = f"[{tipo}] {contenido}"
+            linea = f"[{tipo.upper()}] {titulo or contenido}"
             if cuando:
                 linea += f" | Activar: {cuando}"
         hitos_txt_parts.append(linea)
@@ -2683,7 +2761,7 @@ def api_crear_hito():
         # Fallback si columnas nuevas no existen aún
         cursor = conn.execute("""INSERT INTO hitos_usuario
             (usuario_id, tipo, titulo, contenido, categoria, cuando_activarlo, como_usarlo, peso, activo, ts)
-            VALUES (?,?,?,?,?,?,?,5.0,1?)""",
+            VALUES (?,?,?,?,?,?,?,5.0,1,?)""",
             (usuario_id, tipo, titulo, contenido, categoria, cuando, como, time.time()))
     nuevo_id = cursor.lastrowid
     conn.execute("DELETE FROM universo_cache WHERE usuario_id=?", (usuario_id,))
@@ -5424,24 +5502,7 @@ function borrarPersona(nombre, btn){
   });
 }
 
-function guardarNuevaMV(){
-  var titulo=document.getElementById('mv-titulo').value.trim();
-  var contenido=document.getElementById('mv-contenido').value.trim();
-  var cuando=document.getElementById('mv-cuando').value.trim();
-  var como=document.getElementById('mv-como').value.trim();
-  if(!contenido){alert('El contenido es obligatorio.');return;}
-  fetch('/api/hitos',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({titulo:titulo,contenido:contenido,cuando:cuando,como:como,categoria:'manual'})
-  }).then(r=>r.json()).then(function(d){
-    if(d.ok){
-      document.getElementById('mv-titulo').value='';
-      document.getElementById('mv-contenido').value='';
-      document.getElementById('mv-cuando').value='';
-      document.getElementById('mv-como').value='';
-      loadMVPage();
-    }
-  });
-}
+// guardarNuevaMV eliminada — reemplazada por guardarHitoTipado
 
 
 var famRels=['pareja','esposa','esposo','hijo','hija','hijastra','hijastro','suegro','suegra','cuñado','cuñada','padre','madre','hermano','hermana'];
