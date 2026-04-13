@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.50"
+ANNI_VERSION = "1.01.51"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2636,19 +2636,60 @@ def api_crear_hito():
     data = request.json or {}
     titulo = data.get('titulo', '').strip()
     contenido = data.get('contenido', '').strip()
-    categoria = data.get('categoria', 'general').strip()
+    tipo = data.get('tipo', 'manual').strip()
+    categoria = data.get('categoria', tipo).strip()
     cuando = data.get('cuando', '').strip()
     como = data.get('como', '').strip()
+    evidencia = data.get('evidencia', '').strip()
     if not contenido:
-        return jsonify({'ok': False, 'error': 'Contenido requerido'})
+        contenido = titulo  # fallback al título si no hay contenido
+    if not titulo:
+        return jsonify({'ok': False, 'error': 'Título requerido'})
+    # Campos estructurados de persona/org/proyecto/etc.
+    nombre_propio       = data.get('nombre_propio', '').strip()
+    apellidos           = data.get('apellidos', '').strip()
+    mote                = data.get('mote', '').strip()
+    subtipo_relacion    = data.get('subtipo_relacion', '').strip()
+    relacion_especifica = data.get('relacion_especifica', '').strip()
+    fallecido           = int(data.get('fallecido', 0))
+    fecha_fallecimiento = data.get('fecha_fallecimiento', '').strip()
+    relacion_activa     = int(data.get('relacion_activa', 1))
+    profesion           = data.get('profesion', '').strip()
+    donde_vive          = data.get('donde_vive', '').strip()
+    fecha_nacimiento    = data.get('fecha_nacimiento', '').strip()
+    personalidad        = data.get('personalidad', '').strip()
+    como_se_conocieron  = data.get('como_se_conocieron', '').strip()
+    desde_cuando        = data.get('desde_cuando', '').strip()
+    frecuencia_contacto = data.get('frecuencia_contacto', '').strip()
+    ultimo_contacto     = data.get('ultimo_contacto', '').strip()
+    como_habla_rafa     = data.get('como_habla_rafa', '').strip()
+    temas_recurrentes   = data.get('temas_recurrentes', '').strip()
+
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.execute("INSERT INTO hitos_usuario (usuario_id, tipo, titulo, contenido, categoria, cuando_activarlo, como_usarlo, peso, activo, ts) VALUES (?,?,?,?,?,?,?,5.0,1,?)",
-                 (usuario_id, 'manual', titulo, contenido, categoria, cuando, como, time.time()))
+    try:
+        cursor = conn.execute("""INSERT INTO hitos_usuario
+            (usuario_id, tipo, titulo, contenido, categoria, cuando_activarlo, como_usarlo, evidencia,
+             peso, activo, ts, nombre_propio, apellidos, mote, subtipo_relacion, relacion_especifica,
+             fallecido, fecha_fallecimiento, relacion_activa, profesion, donde_vive, fecha_nacimiento,
+             personalidad, como_se_conocieron, desde_cuando, frecuencia_contacto, ultimo_contacto,
+             como_habla_rafa, temas_recurrentes)
+            VALUES (?,?,?,?,?,?,?,?,5.0,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (usuario_id, tipo, titulo, contenido, categoria, cuando, como, evidencia, time.time(),
+             nombre_propio, apellidos, mote, subtipo_relacion, relacion_especifica,
+             fallecido, fecha_fallecimiento, relacion_activa, profesion, donde_vive, fecha_nacimiento,
+             personalidad, como_se_conocieron, desde_cuando, frecuencia_contacto, ultimo_contacto,
+             como_habla_rafa, temas_recurrentes))
+    except Exception:
+        # Fallback si columnas nuevas no existen aún
+        cursor = conn.execute("""INSERT INTO hitos_usuario
+            (usuario_id, tipo, titulo, contenido, categoria, cuando_activarlo, como_usarlo, peso, activo, ts)
+            VALUES (?,?,?,?,?,?,?,5.0,1?)""",
+            (usuario_id, tipo, titulo, contenido, categoria, cuando, como, time.time()))
     nuevo_id = cursor.lastrowid
     conn.execute("DELETE FROM universo_cache WHERE usuario_id=?", (usuario_id,))
     conn.commit()
     conn.close()
-    # Generar embedding en background y luego recalcular universo
+    # Generar embedding con título + tipo + contenido
     def generar_embedding_y_recalcular(uid, hid, texto):
         try:
             import struct
@@ -2660,13 +2701,13 @@ def api_crear_hito():
                          (uid, 'hitos_usuario', hid, blob))
             conn2.commit()
             conn2.close()
-            print(f"[ANNI] Embedding generado para hito manual #{hid}")
+            print(f"[ANNI] Embedding generado para hito #{hid} tipo={tipo}")
         except Exception as e:
             print(f"[ANNI] Error generando embedding para hito #{hid}: {e}")
         recalcular_universo(uid)
-    texto_embedding = f"{titulo} {contenido}".strip()
+    texto_embedding = f"{titulo}. {tipo}. {contenido}".strip()
     threading.Thread(target=generar_embedding_y_recalcular, args=(usuario_id, nuevo_id, texto_embedding), daemon=True).start()
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'id': nuevo_id})
 
 @app.route('/api/hitos/<int:hid>', methods=['PUT'])
 @login_required
@@ -4896,60 +4937,465 @@ function repararEmbeddings(){
 }
 
 
+// ── MEMORIA VALIDADA — ACORDEONES ────────────────────────────────────────────
+
+var MV_TIPOS = [
+  {
+    tipo: 'relacion',
+    label: 'Personas',
+    icon: '👤',
+    desc: 'Familia, amigos, colegas y personas importantes en tu vida',
+    campos: function(h){
+      h=h||{};
+      return mkGrid2(
+        mkF('NOMBRE', mkI('mv-nombre_propio', h.nombre_propio||'', 'Nombre de pila', true)),
+        mkF('APELLIDOS', mkI('mv-apellidos', h.apellidos||'', 'Apellidos', true))
+      )+
+      mkGrid3(
+        '',
+        mkF('MOTE / APODO', mkI('mv-mote', h.mote||'', 'Como le llamas tú')),
+        ''
+      )+
+      mkGrid2(
+        mkF('TIPO DE RELACIÓN', mkSel('mv-subtipo_relacion', h.subtipo_relacion||'', [
+          ['','Seleccionar...'],['familia_propia','Familia propia'],['familia_directa','Familia directa'],
+          ['familia_directa_extendida','Familia directa extendida'],['familia_politica_directa','Familia política directa'],
+          ['familia_politica_extendida','Familia política extendida'],['expareja','Expareja'],
+          ['amigos','Amigos y amigas'],['mentor','Mentor / Figura de influencia'],
+          ['colegas_trabajo','Colegas de trabajo'],['relaciones_trabajo','Relaciones de trabajo'],
+          ['conocido','Conocido'],['otros','Otros']
+        ])),
+        mkF('RELACIÓN ESPECÍFICA', mkI('mv-relacion_especifica', h.relacion_especifica||'', 'Madre, Padre, Mejor amigo...'))
+      )+
+      '<div style="display:flex;gap:20px;padding:8px;background:#f9f9f9;border-radius:4px;margin-bottom:8px">'+
+      mkChk('mv-fallecido', h.fallecido, 'Fallecido/a')+
+      '<span style="margin-left:16px">'+mkChk('mv-relacion_activa', h.relacion_activa!==0, 'Relación activa')+'</span>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#aaa;letter-spacing:2px;margin:10px 0 6px">SOBRE LA PERSONA</div>'+
+      mkGrid3(
+        mkF('PROFESIÓN', mkI('mv-profesion', h.profesion||'', 'Qué hace')),
+        mkF('DÓNDE VIVE', mkI('mv-donde_vive', h.donde_vive||'', 'Ciudad, País')),
+        mkF('FECHA NACIMIENTO', mkI('mv-fecha_nacimiento', h.fecha_nacimiento||'', 'Año o fecha'))
+      )+
+      mkF('PERSONALIDAD', mkI('mv-personalidad', h.personalidad||'', 'Directo, optimista, reservado...'))+
+      '<div style="font-size:10px;color:#aaa;letter-spacing:2px;margin:10px 0 6px">CONTEXTO DE LA RELACIÓN</div>'+
+      mkGrid2(
+        mkF('CÓMO SE CONOCIERON', mkI('mv-como_se_conocieron', h.como_se_conocieron||'', 'Colegio, trabajo, viaje...')),
+        mkF('DESDE CUÁNDO', mkI('mv-desde_cuando', h.desde_cuando||'', 'Año o época'))
+      )+
+      mkGrid2(
+        mkF('FRECUENCIA DE CONTACTO', mkSel('mv-frecuencia_contacto', h.frecuencia_contacto||'', [
+          ['','Seleccionar...'],['diario','Diario'],['semanal','Semanal'],
+          ['ocasional','Ocasional'],['raramente','Raramente'],['sin_contacto','Sin contacto']
+        ])),
+        mkF('ÚLTIMO CONTACTO', mkI('mv-ultimo_contacto', h.ultimo_contacto||'', 'Cuándo fue el último contacto'))
+      )+
+      '<div style="font-size:10px;color:#aaa;letter-spacing:2px;margin:10px 0 6px">PARA ANNI</div>'+
+      mkF('CÓMO HABLA RAFA DE ESTA PERSONA', mkI('mv-como_habla_rafa', h.como_habla_rafa||'', 'Con nostalgia, con orgullo, con preocupación...'))+
+      mkF('TEMAS RECURRENTES', mkI('mv-temas_recurrentes', h.temas_recurrentes||'', 'Fútbol y trabajo, familia, proyectos...'))+
+      mkF('NOTAS ADICIONALES', mkTA('mv-contenido', h.contenido||'', 'Cualquier cosa relevante que ANNI deba saber'));
+    },
+    guardar: function(){
+      var nom=(document.getElementById('mv-nombre_propio')||{}).value||'';
+      var ape=(document.getElementById('mv-apellidos')||{}).value||'';
+      var titulo=(nom+' '+ape).trim().toUpperCase();
+      if(!titulo){alert('El nombre es obligatorio');return;}
+      var payload={
+        titulo:titulo, categoria:'relacion', tipo_nuevo:'relacion',
+        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
+        nombre_propio:nom, apellidos:ape,
+        mote:(document.getElementById('mv-mote')||{}).value||'',
+        subtipo_relacion:(document.getElementById('mv-subtipo_relacion')||{}).value||'',
+        relacion_especifica:(document.getElementById('mv-relacion_especifica')||{}).value||'',
+        fallecido:document.getElementById('mv-fallecido')&&document.getElementById('mv-fallecido').checked?1:0,
+        relacion_activa:document.getElementById('mv-relacion_activa')&&document.getElementById('mv-relacion_activa').checked?1:0,
+        profesion:(document.getElementById('mv-profesion')||{}).value||'',
+        donde_vive:(document.getElementById('mv-donde_vive')||{}).value||'',
+        fecha_nacimiento:(document.getElementById('mv-fecha_nacimiento')||{}).value||'',
+        personalidad:(document.getElementById('mv-personalidad')||{}).value||'',
+        como_se_conocieron:(document.getElementById('mv-como_se_conocieron')||{}).value||'',
+        desde_cuando:(document.getElementById('mv-desde_cuando')||{}).value||'',
+        frecuencia_contacto:(document.getElementById('mv-frecuencia_contacto')||{}).value||'',
+        ultimo_contacto:(document.getElementById('mv-ultimo_contacto')||{}).value||'',
+        como_habla_rafa:(document.getElementById('mv-como_habla_rafa')||{}).value||'',
+        temas_recurrentes:(document.getElementById('mv-temas_recurrentes')||{}).value||''
+      };
+      guardarHitoTipado(payload);
+    }
+  },
+  {
+    tipo: 'organizacion',
+    label: 'Organizaciones',
+    icon: '🏢',
+    desc: 'Empresas, instituciones y organizaciones relevantes',
+    campos: function(h){
+      h=h||{};
+      return mkF('NOMBRE', mkI('mv-titulo', h.titulo||'', 'Nombre de la organización', true))+
+      mkGrid2(
+        mkF('SECTOR', mkI('mv-sector', h.profesion||'', 'Marketing, Tecnología, Salud...')),
+        mkF('DÓNDE OPERA', mkI('mv-donde_vive', h.donde_vive||'', 'Ciudad, País, Global'))
+      )+
+      mkF('ROL DE RAFA', mkI('mv-relacion_especifica', h.relacion_especifica||'', 'Fundador, Cliente, Colaborador, Empleado...'))+
+      mkF('PERSONAS CLAVE', mkI('mv-personalidad', h.personalidad||'', 'Quién trabaja ahí o es contacto clave'))+
+      mkGrid2(
+        mkF('DESDE CUÁNDO', mkI('mv-desde_cuando', h.desde_cuando||'', 'Año o época')),
+        mkF('ESTADO', mkSel('mv-frecuencia_contacto', h.frecuencia_contacto||'', [
+          ['','Seleccionar...'],['activa','Activa'],['pausada','Pausada'],['cerrada','Cerrada']
+        ]))
+      )+
+      mkF('QUÉ REPRESENTA PARA RAFA', mkTA('mv-contenido', h.contenido||'', 'Por qué es importante esta organización'));
+    },
+    guardar: function(){
+      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+      if(!titulo){alert('El nombre es obligatorio');return;}
+      var payload={
+        titulo:titulo.toUpperCase(), categoria:'organizacion', tipo_nuevo:'organizacion',
+        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
+        profesion:(document.getElementById('mv-sector')||{}).value||'',
+        donde_vive:(document.getElementById('mv-donde_vive')||{}).value||'',
+        relacion_especifica:(document.getElementById('mv-relacion_especifica')||{}).value||'',
+        personalidad:(document.getElementById('mv-personalidad')||{}).value||'',
+        desde_cuando:(document.getElementById('mv-desde_cuando')||{}).value||'',
+        frecuencia_contacto:(document.getElementById('mv-frecuencia_contacto')||{}).value||''
+      };
+      guardarHitoTipado(payload);
+    }
+  },
+  {
+    tipo: 'proyecto',
+    label: 'Proyectos',
+    icon: '🚀',
+    desc: 'Proyectos en curso, pausados o completados',
+    campos: function(h){
+      h=h||{};
+      return mkF('NOMBRE DEL PROYECTO', mkI('mv-titulo', h.titulo||'', 'Nombre del proyecto', true))+
+      mkF('DESCRIPCIÓN BREVE', mkI('mv-descripcion', h.personalidad||'', 'En qué consiste en una frase'))+
+      mkGrid2(
+        mkF('ESTADO', mkSel('mv-estado', h.frecuencia_contacto||'', [
+          ['','Seleccionar...'],['idea','Idea'],['en_curso','En curso'],['pausado','Pausado'],['completado','Completado'],['abandonado','Abandonado']
+        ])),
+        mkF('ORGANIZACIÓN ASOCIADA', mkI('mv-org', h.donde_vive||'', 'La Mákina, Umanity...'))
+      )+
+      mkGrid2(
+        mkF('FECHA INICIO', mkI('mv-inicio', h.desde_cuando||'', 'Cuándo empezó')),
+        mkF('FECHA FIN ESTIMADA', mkI('mv-fin', h.ultimo_contacto||'', 'Cuándo termina o terminó'))
+      )+
+      mkF('PERSONAS INVOLUCRADAS', mkI('mv-personas', h.como_se_conocieron||'', 'Quién trabaja en esto'))+
+      mkF('POR QUÉ IMPORTA', mkI('mv-importa', h.como_habla_rafa||'', 'Qué problema resuelve o qué representa'))+
+      mkF('PRÓXIMO PASO', mkTA('mv-contenido', h.contenido||'', 'Qué hay que hacer ahora mismo'));
+    },
+    guardar: function(){
+      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+      if(!titulo){alert('El nombre es obligatorio');return;}
+      var payload={
+        titulo:titulo.toUpperCase(), categoria:'proyecto', tipo_nuevo:'proyecto',
+        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
+        personalidad:(document.getElementById('mv-descripcion')||{}).value||'',
+        frecuencia_contacto:(document.getElementById('mv-estado')||{}).value||'',
+        donde_vive:(document.getElementById('mv-org')||{}).value||'',
+        desde_cuando:(document.getElementById('mv-inicio')||{}).value||'',
+        ultimo_contacto:(document.getElementById('mv-fin')||{}).value||'',
+        como_se_conocieron:(document.getElementById('mv-personas')||{}).value||'',
+        como_habla_rafa:(document.getElementById('mv-importa')||{}).value||''
+      };
+      guardarHitoTipado(payload);
+    }
+  },
+  {
+    tipo: 'lugar',
+    label: 'Lugares',
+    icon: '📍',
+    desc: 'Ciudades, países y espacios con significado',
+    campos: function(h){
+      h=h||{};
+      return mkF('NOMBRE DEL LUGAR', mkI('mv-titulo', h.titulo||'', 'Madrid, CDMX, Puerto Escondido...', true))+
+      mkGrid2(
+        mkF('TIPO', mkSel('mv-tipo_lugar', h.subtipo_relacion||'', [
+          ['','Seleccionar...'],['ciudad','Ciudad'],['pais','País'],['barrio','Barrio'],['espacio','Espacio concreto'],['otro','Otro']
+        ])),
+        mkF('POR QUÉ ES RELEVANTE', mkI('mv-relevancia', h.relacion_especifica||'', 'Vivió allí, lo visita, tiene significado...'))
+      )+
+      mkF('MOMENTOS IMPORTANTES', mkI('mv-momentos', h.como_se_conocieron||'', 'Qué pasó ahí que importa'))+
+      mkGrid2(
+        mkF('HA VIVIDO AHÍ', mkSel('mv-vivio', h.frecuencia_contacto||'', [
+          ['','Seleccionar...'],['si','Sí, vivió ahí'],['no','No, solo visitas'],['parcialmente','Temporadas']
+        ])),
+        mkF('FRECUENCIA DE VISITA', mkI('mv-freq_visita', h.desde_cuando||'', 'Cada cuánto va'))
+      )+
+      mkF('NOTAS', mkTA('mv-contenido', h.contenido||'', 'Cualquier cosa relevante sobre este lugar'));
+    },
+    guardar: function(){
+      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+      if(!titulo){alert('El nombre es obligatorio');return;}
+      var payload={
+        titulo:titulo.toUpperCase(), categoria:'lugar', tipo_nuevo:'lugar',
+        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
+        subtipo_relacion:(document.getElementById('mv-tipo_lugar')||{}).value||'',
+        relacion_especifica:(document.getElementById('mv-relevancia')||{}).value||'',
+        como_se_conocieron:(document.getElementById('mv-momentos')||{}).value||'',
+        frecuencia_contacto:(document.getElementById('mv-vivio')||{}).value||'',
+        desde_cuando:(document.getElementById('mv-freq_visita')||{}).value||''
+      };
+      guardarHitoTipado(payload);
+    }
+  },
+  {
+    tipo: 'evento',
+    label: 'Eventos y momentos',
+    icon: '⚡',
+    desc: 'Momentos concretos que marcaron algo importante',
+    campos: function(h){
+      h=h||{};
+      return mkF('TÍTULO DEL EVENTO', mkI('mv-titulo', h.titulo||'', 'Muerte de Erika, Viaje de Bosco a Suiza...', true))+
+      mkGrid2(
+        mkF('FECHA', mkI('mv-fecha', h.fecha_nacimiento||'', 'Cuándo ocurrió')),
+        mkF('PERSONAS INVOLUCRADAS', mkI('mv-personas', h.como_se_conocieron||'', 'Quién estuvo ahí'))
+      )+
+      mkF('QUÉ PASÓ', mkTA('mv-contenido', h.contenido||'', 'Descripción de lo que ocurrió'))+
+      mkF('POR QUÉ FUE IMPORTANTE', mkI('mv-importa', h.como_habla_rafa||'', 'Qué cambió o qué significó'))+
+      mkF('CÓMO LO RECUERDA RAFA', mkI('mv-recuerda', h.personalidad||'', 'Con nostalgia, con orgullo, con dolor...'));
+    },
+    guardar: function(){
+      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+      if(!titulo){alert('El título es obligatorio');return;}
+      var payload={
+        titulo:titulo.toUpperCase(), categoria:'evento', tipo_nuevo:'evento',
+        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
+        fecha_nacimiento:(document.getElementById('mv-fecha')||{}).value||'',
+        como_se_conocieron:(document.getElementById('mv-personas')||{}).value||'',
+        como_habla_rafa:(document.getElementById('mv-importa')||{}).value||'',
+        personalidad:(document.getElementById('mv-recuerda')||{}).value||''
+      };
+      guardarHitoTipado(payload);
+    }
+  },
+  {
+    tipo: 'forma_de_pensar',
+    label: 'Formas de pensar',
+    icon: '🧠',
+    desc: 'Marcos mentales y formas de ver el mundo',
+    campos: function(h){
+      h=h||{};
+      return mkF('TÍTULO (en tus palabras)', mkI('mv-titulo', h.titulo||'', 'Ej: PRIMERO LOS FUNDAMENTOS', true))+
+      mkF('DESCRIPCIÓN', mkTA('mv-contenido', h.contenido||'', 'Cómo piensas sobre esto'))+
+      mkF('EVIDENCIA', mkI('mv-evidencia', h.evidencia||'', 'Frase concreta que lo demuestra'))+
+      mkF('CUÁNDO ACTIVARLO', mkI('mv-cuando', h.cuando||'', 'En qué situaciones ANNI debe usar esto'));
+    },
+    guardar: function(){
+      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+      if(!titulo){alert('El título es obligatorio');return;}
+      var payload={
+        titulo:titulo.toUpperCase(), categoria:'forma_de_pensar', tipo_nuevo:'forma_de_pensar',
+        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
+        evidencia:(document.getElementById('mv-evidencia')||{}).value||'',
+        cuando:(document.getElementById('mv-cuando')||{}).value||''
+      };
+      guardarHitoTipado(payload);
+    }
+  },
+  {
+    tipo: 'valor',
+    label: 'Valores y creencias',
+    icon: '⭐',
+    desc: 'Lo que Rafa valora y en lo que cree',
+    campos: function(h){
+      h=h||{};
+      return mkF('TÍTULO (en tus palabras)', mkI('mv-titulo', h.titulo||'', 'Ej: LA HONESTIDAD POR ENCIMA DE TODO', true))+
+      mkF('DESCRIPCIÓN', mkTA('mv-contenido', h.contenido||'', 'Qué crees o qué valoras'))+
+      mkF('CÓMO SE MANIFIESTA', mkI('mv-manifesta', h.como_habla_rafa||'', 'Cómo aparece esto en tus decisiones'))+
+      mkF('ORIGEN', mkI('mv-origen', h.como_se_conocieron||'', 'De dónde viene este valor, si lo sabes'));
+    },
+    guardar: function(){
+      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+      if(!titulo){alert('El título es obligatorio');return;}
+      var payload={
+        titulo:titulo.toUpperCase(), categoria:'valor', tipo_nuevo:'valor',
+        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
+        como_habla_rafa:(document.getElementById('mv-manifesta')||{}).value||'',
+        como_se_conocieron:(document.getElementById('mv-origen')||{}).value||''
+      };
+      guardarHitoTipado(payload);
+    }
+  },
+  {
+    tipo: 'patron',
+    label: 'Patrones de comportamiento',
+    icon: '🔄',
+    desc: 'Cosas que haces o que pasan recurrentemente',
+    campos: function(h){
+      h=h||{};
+      return mkF('TÍTULO (en tus palabras)', mkI('mv-titulo', h.titulo||'', 'Ej: ARRANCO RÁPIDO Y REINICIO CUANDO ALGO NO VA', true))+
+      mkF('DESCRIPCIÓN DEL PATRÓN', mkTA('mv-contenido', h.contenido||'', 'Cuándo aparece y cómo se manifiesta'))+
+      mkF('EVIDENCIA', mkI('mv-evidencia', h.evidencia||'', 'Ejemplo concreto de cuándo pasó'))+
+      mkF('ES CONSCIENTE DE ÉL', mkSel('mv-consciente', h.relacion_especifica||'', [
+        ['','Seleccionar...'],['si','Sí, lo reconoce'],['parcial','Parcialmente'],['no','No siempre lo ve']
+      ]))+
+      mkF('CÓMO DEBE USARLO ANNI', mkI('mv-cuando', h.cuando||'', 'Señalarlo, preguntar, dejar pasar...'));
+    },
+    guardar: function(){
+      var titulo=(document.getElementById('mv-titulo')||{}).value||'';
+      if(!titulo){alert('El título es obligatorio');return;}
+      var payload={
+        titulo:titulo.toUpperCase(), categoria:'patron', tipo_nuevo:'patron',
+        contenido:(document.getElementById('mv-contenido')||{}).value||titulo,
+        evidencia:(document.getElementById('mv-evidencia')||{}).value||'',
+        relacion_especifica:(document.getElementById('mv-consciente')||{}).value||'',
+        cuando:(document.getElementById('mv-cuando')||{}).value||''
+      };
+      guardarHitoTipado(payload);
+    }
+  }
+];
+
+// ── Helpers de formulario ──────────────────────────────────────────────────
+function mkF(label, inputHtml){
+  return '<div style="margin-bottom:8px"><label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:3px">'+escH(label)+'</label>'+inputHtml+'</div>';
+}
+function mkI(id, val, placeholder, bold){
+  var s=bold
+    ?'width:100%;border:2px solid #cc0000;border-radius:5px;padding:6px 8px;font-size:13px;font-family:inherit'
+    :'width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;font-family:inherit';
+  return '<input id="'+id+'" type="text" value="'+escH(val)+'" placeholder="'+escH(placeholder||'')+'" style="'+s+'">';
+}
+function mkTA(id, val, placeholder){
+  return '<textarea id="'+id+'" placeholder="'+escH(placeholder||'')+'" rows="3" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 8px;font-size:13px;font-family:inherit;resize:vertical">'+escH(val)+'</textarea>';
+}
+function mkSel(id, val, opts){
+  var s='width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;font-family:inherit;background:#fff';
+  var html='<select id="'+id+'" style="'+s+'">';
+  opts.forEach(function(o){html+='<option value="'+escH(o[0])+'"'+(o[0]===val?' selected':'')+'>'+escH(o[1])+'</option>';});
+  return html+'</select>';
+}
+function mkChk(id, checked, label){
+  return '<label style="font-size:13px;color:#444;cursor:pointer"><input id="'+id+'" type="checkbox"'+(checked?' checked':'')+' style="margin-right:5px">'+escH(label)+'</label>';
+}
+function mkGrid2(a,b){
+  return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:0">'+a+b+'</div>';
+}
+function mkGrid3(a,b,c){
+  return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:0">'+a+b+c+'</div>';
+}
+
+function guardarHitoTipado(payload){
+  var tipo=payload.tipo_nuevo||payload.categoria||'manual';
+  delete payload.tipo_nuevo;
+  fetch('/api/hitos',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(Object.assign({tipo:tipo},payload))
+  }).then(r=>r.json()).then(function(d){
+    if(d.ok) loadMVPage();
+    else alert('Error al guardar');
+  });
+}
+
+function renderHitoCard(h, content){
+  var card=document.createElement('div');card.className='item-card';
+  card.dataset.hito=JSON.stringify(h);
+  var titulo='<div id="ht-'+h.id+'" style="font-size:15px;font-weight:900;color:#111;margin-bottom:4px">'+(h.titulo?escH(h.titulo):'')+'</div>';
+  var badges='';
+  if(h.subtipo_relacion) badges+='<span style="font-size:11px;background:#e8f5e9;border:1px solid #81c784;border-radius:4px;padding:2px 6px;margin-right:4px;color:#2e7d32">'+escH(h.subtipo_relacion.replace(/_/g,' '))+'</span>';
+  if(h.fallecido) badges+='<span style="font-size:11px;background:#fce4e4;border:1px solid #e57373;border-radius:4px;padding:2px 6px;margin-right:4px;color:#c62828">Fallecido/a</span>';
+  if(h.relacion_activa===0) badges+='<span style="font-size:11px;background:#f5f5f5;border:1px solid #bdbdbd;border-radius:4px;padding:2px 6px;margin-right:4px;color:#757575">Sin contacto</span>';
+  var ev=h.evidencia?'<div style="font-size:12px;color:#888;font-style:italic;border-left:2px solid #e0e0e0;padding-left:8px;margin-top:6px" id="hev-'+h.id+'">"'+escH(h.evidencia)+'"</div>':'<div id="hev-'+h.id+'"></div>';
+  var cuando=h.cuando?'<div style="font-size:11px;color:#aaa;margin-top:4px" id="hcuando-'+h.id+'"><b>Activar:</b> '+escH(h.cuando)+'</div>':'<div id="hcuando-'+h.id+'"></div>';
+  var como=h.como?'<div style="font-size:11px;color:#aaa;margin-top:2px" id="hcomo-'+h.id+'"><b>Uso:</b> '+escH(h.como)+'</div>':'<div id="hcomo-'+h.id+'"></div>';
+  var peso='<div style="font-size:11px;color:#aaa;margin-top:4px">Peso: <b style="color:#cc0000">'+h.peso.toFixed(1)+'</b></div>';
+  card.innerHTML=
+    (badges?'<div style="margin-bottom:4px">'+badges+'</div>':'')+titulo+
+    '<div id="hc-'+h.id+'" style="font-size:13px;color:#555;line-height:1.5">'+escH(h.contenido)+'</div>'+
+    ev+cuando+como+peso+
+    '<div class="item-actions">'+
+    '<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
+    '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
+    '<button style="font-size:11px;padding:3px 8px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button>'+
+    '</div>';
+  content.appendChild(card);
+}
+
 function loadMVPage(){
   var content=document.getElementById('mem-content');
   if(!content) return;
-
   content.innerHTML='';
 
-  // Formulario nueva memoria validada
-  var formCard=document.createElement('div');
-  formCard.style.cssText='background:#fff8f8;border:1px solid #ffcccc;border-radius:8px;padding:16px;margin-bottom:16px';
-  formCard.innerHTML=
-    '<div style="font-size:12px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:10px">¿QUIERES AÑADIR UNA MEMORIA IMPORTANTE QUE ANNI RECUERDE SIEMPRE?</div>'+
-    '<input id="mv-titulo" placeholder="Título (ej: ANTONIO — PADRE)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;margin-bottom:6px"><br>'+
-    '<textarea id="mv-contenido" placeholder="Describe en 1-2 líneas lo esencial. Ej: Antonio es el padre de Rafa. Falleció en 2011. Figura central en su identidad." style="width:100%;border:1px solid #ddd;border-radius:4px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:60px;margin-bottom:6px"></textarea>'+
-    '<input id="mv-cuando" placeholder="¿Cuándo activar? (opcional)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:12px;font-family:inherit;margin-bottom:6px"><br>'+
-    '<input id="mv-como" placeholder="¿Cómo usar? (opcional)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:12px;font-family:inherit;margin-bottom:8px"><br>'+
-    '<button onclick="guardarNuevaMV()" style="font-size:11px;padding:5px 16px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR MEMORIA</button>';
-  content.appendChild(formCard);
-
-  // Botón reparar embeddings — fuera de la caja, acción de mantenimiento independiente
+  // Botón reparar embeddings
   var repBtn=document.createElement('div');
-  repBtn.style.cssText='margin-bottom:20px;text-align:left';
-  repBtn.innerHTML='<button onclick="repararEmbeddings()" style="font-size:11px;padding:6px 16px;background:#f0f0f0;border:1px solid #888;cursor:pointer;font-family:monospace;color:#444;border-radius:4px;font-weight:700;letter-spacing:1px">&#8635; REPARAR EMBEDDINGS</button><span style="font-size:11px;color:#aaa;margin-left:10px">Regenera embeddings desactualizados y recalcula el universo</span>';
+  repBtn.style.cssText='margin-bottom:16px;text-align:right';
+  repBtn.innerHTML='<button onclick="repararEmbeddings()" style="font-size:11px;padding:5px 14px;background:#f0f0f0;border:1px solid #888;cursor:pointer;font-family:monospace;color:#444;border-radius:4px;font-weight:700;letter-spacing:1px">&#8635; REPARAR EMBEDDINGS</button><span style="font-size:11px;color:#aaa;margin-left:8px">Regenera embeddings y recalcula el universo</span>';
   content.appendChild(repBtn);
 
   fetch('/api/hitos').then(r=>r.json()).then(function(d){
-    if(!d.hitos||!d.hitos.length){
-      var empty=document.createElement('p');empty.style.cssText='color:#999;padding:20px';empty.textContent='Sin memorias validadas aún.';
-      content.appendChild(empty);return;
-    }
-    d.hitos.forEach(function(h){
-      var card=document.createElement('div');card.className='item-card';
-      // Guardar datos completos en el card para que editHito pueda leerlos
-      card.dataset.hito=JSON.stringify(h);
-      var esRelacion=(h.tipo||'').toLowerCase()==='relacion';
-      var hitoTipo=h.tipo||'';
-      var titulo='<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+(h.titulo?escH(h.titulo):'')+'</div>';
-      var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(h.categoria)+'</span>':'';
-      // Badge de subtipo para hitos de persona
-      var subtipoBadge=esRelacion&&h.subtipo_relacion?'<span style="font-size:11px;background:#e8f5e9;border:1px solid #81c784;border-radius:4px;padding:2px 7px;margin-right:6px;color:#2e7d32">'+escH(h.subtipo_relacion.replace(/_/g,' '))+'</span>':'';
-      // Indicadores fallecido / relación inactiva
-      var fallBadge=esRelacion&&h.fallecido?'<span style="font-size:11px;background:#fce4e4;border:1px solid #e57373;border-radius:4px;padding:2px 7px;margin-right:6px;color:#c62828">Fallecido/a</span>':'';
-      var inactivaBadge=esRelacion&&h.relacion_activa===0?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #bdbdbd;border-radius:4px;padding:2px 7px;margin-right:6px;color:#757575">Sin contacto</span>':'';
-      var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px" id="hcuando-'+h.id+'"><b>Activar:</b> '+escH(h.cuando)+'</div>':'<div style="font-size:12px;color:#aaa;margin-top:6px" id="hcuando-'+h.id+'"></div>';
-      var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px" id="hcomo-'+h.id+'"><b>Uso:</b> '+escH(h.como)+'</div>':'<div style="font-size:12px;color:#aaa;margin-top:2px" id="hcomo-'+h.id+'"></div>';
-      var ev2=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px" id="hev-'+h.id+'">"'+escH(h.evidencia)+'"</div>':'<div id="hev-'+h.id+'"></div>';
-      var pesoBar='<div style="font-size:11px;color:#aaa;margin-top:6px">Peso: <b style="color:#cc0000">'+h.peso.toFixed(1)+'</b></div>';
-      card.innerHTML='<div class="item-meta">'+cat+subtipoBadge+fallBadge+inactivaBadge+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
-        '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev2+cuando+como+pesoBar+
-        '<div class="item-actions">'+
-        '<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
-        '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
-        '<button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" data-mvid="'+h.id+'" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button>'+
+    var hitos=d.hitos||[];
+
+    MV_TIPOS.forEach(function(def){
+      // Filtrar hitos de este tipo
+      var del_tipo=hitos.filter(function(h){
+        return (h.tipo||'').toLowerCase()===(def.tipo||'').toLowerCase() ||
+               (h.categoria||'').toLowerCase()===(def.tipo||'').toLowerCase();
+      });
+
+      // Acordeón
+      var acc=document.createElement('div');
+      acc.style.cssText='border:1px solid #e0e0e0;border-radius:8px;margin-bottom:10px;overflow:hidden';
+
+      // Cabecera
+      var header=document.createElement('div');
+      header.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer;background:#fafafa;user-select:none';
+      header.innerHTML=
+        '<div style="display:flex;align-items:center;gap:10px">'+
+        '<span style="font-size:18px">'+def.icon+'</span>'+
+        '<div>'+
+        '<div style="font-size:14px;font-weight:900;color:#111;letter-spacing:0.5px">'+escH(def.label)+'</div>'+
+        '<div style="font-size:11px;color:#aaa;margin-top:1px">'+escH(def.desc)+'</div>'+
+        '</div></div>'+
+        '<div style="display:flex;align-items:center;gap:8px">'+
+        '<span style="font-size:12px;color:#888;background:#f0f0f0;border-radius:10px;padding:2px 8px">'+del_tipo.length+'</span>'+
+        '<span class="acc-arrow" style="font-size:14px;color:#aaa;transition:transform 0.2s">▼</span>'+
         '</div>';
-      content.appendChild(card);
+
+      // Cuerpo
+      var body=document.createElement('div');
+      body.style.cssText='display:none;padding:16px;border-top:1px solid #e0e0e0;background:#fff';
+
+      // Formulario nueva memoria de este tipo
+      var formDiv=document.createElement('div');
+      formDiv.style.cssText='background:#fff8f8;border:1px solid #ffcccc;border-radius:6px;padding:14px;margin-bottom:14px';
+      formDiv.innerHTML=
+        '<div style="font-size:10px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:10px">+ AÑADIR '+escH(def.label.toUpperCase())+'</div>'+
+        def.campos()+
+        '<div style="margin-top:10px">'+
+        '<button onclick="MV_TIPOS.filter(function(t){return t.tipo===''+def.tipo+'';})[0].guardar()" style="font-size:11px;padding:5px 16px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>'+
+        '</div>';
+      body.appendChild(formDiv);
+
+      // Lista de memorias guardadas
+      if(del_tipo.length===0){
+        var empty=document.createElement('p');
+        empty.style.cssText='color:#bbb;font-size:13px;padding:8px 0;font-family:monospace';
+        empty.textContent='Sin '+def.label.toLowerCase()+' guardadas aún.';
+        body.appendChild(empty);
+      } else {
+        del_tipo.forEach(function(h){ renderHitoCard(h, body); });
+      }
+
+      // Toggle acordeón
+      var abierto=false;
+      header.onclick=function(){
+        abierto=!abierto;
+        body.style.display=abierto?'block':'none';
+        header.querySelector('.acc-arrow').style.transform=abierto?'rotate(180deg)':'rotate(0deg)';
+        header.style.background=abierto?'#fff':'#fafafa';
+      };
+
+      // Abrir automáticamente si tiene memorias
+      if(del_tipo.length>0){
+        abierto=true;
+        body.style.display='block';
+        header.querySelector('.acc-arrow').style.transform='rotate(180deg)';
+        header.style.background='#fff';
+      }
+
+      acc.appendChild(header);
+      acc.appendChild(body);
+      content.appendChild(acc);
     });
   });
 }
