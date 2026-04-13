@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.48"
+ANNI_VERSION = "1.01.49"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -185,6 +185,24 @@ def init_db():
         "ALTER TABLE hitos_usuario ADD COLUMN como_usarlo TEXT DEFAULT ''",
         "ALTER TABLE hitos_usuario ADD COLUMN donde_puede_fallar TEXT DEFAULT ''",
         "ALTER TABLE hitos_usuario ADD COLUMN embedding BLOB",
+        # Campos de persona — v1.01.49
+        "ALTER TABLE hitos_usuario ADD COLUMN nombre_propio TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN mote TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN subtipo_relacion TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN relacion_especifica TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN fallecido INTEGER DEFAULT 0",
+        "ALTER TABLE hitos_usuario ADD COLUMN fecha_fallecimiento TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN relacion_activa INTEGER DEFAULT 1",
+        "ALTER TABLE hitos_usuario ADD COLUMN profesion TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN donde_vive TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN fecha_nacimiento TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN personalidad TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN como_se_conocieron TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN desde_cuando TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN frecuencia_contacto TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN ultimo_contacto TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN como_habla_rafa TEXT DEFAULT ''",
+        "ALTER TABLE hitos_usuario ADD COLUMN temas_recurrentes TEXT DEFAULT ''",
     ]:
         try:
             c.execute(col)
@@ -1409,9 +1427,23 @@ def incrementar_hitos_mencionados(usuario_id, mensaje):
         mensaje_lower = mensaje.lower()
         relaciones_en_mensaje = detectar_relacion_en_mensaje(mensaje_lower)
 
-        # 1. Personas mencionadas por nombre — con lógica de relación
+        # 1. Personas mencionadas por nombre o mote — con lógica de relación
         c.execute("SELECT nombre, relacion FROM personas WHERE usuario_id=?", (usuario_id,))
         personas = c.fetchall()
+
+        # También buscar por mote en hitos de relación
+        c.execute("""SELECT mote, titulo FROM hitos_usuario
+                     WHERE usuario_id=? AND activo=1 AND tipo='relacion'
+                     AND mote IS NOT NULL AND mote != ''""", (usuario_id,))
+        motes = {r[0].lower(): r[1] for r in c.fetchall()}
+
+        # Detectar si algún mote aparece en el mensaje — subir el hito correspondiente
+        for mote_lower, hito_titulo in motes.items():
+            if len(mote_lower) > 2 and mote_lower in mensaje_lower:
+                c.execute("""UPDATE hitos_usuario SET peso = MIN(peso + 0.3, 50)
+                             WHERE usuario_id=? AND activo=1 AND LOWER(titulo) LIKE ?""",
+                          (usuario_id, f'%{hito_titulo.lower()[:20]}%'))
+                print(f"[ANNI] Peso +0.3 por mote '{mote_lower}' → {hito_titulo[:30]}")
 
         for nombre, relacion in personas:
             nombre_lower = nombre.lower()
@@ -1728,17 +1760,53 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
         resumenes = [f"[CONVERSACION ACTUAL — {fecha_actual}]"] + resumenes
     resumenes_txt = "\n\n---\n".join(resumenes) if resumenes else "Sin conversaciones anteriores."
 
-    # Hitos del usuario
+    # Hitos del usuario — con campos de persona enriquecidos
     conn_h = sqlite3.connect(DB_PATH)
     c_h = conn_h.cursor()
-    c_h.execute("SELECT tipo, contenido, cuando_activarlo FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY peso DESC, ts DESC LIMIT 20", (usuario_id,))
+    c_h.execute("""SELECT tipo, contenido, cuando_activarlo, titulo,
+                        nombre_propio, apellidos, mote, subtipo_relacion, relacion_especifica,
+                        fallecido, relacion_activa, profesion, donde_vive, personalidad,
+                        como_se_conocieron, desde_cuando, frecuencia_contacto,
+                        como_habla_rafa, temas_recurrentes
+                   FROM hitos_usuario WHERE usuario_id=? AND activo=1
+                   ORDER BY peso DESC, ts DESC LIMIT 20""", (usuario_id,))
     hitos = c_h.fetchall()
     conn_h.close()
     hitos_txt_parts = []
     for h in hitos:
-        linea = f"[{h[0]}] {h[1]}"
-        if len(h) > 2 and h[2]:  # cuando_activarlo
-            linea += f" | Activar: {h[2]}"
+        tipo, contenido, cuando, titulo = h[0], h[1], h[2], h[3]
+        if tipo == 'relacion':
+            # Formatear hito de persona con campos estructurados
+            nombre_propio, apellidos, mote = h[4] or '', h[5] or '', h[6] or ''
+            subtipo, rel_especifica = h[7] or '', h[8] or ''
+            fallecido, activa = h[9], h[10]
+            profesion, donde_vive, personalidad = h[11] or '', h[12] or '', h[13] or ''
+            como_conocieron, desde_cuando, frecuencia = h[14] or '', h[15] or '', h[16] or ''
+            como_habla, temas = h[17] or '', h[18] or ''
+
+            linea = f"[PERSONA] {titulo or contenido}"
+            detalles = []
+            if rel_especifica: detalles.append(f"Relación: {rel_especifica}")
+            if subtipo: detalles.append(f"Tipo: {subtipo.replace('_',' ')}")
+            if mote: detalles.append(f"Mote: {mote}")
+            if fallecido: detalles.append("Fallecido/a")
+            elif activa == 0: detalles.append("Sin contacto activo")
+            if profesion: detalles.append(f"Profesión: {profesion}")
+            if donde_vive: detalles.append(f"Vive en: {donde_vive}")
+            if personalidad: detalles.append(f"Personalidad: {personalidad}")
+            if como_conocieron: detalles.append(f"Cómo se conocieron: {como_conocieron}")
+            if desde_cuando: detalles.append(f"Desde: {desde_cuando}")
+            if frecuencia: detalles.append(f"Contacto: {frecuencia}")
+            if como_habla: detalles.append(f"Rafa habla de esta persona: {como_habla}")
+            if temas: detalles.append(f"Temas habituales: {temas}")
+            if detalles:
+                linea += " | " + " | ".join(detalles)
+            if cuando:
+                linea += f" | Activar: {cuando}"
+        else:
+            linea = f"[{tipo}] {contenido}"
+            if cuando:
+                linea += f" | Activar: {cuando}"
         hitos_txt_parts.append(linea)
     hitos_txt = "\n".join(hitos_txt_parts) if hitos_txt_parts else "Sin hitos confirmados aun."
 
@@ -2468,11 +2536,33 @@ def api_hitos():
     usuario_id = session['usuario_id']
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT id, tipo, titulo, categoria, contenido, evidencia, peso, cuando_activarlo, como_usarlo, ts
+    c.execute("""SELECT id, tipo, titulo, categoria, contenido, evidencia, peso,
+                        cuando_activarlo, como_usarlo, ts,
+                        nombre_propio, apellidos, mote, subtipo_relacion, relacion_especifica,
+                        fallecido, fecha_fallecimiento, relacion_activa,
+                        profesion, donde_vive, fecha_nacimiento, personalidad,
+                        como_se_conocieron, desde_cuando, frecuencia_contacto, ultimo_contacto,
+                        como_habla_rafa, temas_recurrentes
         FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY peso DESC, ts DESC""",
               (usuario_id,))
-    hitos = [{'id': r[0], 'tipo': r[1], 'titulo': r[2] or '', 'categoria': r[3] or '', 'contenido': r[4],
-              'evidencia': r[5] or '', 'peso': r[6], 'cuando': r[7] or '', 'como': r[8] or '', 'ts': ts_format(r[9])} for r in c.fetchall()]
+    hitos = []
+    for r in c.fetchall():
+        h = {
+            'id': r[0], 'tipo': r[1], 'titulo': r[2] or '', 'categoria': r[3] or '',
+            'contenido': r[4], 'evidencia': r[5] or '', 'peso': r[6],
+            'cuando': r[7] or '', 'como': r[8] or '', 'ts': ts_format(r[9]),
+            # Campos de persona
+            'nombre_propio': r[10] or '', 'apellidos': r[11] or '', 'mote': r[12] or '',
+            'subtipo_relacion': r[13] or '', 'relacion_especifica': r[14] or '',
+            'fallecido': r[15] or 0, 'fecha_fallecimiento': r[16] or '',
+            'relacion_activa': r[17] if r[17] is not None else 1,
+            'profesion': r[18] or '', 'donde_vive': r[19] or '',
+            'fecha_nacimiento': r[20] or '', 'personalidad': r[21] or '',
+            'como_se_conocieron': r[22] or '', 'desde_cuando': r[23] or '',
+            'frecuencia_contacto': r[24] or '', 'ultimo_contacto': r[25] or '',
+            'como_habla_rafa': r[26] or '', 'temas_recurrentes': r[27] or '',
+        }
+        hitos.append(h)
     conn.close()
     return jsonify({'hitos': hitos, 'total': len(hitos), 'pages': 1})
 
@@ -2569,11 +2659,42 @@ def api_editar_hito(hid):
     evidencia = data.get('evidencia', '').strip()
     if not contenido:
         return jsonify({'ok': False})
+    # Campos de persona
+    nombre_propio       = data.get('nombre_propio', '').strip()
+    apellidos           = data.get('apellidos', '').strip()
+    mote                = data.get('mote', '').strip()
+    subtipo_relacion    = data.get('subtipo_relacion', '').strip()
+    relacion_especifica = data.get('relacion_especifica', '').strip()
+    fallecido           = int(data.get('fallecido', 0))
+    fecha_fallecimiento = data.get('fecha_fallecimiento', '').strip()
+    relacion_activa     = int(data.get('relacion_activa', 1))
+    profesion           = data.get('profesion', '').strip()
+    donde_vive          = data.get('donde_vive', '').strip()
+    fecha_nacimiento    = data.get('fecha_nacimiento', '').strip()
+    personalidad        = data.get('personalidad', '').strip()
+    como_se_conocieron  = data.get('como_se_conocieron', '').strip()
+    desde_cuando        = data.get('desde_cuando', '').strip()
+    frecuencia_contacto = data.get('frecuencia_contacto', '').strip()
+    ultimo_contacto     = data.get('ultimo_contacto', '').strip()
+    como_habla_rafa     = data.get('como_habla_rafa', '').strip()
+    temas_recurrentes   = data.get('temas_recurrentes', '').strip()
+
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""UPDATE hitos_usuario
-                    SET contenido=?, titulo=?, categoria=?, cuando_activarlo=?, como_usarlo=?, evidencia=?, ts=?
+                    SET contenido=?, titulo=?, categoria=?, cuando_activarlo=?, como_usarlo=?, evidencia=?, ts=?,
+                        nombre_propio=?, apellidos=?, mote=?, subtipo_relacion=?, relacion_especifica=?,
+                        fallecido=?, fecha_fallecimiento=?, relacion_activa=?,
+                        profesion=?, donde_vive=?, fecha_nacimiento=?, personalidad=?,
+                        como_se_conocieron=?, desde_cuando=?, frecuencia_contacto=?, ultimo_contacto=?,
+                        como_habla_rafa=?, temas_recurrentes=?
                     WHERE id=? AND usuario_id=?""",
-                 (contenido, titulo, categoria, cuando, como, evidencia, time.time(), hid, usuario_id))
+                 (contenido, titulo, categoria, cuando, como, evidencia, time.time(),
+                  nombre_propio, apellidos, mote, subtipo_relacion, relacion_especifica,
+                  fallecido, fecha_fallecimiento, relacion_activa,
+                  profesion, donde_vive, fecha_nacimiento, personalidad,
+                  como_se_conocieron, desde_cuando, frecuencia_contacto, ultimo_contacto,
+                  como_habla_rafa, temas_recurrentes,
+                  hid, usuario_id))
     conn.commit()
     conn.close()
     # Regenerar embedding en background al editar
@@ -4784,17 +4905,24 @@ function loadMVPage(){
     }
     d.hitos.forEach(function(h){
       var card=document.createElement('div');card.className='item-card';
+      // Guardar datos completos en el card para que editHito pueda leerlos
+      card.dataset.hito=JSON.stringify(h);
+      var esRelacion=(h.tipo||'').toLowerCase()==='relacion';
       var titulo='<div id="ht-'+h.id+'" style="font-size:16px;font-weight:900;color:#111;margin-bottom:4px">'+(h.titulo?escH(h.titulo):'')+'</div>';
       var cat=h.categoria?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;padding:2px 7px;margin-right:6px">'+escH(h.categoria)+'</span>':'';
-      var ev=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px">"'+escH(h.evidencia)+'"</div>':'';
+      // Badge de subtipo para hitos de persona
+      var subtipoBadge=esRelacion&&h.subtipo_relacion?'<span style="font-size:11px;background:#e8f5e9;border:1px solid #81c784;border-radius:4px;padding:2px 7px;margin-right:6px;color:#2e7d32">'+escH(h.subtipo_relacion.replace(/_/g,' '))+'</span>':'';
+      // Indicadores fallecido / relación inactiva
+      var fallBadge=esRelacion&&h.fallecido?'<span style="font-size:11px;background:#fce4e4;border:1px solid #e57373;border-radius:4px;padding:2px 7px;margin-right:6px;color:#c62828">Fallecido/a</span>':'';
+      var inactivaBadge=esRelacion&&h.relacion_activa===0?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #bdbdbd;border-radius:4px;padding:2px 7px;margin-right:6px;color:#757575">Sin contacto</span>':'';
       var cuando=h.cuando?'<div style="font-size:12px;color:#aaa;margin-top:6px" id="hcuando-'+h.id+'"><b>Activar:</b> '+escH(h.cuando)+'</div>':'<div style="font-size:12px;color:#aaa;margin-top:6px" id="hcuando-'+h.id+'"></div>';
       var como=h.como?'<div style="font-size:12px;color:#aaa;margin-top:2px" id="hcomo-'+h.id+'"><b>Uso:</b> '+escH(h.como)+'</div>':'<div style="font-size:12px;color:#aaa;margin-top:2px" id="hcomo-'+h.id+'"></div>';
       var ev2=h.evidencia?'<div style="font-size:13px;color:#888;margin-top:8px;font-style:italic;border-left:3px solid #e0e0e0;padding-left:10px" id="hev-'+h.id+'">"'+escH(h.evidencia)+'"</div>':'<div id="hev-'+h.id+'"></div>';
       var pesoBar='<div style="font-size:11px;color:#aaa;margin-top:6px">Peso: <b style="color:#cc0000">'+h.peso.toFixed(1)+'</b></div>';
-      card.innerHTML='<div class="item-meta">'+cat+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
+      card.innerHTML='<div class="item-meta">'+cat+subtipoBadge+fallBadge+inactivaBadge+'#'+h.id+' &middot; '+h.ts+'</div>'+titulo+
         '<div class="item-content" id="hc-'+h.id+'">'+escH(h.contenido)+'</div>'+ev2+cuando+como+pesoBar+
         '<div class="item-actions">'+
-        '<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
+        '<button class="btn-edit" onclick="editHito('+h.id+',this,''+escH(h.tipo||'')+'')">Editar</button>'+
         '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
         '<button style="font-size:11px;padding:3px 10px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" data-mvid="'+h.id+'" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button>'+
         '</div>';
@@ -5181,23 +5309,105 @@ function editHito(id,btn,categoria){
   var origApellidos=nameWords.slice(1).join(' ')||'';
   var origRelPart=dashParts.slice(1).join(' — ')||'';
 
+  // Helper para crear campos del formulario de persona
+  function mkField(label, inputHtml){
+    return '<div style="margin-bottom:8px">'+
+      '<label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">'+label+'</label>'+
+      inputHtml+'</div>';
+  }
+  function inp(id, val, placeholder, bold){
+    var s='width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;font-family:inherit';
+    if(bold) s='width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit';
+    return '<input id="'+id+'" type="text" value="'+escH(val)+'" placeholder="'+escH(placeholder||'')+'" style="'+s+'">';
+  }
+  function sel(id, val, opts){
+    var s='width:100%;border:1px solid #ddd;border-radius:4px;padding:5px 8px;font-size:13px;font-family:inherit;background:#fff';
+    var html='<select id="'+id+'" style="'+s+'">';
+    opts.forEach(function(o){html+='<option value="'+escH(o[0])+'"'+(o[0]===val?' selected':'')+'>'+escH(o[1])+'</option>';});
+    return html+'</select>';
+  }
+  function chk(id, val, label){
+    return '<label style="font-size:13px;color:#444;cursor:pointer"><input id="'+id+'" type="checkbox"'+(val?' checked':'')+' style="margin-right:6px">'+escH(label)+'</label>';
+  }
+
+  // Leer valores de persona del hito actual
+  var h=card.dataset.hito?JSON.parse(card.dataset.hito):{};
+
   if(titleEl){
     if(esRelacion){
       titleEl.innerHTML=
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">'+
+        mkField('NOMBRE', inp('edit-nom-'+id, h.nombre_propio||origNombre, '', true))+
+        mkField('APELLIDOS', inp('edit-ape-'+id, h.apellidos||origApellidos, 'Opcional', true))+
+        mkField('MOTE / APODO', inp('edit-mote-'+id, h.mote||'', 'Como le llamas tú', true))+
+        '</div>'+
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">'+
-        '<div><label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">NOMBRE</label>'+
-        '<input id="edit-nom-'+id+'" type="text" value="'+escH(origNombre)+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit"></div>'+
-        '<div><label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">APELLIDOS</label>'+
-        '<input id="edit-ape-'+id+'" type="text" value="'+escH(origApellidos)+'" placeholder="Opcional" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit"></div>'+
+        mkField('TIPO DE RELACIÓN', sel('edit-sub-'+id, h.subtipo_relacion||'', [
+          ['','Seleccionar...'],['familia_propia','Familia propia'],['familia_directa','Familia directa'],
+          ['familia_directa_extendida','Familia directa extendida'],['familia_politica_directa','Familia política directa'],
+          ['familia_politica_extendida','Familia política extendida'],['expareja','Expareja'],
+          ['amigos','Amigos y amigas'],['mentor','Mentor / Figura de influencia'],
+          ['colegas_trabajo','Colegas de trabajo'],['relaciones_trabajo','Relaciones de trabajo'],
+          ['conocido','Conocido'],['otros','Otros']
+        ]))+
+        mkField('RELACIÓN ESPECÍFICA', inp('edit-rel-'+id, h.relacion_especifica||'', 'Madre, Padre, Mejor amigo...'))+
+        '</div>'+
+        '<div style="display:flex;gap:20px;margin-bottom:10px;padding:8px;background:#f9f9f9;border-radius:4px">'+
+        chk('edit-fall-'+id, h.fallecido, 'Fallecido/a')+
+        '<div id="edit-fall-fecha-wrap-'+id+'" style="'+(h.fallecido?'':'display:none')+';margin-left:8px">'+
+        inp('edit-fall-fecha-'+id, h.fecha_fallecimiento||'', 'Fecha fallecimiento')+
+        '</div>'+
+        '<span style="margin-left:20px">'+chk('edit-activa-'+id, h.relacion_activa!==0, 'Relación activa')+'</span>'+
         '</div>';
+      // Toggle fecha fallecimiento
+      setTimeout(function(){
+        var fc=document.getElementById('edit-fall-'+id);
+        if(fc) fc.onchange=function(){
+          var w=document.getElementById('edit-fall-fecha-wrap-'+id);
+          if(w) w.style.display=fc.checked?'':'none';
+        };
+      },50);
     } else {
       titleEl.innerHTML=
         '<div style="margin-bottom:6px">'+
-        '<label style="font-size:10px;color:#aaa;letter-spacing:1px;display:block;margin-bottom:2px">TÍTULO</label>'+
-        '<input id="edit-tit-'+id+'" type="text" value="'+escH(origTitle)+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:6px 8px;font-size:14px;font-weight:900;font-family:inherit"></div>';
+        mkField('TÍTULO', inp('edit-tit-'+id, origTitle, '', true))+
+        '</div>';
     }
   }
+
   contentEl.innerHTML='<textarea id="edit-con-'+id+'" style="width:100%;border:2px solid #cc0000;border-radius:6px;padding:8px 10px;font-size:14px;font-family:inherit;resize:vertical;min-height:60px" rows="3">'+escH(origContent)+'</textarea>';
+
+  if(esRelacion){
+    // Campos adicionales de persona — debajo del contenido
+    var personaExtra=document.createElement('div');
+    personaExtra.id='edit-persona-extra-'+id;
+    personaExtra.style.cssText='margin-top:12px;border-top:1px solid #f0f0f0;padding-top:12px';
+    personaExtra.innerHTML=
+      '<div style="font-size:10px;color:#aaa;letter-spacing:2px;margin-bottom:10px">SOBRE LA PERSONA</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">'+
+      mkField('PROFESIÓN', inp('edit-prof-'+id, h.profesion||'', 'Qué hace'))+
+      mkField('DÓNDE VIVE', inp('edit-vive-'+id, h.donde_vive||'', 'Ciudad, País'))+
+      mkField('FECHA NACIMIENTO', inp('edit-nac-'+id, h.fecha_nacimiento||'', 'Año o fecha'))+
+      '</div>'+
+      mkField('PERSONALIDAD', inp('edit-pers-'+id, h.personalidad||'', 'Directo, optimista, reservado...'))+
+      '<div style="font-size:10px;color:#aaa;letter-spacing:2px;margin-top:10px;margin-bottom:10px">CONTEXTO DE LA RELACIÓN</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">'+
+      mkField('CÓMO SE CONOCIERON', inp('edit-conocio-'+id, h.como_se_conocieron||'', 'Colegio, trabajo, viaje...'))+
+      mkField('DESDE CUÁNDO', inp('edit-desde-'+id, h.desde_cuando||'', 'Año o época'))+
+      '</div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">'+
+      mkField('FRECUENCIA DE CONTACTO', sel('edit-frec-'+id, h.frecuencia_contacto||'', [
+        ['','Seleccionar...'],['diario','Diario'],['semanal','Semanal'],
+        ['ocasional','Ocasional'],['raramente','Raramente'],['sin_contacto','Sin contacto']
+      ]))+
+      mkField('ÚLTIMO CONTACTO', inp('edit-ult-'+id, h.ultimo_contacto||'', 'Cuándo fue el último contacto'))+
+      '</div>'+
+      '<div style="font-size:10px;color:#aaa;letter-spacing:2px;margin-top:10px;margin-bottom:10px">PARA ANNI</div>'+
+      mkField('CÓMO HABLA RAFA DE ESTA PERSONA', inp('edit-habla-'+id, h.como_habla_rafa||'', 'Con nostalgia, con orgullo, con preocupación...'))+
+      mkField('TEMAS RECURRENTES', inp('edit-temas-'+id, h.temas_recurrentes||'', 'Fútbol y trabajo, familia, proyectos...'));
+    contentEl.parentNode.insertBefore(personaExtra, contentEl.nextSibling);
+  }
+
   if(evEl) evEl.innerHTML='<input id="edit-ev-'+id+'" type="text" value="'+escH(origEv)+'" placeholder="Evidencia (frase exacta)" style="width:100%;border:1px solid #e0e0e0;border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;font-style:italic;margin-top:4px">';
   if(cuandoEl) cuandoEl.innerHTML='<input id="edit-cuan-'+id+'" type="text" value="'+escH(origCuando)+'" placeholder="¿Cuándo activar?" style="width:100%;border:1px solid #e0e0e0;border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;margin-top:4px">';
   if(comoEl) comoEl.innerHTML='<input id="edit-como-'+id+'" type="text" value="'+escH(origComo)+'" placeholder="¿Cómo usar?" style="width:100%;border:1px solid #e0e0e0;border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;margin-top:4px">';
@@ -5206,16 +5416,34 @@ function editHito(id,btn,categoria){
   btn.onclick=function(){
     var nomEl=document.getElementById('edit-nom-'+id);
     var apeEl=document.getElementById('edit-ape-'+id);
+    var moteEl=document.getElementById('edit-mote-'+id);
+    var subEl=document.getElementById('edit-sub-'+id);
+    var relEl=document.getElementById('edit-rel-'+id);
+    var fallEl=document.getElementById('edit-fall-'+id);
+    var fallFechaEl=document.getElementById('edit-fall-fecha-'+id);
+    var activaEl=document.getElementById('edit-activa-'+id);
     var titEl=document.getElementById('edit-tit-'+id);
     var conEl=document.getElementById('edit-con-'+id);
     var evEl2=document.getElementById('edit-ev-'+id);
     var cuanEl=document.getElementById('edit-cuan-'+id);
-    var comoEl=document.getElementById('edit-como-'+id);
+    var comoEl2=document.getElementById('edit-como-'+id);
+    // Campos adicionales persona
+    var profEl=document.getElementById('edit-prof-'+id);
+    var viveEl=document.getElementById('edit-vive-'+id);
+    var nacEl=document.getElementById('edit-nac-'+id);
+    var persEl=document.getElementById('edit-pers-'+id);
+    var conocioEl=document.getElementById('edit-conocio-'+id);
+    var desdeEl=document.getElementById('edit-desde-'+id);
+    var frecEl=document.getElementById('edit-frec-'+id);
+    var ultEl=document.getElementById('edit-ult-'+id);
+    var hablaEl=document.getElementById('edit-habla-'+id);
+    var temasEl=document.getElementById('edit-temas-'+id);
+
     var nuevoTitulo;
     if(esRelacion){
       var nom=nomEl?nomEl.value.trim():origNombre;
       var ape=apeEl?apeEl.value.trim():origApellidos;
-      nuevoTitulo=nom+(ape?' '+ape:'')+(origRelPart?' — '+origRelPart:'');
+      nuevoTitulo=(nom+(ape?' '+ape:'')).toUpperCase();
     } else {
       nuevoTitulo=titEl?titEl.value.trim():origTitle;
     }
@@ -5227,7 +5455,25 @@ function editHito(id,btn,categoria){
       contenido: contenido,
       evidencia: evEl2?evEl2.value.trim():'',
       cuando: cuanEl?cuanEl.value.trim():'',
-      como: comoEl?comoEl.value.trim():''
+      como: comoEl2?comoEl2.value.trim():'',
+      nombre_propio: nomEl?nomEl.value.trim():'',
+      apellidos: apeEl?apeEl.value.trim():'',
+      mote: moteEl?moteEl.value.trim():'',
+      subtipo_relacion: subEl?subEl.value:'',
+      relacion_especifica: relEl?relEl.value.trim():'',
+      fallecido: fallEl&&fallEl.checked?1:0,
+      fecha_fallecimiento: fallFechaEl?fallFechaEl.value.trim():'',
+      relacion_activa: activaEl&&activaEl.checked?1:0,
+      profesion: profEl?profEl.value.trim():'',
+      donde_vive: viveEl?viveEl.value.trim():'',
+      fecha_nacimiento: nacEl?nacEl.value.trim():'',
+      personalidad: persEl?persEl.value.trim():'',
+      como_se_conocieron: conocioEl?conocioEl.value.trim():'',
+      desde_cuando: desdeEl?desdeEl.value.trim():'',
+      frecuencia_contacto: frecEl?frecEl.value:'',
+      ultimo_contacto: ultEl?ultEl.value.trim():'',
+      como_habla_rafa: hablaEl?hablaEl.value.trim():'',
+      temas_recurrentes: temasEl?temasEl.value.trim():''
     };
     fetch('/api/hitos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
     .then(r=>r.json()).then(function(d){
