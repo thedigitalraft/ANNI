@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.56"
+ANNI_VERSION = "1.01.57"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5888,15 +5888,17 @@ function editHito(id,btn,categoria){
   if(esTipoMV){
     var def=MV_TIPOS.filter(function(t){return t.tipo===(categoria||'').toLowerCase();})[0];
     if(def && card){
+      var hitoData={};
+      try{hitoData=JSON.parse(card.dataset.hito||'{}');}catch(e){}
       // Reemplazar el card entero con el formulario de edición
       var editDiv=document.createElement('div');
       editDiv.style.cssText='background:#fff8f8;border:2px solid #cc0000;border-radius:8px;padding:16px;margin-bottom:8px';
       editDiv.setAttribute('data-form-tipo', def.tipo);
       editDiv.innerHTML=
         '<div style="font-size:10px;font-weight:900;color:#cc0000;letter-spacing:2px;margin-bottom:10px">EDITANDO: '+escH(def.label.toUpperCase())+'</div>'+
-        def.campos(h)+
+        def.campos(hitoData)+
         '<div style="margin-top:10px;display:flex;gap:8px">'+
-        '<button onclick="guardarEditMV(this,'+h.id+')" data-tipo="'+def.tipo+'" style="font-size:11px;padding:5px 16px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>'+
+        '<button onclick="guardarEditMV(this,'+hitoData.id+')" data-tipo="'+def.tipo+'" style="font-size:11px;padding:5px 16px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR</button>'+
         '<button onclick="loadMVPage()" style="font-size:11px;padding:5px 12px;background:none;border:1px solid #ccc;cursor:pointer;font-family:monospace;border-radius:3px;color:#888">CANCELAR</button>'+
         '</div>';
       card.parentNode.insertBefore(editDiv, card);
