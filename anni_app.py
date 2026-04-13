@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.47"
+ANNI_VERSION = "1.01.48"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2571,11 +2571,22 @@ def api_editar_hito(hid):
         return jsonify({'ok': False})
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""UPDATE hitos_usuario
-                    SET contenido=?, titulo=?, categoria=?, cuando_activarlo=?, como_usarlo=?, evidencia=?
+                    SET contenido=?, titulo=?, categoria=?, cuando_activarlo=?, como_usarlo=?, evidencia=?, ts=?
                     WHERE id=? AND usuario_id=?""",
-                 (contenido, titulo, categoria, cuando, como, evidencia, hid, usuario_id))
+                 (contenido, titulo, categoria, cuando, como, evidencia, time.time(), hid, usuario_id))
     conn.commit()
     conn.close()
+    # Regenerar embedding en background al editar
+    def regen_emb():
+        try:
+            conn_del = sqlite3.connect(DB_PATH)
+            conn_del.execute("DELETE FROM embeddings WHERE tabla_origen='hitos_usuario' AND registro_id=?", (hid,))
+            conn_del.commit()
+            conn_del.close()
+        except: pass
+        texto = f"{titulo}. {contenido}" if titulo else contenido
+        db_guardar_embedding('hitos_usuario', hid, texto)
+    threading.Thread(target=regen_emb, daemon=True).start()
     return jsonify({'ok': True})
 
 @app.route('/api/hitos/<int:hid>', methods=['DELETE'])
@@ -4757,9 +4768,14 @@ function loadMVPage(){
     '<textarea id="mv-contenido" placeholder="Describe en 1-2 líneas lo esencial. Ej: Antonio es el padre de Rafa. Falleció en 2011. Figura central en su identidad." style="width:100%;border:1px solid #ddd;border-radius:4px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:60px;margin-bottom:6px"></textarea>'+
     '<input id="mv-cuando" placeholder="¿Cuándo activar? (opcional)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:12px;font-family:inherit;margin-bottom:6px"><br>'+
     '<input id="mv-como" placeholder="¿Cómo usar? (opcional)" style="width:100%;border:1px solid #ddd;border-radius:4px;padding:6px 10px;font-size:12px;font-family:inherit;margin-bottom:8px"><br>'+
-    '<button onclick="guardarNuevaMV()" style="font-size:11px;padding:5px 16px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR MEMORIA</button>'+
-    '<button onclick="repararEmbeddings()" style="font-size:10px;padding:3px 10px;background:none;border:1px solid #ddd;cursor:pointer;font-family:monospace;color:#aaa;border-radius:4px;margin-left:8px">&#8635; Reparar embeddings</button>';
+    '<button onclick="guardarNuevaMV()" style="font-size:11px;padding:5px 16px;background:#cc0000;color:#fff;border:none;cursor:pointer;font-family:monospace;border-radius:3px;letter-spacing:1px">GUARDAR MEMORIA</button>';
   content.appendChild(formCard);
+
+  // Botón reparar embeddings — fuera de la caja, acción de mantenimiento independiente
+  var repBtn=document.createElement('div');
+  repBtn.style.cssText='margin-bottom:20px;text-align:left';
+  repBtn.innerHTML='<button onclick="repararEmbeddings()" style="font-size:11px;padding:6px 16px;background:#f0f0f0;border:1px solid #888;cursor:pointer;font-family:monospace;color:#444;border-radius:4px;font-weight:700;letter-spacing:1px">&#8635; REPARAR EMBEDDINGS</button><span style="font-size:11px;color:#aaa;margin-left:10px">Regenera embeddings desactualizados y recalcula el universo</span>';
+  content.appendChild(repBtn);
 
   fetch('/api/hitos').then(r=>r.json()).then(function(d){
     if(!d.hitos||!d.hitos.length){
@@ -5123,7 +5139,7 @@ var body=document.getElementById('page-body');body.innerHTML='';
 // Repair button
 var repDiv=document.createElement('div');
 repDiv.style.cssText='text-align:right;margin-bottom:10px';
-repDiv.innerHTML='<button onclick="repararEmbeddings()" style="font-size:10px;padding:3px 10px;background:none;border:1px solid #ddd;cursor:pointer;font-family:monospace;color:#aaa;border-radius:4px">↻ Reparar embeddings</button>';
+repDiv.innerHTML='<button onclick="repararEmbeddings()" style="font-size:11px;padding:5px 14px;background:#f0f0f0;border:1px solid #888;cursor:pointer;font-family:monospace;color:#444;border-radius:4px;font-weight:700">↻ REPARAR EMBEDDINGS</button>';
 body.appendChild(repDiv);
 if(!d.hitos.length){body.innerHTML='<p style="color:#999;padding:20px">Sin memorias validadas aun.</p>';return;}
 d.hitos.forEach(function(h){
