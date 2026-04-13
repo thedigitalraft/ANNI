@@ -1763,13 +1763,22 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
     # Hitos del usuario — con campos de persona enriquecidos
     conn_h = sqlite3.connect(DB_PATH)
     c_h = conn_h.cursor()
-    c_h.execute("""SELECT tipo, contenido, cuando_activarlo, titulo,
-                        nombre_propio, apellidos, mote, subtipo_relacion, relacion_especifica,
-                        fallecido, relacion_activa, profesion, donde_vive, personalidad,
-                        como_se_conocieron, desde_cuando, frecuencia_contacto,
-                        como_habla_rafa, temas_recurrentes
-                   FROM hitos_usuario WHERE usuario_id=? AND activo=1
-                   ORDER BY peso DESC, ts DESC LIMIT 20""", (usuario_id,))
+    try:
+        c_h.execute("""SELECT tipo, contenido, cuando_activarlo, titulo,
+                            COALESCE(nombre_propio,''), COALESCE(apellidos,''), COALESCE(mote,''),
+                            COALESCE(subtipo_relacion,''), COALESCE(relacion_especifica,''),
+                            COALESCE(fallecido,0), COALESCE(relacion_activa,1),
+                            COALESCE(profesion,''), COALESCE(donde_vive,''), COALESCE(personalidad,''),
+                            COALESCE(como_se_conocieron,''), COALESCE(desde_cuando,''),
+                            COALESCE(frecuencia_contacto,''), COALESCE(como_habla_rafa,''),
+                            COALESCE(temas_recurrentes,'')
+                       FROM hitos_usuario WHERE usuario_id=? AND activo=1
+                       ORDER BY peso DESC, ts DESC LIMIT 20""", (usuario_id,))
+    except Exception:
+        c_h.execute("""SELECT tipo, contenido, cuando_activarlo, titulo,
+                            '','','','','',0,1,'','','','','','','',''
+                       FROM hitos_usuario WHERE usuario_id=? AND activo=1
+                       ORDER BY peso DESC, ts DESC LIMIT 20""", (usuario_id,))
     hitos = c_h.fetchall()
     conn_h.close()
     hitos_txt_parts = []
@@ -2536,15 +2545,28 @@ def api_hitos():
     usuario_id = session['usuario_id']
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""SELECT id, tipo, titulo, categoria, contenido, evidencia, peso,
-                        cuando_activarlo, como_usarlo, ts,
-                        nombre_propio, apellidos, mote, subtipo_relacion, relacion_especifica,
-                        fallecido, fecha_fallecimiento, relacion_activa,
-                        profesion, donde_vive, fecha_nacimiento, personalidad,
-                        como_se_conocieron, desde_cuando, frecuencia_contacto, ultimo_contacto,
-                        como_habla_rafa, temas_recurrentes
-        FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY peso DESC, ts DESC""",
-              (usuario_id,))
+    # SELECT defensivo — columnas nuevas con COALESCE por si las migraciones aún no corrieron
+    try:
+        c.execute("""SELECT id, tipo, titulo, categoria, contenido, evidencia, peso,
+                            cuando_activarlo, como_usarlo, ts,
+                            COALESCE(nombre_propio,''), COALESCE(apellidos,''), COALESCE(mote,''),
+                            COALESCE(subtipo_relacion,''), COALESCE(relacion_especifica,''),
+                            COALESCE(fallecido,0), COALESCE(fecha_fallecimiento,''),
+                            COALESCE(relacion_activa,1),
+                            COALESCE(profesion,''), COALESCE(donde_vive,''),
+                            COALESCE(fecha_nacimiento,''), COALESCE(personalidad,''),
+                            COALESCE(como_se_conocieron,''), COALESCE(desde_cuando,''),
+                            COALESCE(frecuencia_contacto,''), COALESCE(ultimo_contacto,''),
+                            COALESCE(como_habla_rafa,''), COALESCE(temas_recurrentes,'')
+            FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY peso DESC, ts DESC""",
+                  (usuario_id,))
+    except Exception:
+        # Fallback si columnas nuevas no existen aún — solo campos básicos
+        c.execute("""SELECT id, tipo, titulo, categoria, contenido, evidencia, peso,
+                            cuando_activarlo, como_usarlo, ts,
+                            '','','','','',0,'',1,'','','','','','','','','',''
+            FROM hitos_usuario WHERE usuario_id=? AND activo=1 ORDER BY peso DESC, ts DESC""",
+                  (usuario_id,))
     hitos = []
     for r in c.fetchall():
         h = {
