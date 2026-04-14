@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.61"
+ANNI_VERSION = "1.01.62"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -737,6 +737,8 @@ def db_guardar_embedding(tabla_origen, registro_id, texto):
             c.execute("SELECT usuario_id FROM hitos_usuario WHERE id=?", (registro_id,))
         elif tabla_origen == 'memoria_extendida':
             c.execute("SELECT usuario_id FROM memoria_extendida WHERE id=?", (registro_id,))
+        elif tabla_origen == 'observaciones':
+            c.execute("SELECT usuario_id FROM observaciones WHERE id=?", (registro_id,))
         else:
             conn.close()
             return
@@ -3972,8 +3974,6 @@ def recalcular_universo(usuario_id):
                      WHERE o.usuario_id=? AND o.activa=1
                      LIMIT 200""", (usuario_id,))
         obs_rows = c.fetchall()
-        c.execute("SELECT COUNT(*) FROM constelaciones WHERE usuario_id=?", (usuario_id,))
-        n_cons = c.fetchone()[0]
         conn.close()
 
         if len(rows) < 3:
