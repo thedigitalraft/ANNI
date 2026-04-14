@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.63"
+ANNI_VERSION = "1.01.64"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3174,9 +3174,6 @@ def cron_tick():
         return jsonify({'ok': False, 'error': str(e)})
 
 
-@app.route('/universo')
-@login_required  
-
 def calcular_lunas_orbitales(obs_rows, rows, coords, n_hitos_pca):
     """Posiciona cada luna cerca del hito semánticamente más cercano.
     Usa distancia coseno entre embeddings del PCA."""
@@ -3235,6 +3232,9 @@ def calcular_lunas_orbitales(obs_rows, rows, coords, n_hitos_pca):
 
     return lunas
 
+
+@app.route('/universo')
+@login_required
 def universo_page():
     """Sirve el universo como página completa — igual que el standalone HTML."""
     import struct, json as json_mod
