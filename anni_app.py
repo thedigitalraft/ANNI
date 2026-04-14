@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.59"
+ANNI_VERSION = "1.01.61"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3193,7 +3193,7 @@ def universo_page():
     c.execute("""SELECT o.id, SUBSTR(o.contenido,1,60), e.embedding
                  FROM observaciones o
                  JOIN embeddings e ON e.tabla_origen='observaciones' AND e.registro_id=o.id
-                 WHERE o.usuario_id=? AND o.activo=1
+                 WHERE o.usuario_id=? AND o.activa=1
                  LIMIT 200""", (usuario_id,))
     obs_rows = c.fetchall()
     conn.close()
@@ -3854,15 +3854,13 @@ def api_universo():
     # Check cache
     c.execute("SELECT puntos_json, estrellas_json, n_hitos FROM universo_cache WHERE usuario_id=?", (usuario_id,))
     cache = c.fetchone()
-    # constelaciones removed
-    n_cons = c.fetchone()[0]
     conn.close()
 
     if n_hitos < 3:
         return jsonify({'ok': False, 'error': 'insuficientes_embeddings', 'count': n_hitos})
 
     # Return cache if valid and not forced recalc
-    cache_valid = cache and cache[2] == n_hitos and n_cons > 0 and not recalc
+    cache_valid = cache and cache[2] == n_hitos and not recalc
     def parse_cache(cache_row):
         stars_data = json_mod.loads(cache_row[1])
         if isinstance(stars_data, dict):
@@ -3971,7 +3969,7 @@ def recalcular_universo(usuario_id):
         c.execute("""SELECT o.id, SUBSTR(o.contenido,1,60), e.embedding
                      FROM observaciones o
                      JOIN embeddings e ON e.tabla_origen='observaciones' AND e.registro_id=o.id
-                     WHERE o.usuario_id=? AND o.activo=1
+                     WHERE o.usuario_id=? AND o.activa=1
                      LIMIT 200""", (usuario_id,))
         obs_rows = c.fetchall()
         c.execute("SELECT COUNT(*) FROM constelaciones WHERE usuario_id=?", (usuario_id,))
