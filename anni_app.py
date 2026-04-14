@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.67"
+ANNI_VERSION = "1.01.68"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3341,7 +3341,7 @@ body { background: #000; overflow: hidden; font-family: 'Courier New', monospace
 <body>
 <button id="back" onclick="window.location.href='/chat'">← INICIO</button>
 <div id="ui">
-  <div id="title">UNIVERSO ANNI</div>
+  <div id="title">UNIVERSO ANNI — RAFA</div>
   <div id="subtitle">Memoria validada en el espacio semántico</div>
   <div style="color:#ffffff;font-size:15px;margin-top:8px;opacity:0.6;max-width:490px;line-height:1.6">Proyección 3D de los embeddings de tu memoria validada. Cada estrella es una memoria validada por ti. Los puntos cercanos comparten significado semántico — no necesariamente importancia ni relación familiar. El mapa se recalcula automáticamente a medida que ANNI aprende más de ti.</div>
 </div>
