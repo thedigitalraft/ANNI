@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.65"
+ANNI_VERSION = "1.01.66"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3225,7 +3225,7 @@ def calcular_lunas_orbitales(obs_rows, rows, coords, n_hitos_pca):
             'x': float(hx + ox),
             'y': float(hy + oy),
             'z': float(hz + oz),
-            'label': str(label)[:80],
+            'label': str(label)[:200],
             'id': oid,
             'hito_id': int(hito_ids[nearest_i])
         })
@@ -3251,7 +3251,7 @@ def universo_page():
                  WHERE h.usuario_id=? AND h.activo=1
                  ORDER BY h.peso DESC""", (usuario_id,))
     rows = c.fetchall()
-    c.execute("""SELECT o.id, SUBSTR(o.contenido,1,60), e.embedding
+    c.execute("""SELECT o.id, SUBSTR(o.contenido,1,150), e.embedding
                  FROM observaciones o
                  JOIN embeddings e ON e.tabla_origen='observaciones' AND e.registro_id=o.id
                  WHERE o.usuario_id=? AND o.activa=1
@@ -3510,7 +3510,7 @@ window.addEventListener('mousemove',e=>{
       hovered=obj;
       obj.material.opacity=0.95;
       tip.style.display='block'; tip.style.left=(e.clientX+15)+'px'; tip.style.top=(e.clientY-10)+'px';
-      tip.innerHTML='<span style="color:#aaaacc;font-size:10px;letter-spacing:1px">OBSERVACIÓN</span><br><span style="color:#ddd;font-size:12px;line-height:1.5">'+escH(obj.userData.label)+'</span>';
+      tip.innerHTML='<span style="color:#aaaacc;font-size:10px;letter-spacing:1px">OBSERVACIÓN</span><br><span style="color:#ddd;font-size:12px;line-height:1.6;display:block;max-width:300px;word-wrap:break-word;white-space:normal">'+escH(obj.userData.label)+'</span>';
     } else {
       // Hover hito normal
       if(hovered&&hovered!==obj){
@@ -4048,7 +4048,7 @@ def recalcular_universo(usuario_id):
                      ORDER BY h.peso DESC""", (usuario_id,))
         rows = c.fetchall()
         # Observaciones con embeddings — lunas del universo
-        c.execute("""SELECT o.id, SUBSTR(o.contenido,1,60), e.embedding
+        c.execute("""SELECT o.id, SUBSTR(o.contenido,1,150), e.embedding
                      FROM observaciones o
                      JOIN embeddings e ON e.tabla_origen='observaciones' AND e.registro_id=o.id
                      WHERE o.usuario_id=? AND o.activa=1
