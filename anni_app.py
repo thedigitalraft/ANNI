@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.57"
+ANNI_VERSION = "1.01.59"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3180,7 +3180,7 @@ def universo_page():
     usuario_id = session['usuario_id']
     garantizar_tablas_universo()
 
-    # Get hitos with embeddings
+    # Get hitos + observaciones con embeddings
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""SELECT h.id, COALESCE(h.titulo, SUBSTR(h.contenido,1,60)) as label,
@@ -3190,28 +3190,39 @@ def universo_page():
                  WHERE h.usuario_id=? AND h.activo=1
                  ORDER BY h.peso DESC""", (usuario_id,))
     rows = c.fetchall()
+    c.execute("""SELECT o.id, SUBSTR(o.contenido,1,60), e.embedding
+                 FROM observaciones o
+                 JOIN embeddings e ON e.tabla_origen='observaciones' AND e.registro_id=o.id
+                 WHERE o.usuario_id=? AND o.activo=1
+                 LIMIT 200""", (usuario_id,))
+    obs_rows = c.fetchall()
     conn.close()
 
     if len(rows) < 3:
         return "<html><body style='background:#000;color:#555;font-family:monospace;padding:40px'>Necesitas al menos 3 hitos con embeddings.</body></html>"
 
-    # PCA
+    # PCA — hitos + observaciones en el mismo espacio
     vecs = []
     for hid, label, peso, blob in rows:
         nv = len(blob) // 4
         vecs.append(list(struct.unpack(f'{nv}f', blob)))
+    n_hitos_pca = len(vecs)
+    for oid, label, blob in obs_rows:
+        nv = len(blob) // 4
+        vecs.append(list(struct.unpack(f'{nv}f', blob)))
+    n_total = len(vecs)
 
     coords = pca_python(vecs, n_components=3)
-    n = len(coords)
 
     for axis in range(3):
-        vals = [coords[i][axis] for i in range(n)]
+        vals = [coords[i][axis] for i in range(n_total)]
         mn, mx = min(vals), max(vals)
         if mx > mn:
-            for i in range(n):
+            for i in range(n_total):
                 coords[i][axis] = (coords[i][axis] - mn) / (mx - mn) * 300 - 150
 
-    # Force minimum separation
+    n = n_hitos_pca
+    # Force minimum separation — solo entre hitos
     MIN_DIST = 28.0
     for _ in range(30):
         for i in range(n):
@@ -3241,7 +3252,18 @@ def universo_page():
             'isCenter': hid == 1
         })
 
+    # Lunas — observaciones posicionadas por PCA
+    lunas = []
+    for j, (oid, label, blob) in enumerate(obs_rows):
+        idx = n_hitos_pca + j
+        lunas.append({
+            'x': float(coords[idx][0]),
+            'y': float(coords[idx][1]),
+            'z': float(coords[idx][2]),
+        })
+
     points_json = json_mod.dumps(points)
+    lunas_json = json_mod.dumps(lunas)
     n_nodos = len(points)
 
     html = """<!DOCTYPE html>
@@ -3283,6 +3305,7 @@ body { background: #000; overflow: hidden; font-family: 'Courier New', monospace
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 const POINTS = """ + points_json + """;
+const LUNAS = """ + lunas_json + """;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 2000);
@@ -3398,6 +3421,19 @@ POINTS.filter(p=>!p.isCenter).forEach((p,i)=>{
   });
 });
 
+// Lunas — observaciones en el espacio semántico
+// Pequeñas, blancas, fijas, sin glow, sin hover
+if(typeof LUNAS !== 'undefined'){
+  const lunaMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.35});
+  const lunaGeo=new THREE.SphereGeometry(1.0,8,8);
+  LUNAS.forEach(function(l){
+    const luna=new THREE.Mesh(lunaGeo,lunaMat);
+    luna.position.set(l.x,l.y,l.z);
+    luna.userData={isLuna:true};
+    scene.add(luna);
+  });
+}
+
 const raycaster=new THREE.Raycaster();
 const mouse=new THREE.Vector2();
 let hovered=null;
@@ -3405,7 +3441,7 @@ window.addEventListener('mousemove',e=>{
   mouse.x=(e.clientX/innerWidth)*2-1;
   mouse.y=-(e.clientY/innerHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
-  const hits=raycaster.intersectObjects(meshes);
+  const hits=raycaster.intersectObjects(meshes).filter(h=>!h.object.userData.isLuna);
   if(hits.length>0){
     const obj=hits[0].object;
     if(hovered!==obj){if(hovered)hovered.material.emissiveIntensity=0.7;hovered=obj;obj.material.emissiveIntensity=1.8;}
@@ -3725,7 +3761,7 @@ def api_personas_sin_hito():
 @app.route('/api/embeddings/repair', methods=['POST'])
 @login_required
 def api_embeddings_repair():
-    """Regenera embeddings para hitos sin embedding O con embedding desactualizado.
+    """Regenera embeddings para hitos + observaciones sin embedding o desactualizados.
     Fuerza recalc del universo al terminar."""
     usuario_id = session['usuario_id']
     conn = sqlite3.connect(DB_PATH)
@@ -3737,11 +3773,18 @@ def api_embeddings_repair():
                      SELECT registro_id FROM embeddings WHERE tabla_origen='hitos_usuario'
                  )""", (usuario_id,))
     sin_emb = c.fetchall()
-    # Hitos con embedding desactualizado (hito editado despues del embedding)
+    # Hitos con embedding desactualizado
     c.execute("""SELECT h.id, h.titulo, h.contenido FROM hitos_usuario h
                  JOIN embeddings e ON e.tabla_origen='hitos_usuario' AND e.registro_id=h.id
                  WHERE h.usuario_id=? AND h.activo=1 AND h.ts > e.ts""", (usuario_id,))
     desactualizados = c.fetchall()
+    # Observaciones sin embedding
+    c.execute("""SELECT o.id, '', o.contenido FROM observaciones o
+                 WHERE o.usuario_id=? AND o.activa=1
+                 AND o.id NOT IN (
+                     SELECT registro_id FROM embeddings WHERE tabla_origen='observaciones'
+                 )""", (usuario_id,))
+    obs_sin_emb = c.fetchall()
     conn.close()
 
     hitos = sin_emb + desactualizados
@@ -3754,6 +3797,7 @@ def api_embeddings_repair():
 
     def regenerar_y_recalcular():
         import time as time_mod
+        # Regenerar hitos
         for hid, titulo, contenido in hitos_uniq:
             try:
                 conn_del = sqlite3.connect(DB_PATH)
@@ -3763,7 +3807,12 @@ def api_embeddings_repair():
             except: pass
             texto = f"{titulo}. {contenido}" if titulo else contenido
             db_guardar_embedding('hitos_usuario', hid, texto)
-            time_mod.sleep(0.3)
+            time_mod.sleep(0.2)
+        # Generar embeddings observaciones pendientes
+        for oid, _, contenido in obs_sin_emb:
+            db_guardar_embedding('observaciones', oid, contenido[:1200])
+            time_mod.sleep(0.2)
+        # Invalidar cache y recalcular universo
         try:
             conn_u = sqlite3.connect(DB_PATH)
             conn_u.execute("DELETE FROM universo_cache WHERE usuario_id=?", (usuario_id,))
@@ -3771,15 +3820,17 @@ def api_embeddings_repair():
             conn_u.close()
         except: pass
         recalcular_universo(usuario_id)
-        print(f"[ANNI] Repair completo — {len(hitos_uniq)} embeddings regenerados, universo recalculado")
+        print(f"[ANNI] Repair completo — {len(hitos_uniq)} hitos, {len(obs_sin_emb)} observaciones, universo recalculado")
 
-    if hitos_uniq:
+    if hitos_uniq or obs_sin_emb:
         threading.Thread(target=regenerar_y_recalcular, daemon=True).start()
 
-    return jsonify({'ok': True, 'reparando': len(hitos_uniq),
+    return jsonify({'ok': True,
+                    'reparando': len(hitos_uniq) + len(obs_sin_emb),
                     'sin_embedding': len(sin_emb),
                     'desactualizados': len(desactualizados),
-                    'msg': f'Regenerando {len(hitos_uniq)} embeddings y recalculando universo...'})
+                    'observaciones': len(obs_sin_emb),
+                    'msg': f'Regenerando {len(hitos_uniq)} hitos y {len(obs_sin_emb)} observaciones...'})
 
 # ── UNIVERSO ──────────────────────────────────────────────────────────────────
 
@@ -3812,9 +3863,20 @@ def api_universo():
 
     # Return cache if valid and not forced recalc
     cache_valid = cache and cache[2] == n_hitos and n_cons > 0 and not recalc
+    def parse_cache(cache_row):
+        stars_data = json_mod.loads(cache_row[1])
+        if isinstance(stars_data, dict):
+            stars = stars_data.get('stars', [])
+            lunas = stars_data.get('lunas', [])
+        else:
+            stars = stars_data
+            lunas = []
+        return stars, lunas
+
     if cache_valid:
+        stars, lunas = parse_cache(cache)
         return jsonify({'ok': True, 'points': json_mod.loads(cache[0]),
-                        'stars': json_mod.loads(cache[1]), 'cached': True})
+                        'stars': stars, 'lunas': lunas, 'cached': True})
 
     # Need recalc — launch in background, return loading state if first time
     if not cache:
@@ -3823,8 +3885,9 @@ def api_universo():
 
     # Has old cache — return it while recalculating in background
     threading.Thread(target=recalcular_universo, args=(usuario_id,), daemon=True).start()
+    stars, lunas = parse_cache(cache)
     return jsonify({'ok': True, 'points': json_mod.loads(cache[0]),
-                    'stars': json_mod.loads(cache[1]), 'cached': True, 'recalculating': True})
+                    'stars': stars, 'lunas': lunas, 'cached': True, 'recalculating': True})
 
     return  # old code removed — now handled by recalcular_universo
 
@@ -3904,6 +3967,13 @@ def recalcular_universo(usuario_id):
                      WHERE h.usuario_id=? AND h.activo=1
                      ORDER BY h.peso DESC""", (usuario_id,))
         rows = c.fetchall()
+        # Observaciones con embeddings — lunas del universo
+        c.execute("""SELECT o.id, SUBSTR(o.contenido,1,60), e.embedding
+                     FROM observaciones o
+                     JOIN embeddings e ON e.tabla_origen='observaciones' AND e.registro_id=o.id
+                     WHERE o.usuario_id=? AND o.activo=1
+                     LIMIT 200""", (usuario_id,))
+        obs_rows = c.fetchall()
         c.execute("SELECT COUNT(*) FROM constelaciones WHERE usuario_id=?", (usuario_id,))
         n_cons = c.fetchone()[0]
         conn.close()
@@ -3919,24 +3989,31 @@ def recalcular_universo(usuario_id):
         hito_to_con = {}
         con_colors = ['#cc0000','#ff8800','#ffcc00','#00aaff','#aa44ff','#00cc88']
 
-        # PCA puro Python — sin dependencias
+        # PCA puro Python — hitos + observaciones en el mismo espacio
         vecs = []
         for hid, label, peso, tipo, blob in rows:
             nv = len(blob) // 4
             vecs.append(list(struct.unpack(f'{nv}f', blob)))
+        n_hitos_pca = len(vecs)
 
-        n = len(vecs)
+        # Añadir observaciones al PCA
+        for oid, label, blob in obs_rows:
+            nv = len(blob) // 4
+            vecs.append(list(struct.unpack(f'{nv}f', blob)))
+        n_total = len(vecs)
+
         coords = pca_python(vecs, n_components=3)
 
         # Normalize to -150..150
         for axis in range(3):
-            vals = [coords[i][axis] for i in range(n)]
+            vals = [coords[i][axis] for i in range(n_total)]
             mn, mx = min(vals), max(vals)
             if mx > mn:
-                for i in range(n):
+                for i in range(n_total):
                     coords[i][axis] = (coords[i][axis] - mn) / (mx - mn) * 300 - 150
 
-        # Force minimum separation between nodes (repulsion passes)
+        n = n_hitos_pca  # solo repulsión entre hitos
+        # Force minimum separation entre hitos (no tocar posición de lunas)
         MIN_DIST = 28.0
         for _ in range(30):
             for i in range(n):
@@ -3986,14 +4063,27 @@ def recalcular_universo(usuario_id):
                           'descripcion': con['descripcion'], 'color': con['color'],
                           'n_planetas': len(idxs)})
 
-        # Save to cache
+        # Construir lunas — observaciones posicionadas por PCA
+        lunas = []
+        for j, (oid, label, blob) in enumerate(obs_rows):
+            idx = n_hitos_pca + j
+            lunas.append({
+                'x': float(coords[idx][0]),
+                'y': float(coords[idx][1]),
+                'z': float(coords[idx][2]),
+                'label': str(label)[:60],
+                'id': oid
+            })
+
+        # Save to cache — lunas en estrellas_json por compatibilidad de schema
+        lunas_stars = {'stars': stars, 'lunas': lunas}
         conn3 = sqlite3.connect(DB_PATH)
         conn3.execute("""INSERT OR REPLACE INTO universo_cache (usuario_id, puntos_json, estrellas_json, n_hitos, ts)
                          VALUES (?,?,?,?,?)""",
-                      (usuario_id, json_mod.dumps(points), json_mod.dumps(stars), len(rows), time.time()))
+                      (usuario_id, json_mod.dumps(points), json_mod.dumps(lunas_stars), len(rows), time.time()))
         conn3.commit()
         conn3.close()
-        print(f"[ANNI] Universo calculado y cacheado para usuario {usuario_id} — {len(points)} puntos, {len(stars)} estrellas")
+        print(f"[ANNI] Universo calculado — {len(points)} hitos, {len(lunas)} lunas")
 
     except Exception as e:
         print(f"[ANNI] Error calculando universo: {e}")
@@ -5007,7 +5097,13 @@ function repararEmbeddings(){
       if(d.reparando===0){
         alert('Todo está al día. Ningún embedding necesita regenerarse.');
       } else {
-        alert('Regenerando '+d.reparando+' embeddings ('+d.sin_embedding+' nuevos, '+d.desactualizados+' desactualizados). El universo se recalculará automáticamente en unos segundos.');
+        var msg='Regenerando '+d.reparando+' embeddings';
+        if(d.sin_embedding) msg+=' ('+d.sin_embedding+' hitos nuevos';
+        if(d.desactualizados) msg+=', '+d.desactualizados+' desactualizados';
+        if(d.observaciones) msg+=', '+d.observaciones+' observaciones';
+        if(d.sin_embedding||d.desactualizados||d.observaciones) msg+=')';
+        msg+='. El universo se recalculará en unos segundos.';
+        alert(msg);
       }
     }
     btn.textContent='↻ Reparar embeddings';btn.disabled=false;
@@ -6523,6 +6619,29 @@ if __name__ == '__main__':
         conn_s.close()
         for uid in uids:
             seed_embeddings_memoria_extendida(uid)
+            # Seed observaciones sin embedding
+            def seed_obs(usuario_id=uid):
+                import time as time_mod
+                try:
+                    conn_o = sqlite3.connect(DB_PATH)
+                    c_o = conn_o.cursor()
+                    c_o.execute("""SELECT o.id, o.contenido FROM observaciones o
+                                     WHERE o.usuario_id=? AND o.activa=1
+                                     AND o.id NOT IN (
+                                         SELECT registro_id FROM embeddings WHERE tabla_origen='observaciones'
+                                     ) LIMIT 200""", (usuario_id,))
+                    pendientes = c_o.fetchall()
+                    conn_o.close()
+                    print(f"[ANNI] Seed observaciones: {len(pendientes)} pendientes para usuario {usuario_id}")
+                    for oid, contenido in pendientes:
+                        db_guardar_embedding('observaciones', oid, contenido[:1200])
+                        time_mod.sleep(0.2)
+                    if pendientes:
+                        recalcular_universo(usuario_id)
+                        print(f"[ANNI] Seed observaciones completo — {len(pendientes)} embeddings generados")
+                except Exception as e:
+                    print(f"[ANNI] Error seed observaciones: {e}")
+            threading.Thread(target=seed_obs, daemon=True).start()
     except Exception as e:
         print(f"[ANNI] Error seed inicial: {e}")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
