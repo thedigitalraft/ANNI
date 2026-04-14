@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.62"
+ANNI_VERSION = "1.01.63"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3176,6 +3176,65 @@ def cron_tick():
 
 @app.route('/universo')
 @login_required  
+
+def calcular_lunas_orbitales(obs_rows, rows, coords, n_hitos_pca):
+    """Posiciona cada luna cerca del hito semánticamente más cercano.
+    Usa distancia coseno entre embeddings del PCA."""
+    import struct, math, random
+    lunas = []
+    if not obs_rows or not rows:
+        return lunas
+
+    # Vectores PCA de los hitos (ya normalizados)
+    hito_coords = [coords[i] for i in range(n_hitos_pca)]
+    hito_ids = [rows[i][0] for i in range(n_hitos_pca)]
+
+    ORBIT_RADIUS = 22.0  # radio de órbita alrededor del hito
+
+    for j, obs in enumerate(obs_rows):
+        oid = obs[0]
+        label = obs[1]
+        obs_idx = n_hitos_pca + j
+        obs_coord = coords[obs_idx]
+
+        # Encontrar hito más cercano por distancia euclidea en espacio PCA
+        min_dist = float('inf')
+        nearest_i = 0
+        for i in range(n_hitos_pca):
+            if hito_ids[i] == 1:  # skip centro
+                continue
+            dx = obs_coord[0] - hito_coords[i][0]
+            dy = obs_coord[1] - hito_coords[i][1]
+            dz = obs_coord[2] - hito_coords[i][2]
+            dist = (dx*dx + dy*dy + dz*dz) ** 0.5
+            if dist < min_dist:
+                min_dist = dist
+                nearest_i = i
+
+        # Posición orbital — distribución esférica alrededor del hito
+        # Usar índice j para distribuir uniformemente (golden angle en esfera)
+        golden = (1 + 5**0.5) / 2
+        theta = 2 * math.pi * j / golden
+        phi = math.acos(1 - 2 * (j + 0.5) / max(len(obs_rows), 1))
+        ox = ORBIT_RADIUS * math.sin(phi) * math.cos(theta)
+        oy = ORBIT_RADIUS * math.sin(phi) * math.sin(theta)
+        oz = ORBIT_RADIUS * math.cos(phi)
+
+        hx = hito_coords[nearest_i][0]
+        hy = hito_coords[nearest_i][1]
+        hz = hito_coords[nearest_i][2]
+
+        lunas.append({
+            'x': float(hx + ox),
+            'y': float(hy + oy),
+            'z': float(hz + oz),
+            'label': str(label)[:80],
+            'id': oid,
+            'hito_id': int(hito_ids[nearest_i])
+        })
+
+    return lunas
+
 def universo_page():
     """Sirve el universo como página completa — igual que el standalone HTML."""
     import struct, json as json_mod
@@ -3254,15 +3313,8 @@ def universo_page():
             'isCenter': hid == 1
         })
 
-    # Lunas — observaciones posicionadas por PCA
-    lunas = []
-    for j, (oid, label, blob) in enumerate(obs_rows):
-        idx = n_hitos_pca + j
-        lunas.append({
-            'x': float(coords[idx][0]),
-            'y': float(coords[idx][1]),
-            'z': float(coords[idx][2]),
-        })
+    # Lunas — órbitas alrededor del hito semánticamente más cercano
+    lunas = calcular_lunas_orbitales(obs_rows, rows, coords, n_hitos_pca)
 
     points_json = json_mod.dumps(points)
     lunas_json = json_mod.dumps(lunas)
@@ -3423,16 +3475,18 @@ POINTS.filter(p=>!p.isCenter).forEach((p,i)=>{
   });
 });
 
-// Lunas — observaciones en el espacio semántico
-// Pequeñas, blancas, fijas, sin glow, sin hover
-if(typeof LUNAS !== 'undefined'){
-  const lunaMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.35});
-  const lunaGeo=new THREE.SphereGeometry(1.0,8,8);
+// Lunas — observaciones orbitando su hito más cercano
+if(typeof LUNAS !== 'undefined' && LUNAS.length){
+  const lunaGeo=new THREE.SphereGeometry(1.2,8,8);
   LUNAS.forEach(function(l){
+    const lunaMat=new THREE.MeshBasicMaterial({
+      color:0xffffff, transparent:true, opacity:0.45
+    });
     const luna=new THREE.Mesh(lunaGeo,lunaMat);
     luna.position.set(l.x,l.y,l.z);
-    luna.userData={isLuna:true};
+    luna.userData={isLuna:true, label:l.label||'', id:l.id};
     scene.add(luna);
+    meshes.push(luna);
   });
 }
 
@@ -3443,14 +3497,39 @@ window.addEventListener('mousemove',e=>{
   mouse.x=(e.clientX/innerWidth)*2-1;
   mouse.y=-(e.clientY/innerHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
-  const hits=raycaster.intersectObjects(meshes).filter(h=>!h.object.userData.isLuna);
+  const hits=raycaster.intersectObjects(meshes);
   if(hits.length>0){
     const obj=hits[0].object;
-    if(hovered!==obj){if(hovered)hovered.material.emissiveIntensity=0.7;hovered=obj;obj.material.emissiveIntensity=1.8;}
-    const pc=obj.userData.peso<=5?'#ac0000':obj.userData.peso<=10?'#ff0000':obj.userData.peso<=18?'#ffc000':obj.userData.peso<=25?'#ffff00':obj.userData.peso<=35?'#caeefb':'#00b0f0';
-    tip.style.display='block'; tip.style.left=(e.clientX+15)+'px'; tip.style.top=(e.clientY-10)+'px';
-    tip.innerHTML='<b style="color:'+pc+'">⭐ '+obj.userData.label.toUpperCase()+'</b><br><span style="color:#555;font-size:10px">peso: '+obj.userData.peso.toFixed(1)+'</span>';
-  } else { if(hovered){hovered.material.emissiveIntensity=0.7;hovered=null;} tip.style.display='none'; }
+    if(obj.userData.isLuna){
+      // Hover luna — resaltar y mostrar contenido
+      if(hovered&&hovered!==obj){
+        if(hovered.userData.isLuna) hovered.material.opacity=0.45;
+        else if(hovered.material.emissiveIntensity!==undefined) hovered.material.emissiveIntensity=0.7;
+      }
+      hovered=obj;
+      obj.material.opacity=0.95;
+      tip.style.display='block'; tip.style.left=(e.clientX+15)+'px'; tip.style.top=(e.clientY-10)+'px';
+      tip.innerHTML='<span style="color:#aaaacc;font-size:10px;letter-spacing:1px">OBSERVACIÓN</span><br><span style="color:#ddd;font-size:12px;line-height:1.5">'+escH(obj.userData.label)+'</span>';
+    } else {
+      // Hover hito normal
+      if(hovered&&hovered!==obj){
+        if(hovered.userData.isLuna) hovered.material.opacity=0.45;
+        else if(hovered.material.emissiveIntensity!==undefined) hovered.material.emissiveIntensity=0.7;
+      }
+      hovered=obj;
+      if(obj.material.emissiveIntensity!==undefined) obj.material.emissiveIntensity=1.8;
+      const pc=obj.userData.peso<=5?'#ac0000':obj.userData.peso<=10?'#ff0000':obj.userData.peso<=18?'#ffc000':obj.userData.peso<=25?'#ffff00':obj.userData.peso<=35?'#caeefb':'#00b0f0';
+      tip.style.display='block'; tip.style.left=(e.clientX+15)+'px'; tip.style.top=(e.clientY-10)+'px';
+      tip.innerHTML='<b style="color:'+pc+'">⭐ '+obj.userData.label.toUpperCase()+'</b><br><span style="color:#555;font-size:10px">peso: '+obj.userData.peso.toFixed(1)+'</span>';
+    }
+  } else {
+    if(hovered){
+      if(hovered.userData.isLuna) hovered.material.opacity=0.45;
+      else if(hovered.material.emissiveIntensity!==undefined) hovered.material.emissiveIntensity=0.7;
+      hovered=null;
+    }
+    tip.style.display='none';
+  }
 });
 let isDrag=false,prevX=0,prevY=0,rotX=0,rotY=0,autoRot=true;
 renderer.domElement.addEventListener('mousedown',e=>{isDrag=true;autoRot=false;prevX=e.clientX;prevY=e.clientY;});
@@ -4061,17 +4140,8 @@ def recalcular_universo(usuario_id):
                           'descripcion': con['descripcion'], 'color': con['color'],
                           'n_planetas': len(idxs)})
 
-        # Construir lunas — observaciones posicionadas por PCA
-        lunas = []
-        for j, (oid, label, blob) in enumerate(obs_rows):
-            idx = n_hitos_pca + j
-            lunas.append({
-                'x': float(coords[idx][0]),
-                'y': float(coords[idx][1]),
-                'z': float(coords[idx][2]),
-                'label': str(label)[:60],
-                'id': oid
-            })
+        # Construir lunas — órbitas alrededor del hito semánticamente más cercano
+        lunas = calcular_lunas_orbitales(obs_rows, rows, coords, n_hitos_pca)
 
         # Save to cache — lunas en estrellas_json por compatibilidad de schema
         lunas_stars = {'stars': stars, 'lunas': lunas}
