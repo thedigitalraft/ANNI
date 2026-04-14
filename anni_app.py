@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.66"
+ANNI_VERSION = "1.01.67"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5602,7 +5602,7 @@ function renderHitoCard(h, content){
     '<div class="item-actions">'+
     '<button class="btn-edit" onclick="editHito('+h.id+',this)">Editar</button>'+
     '<button class="btn-del" onclick="delHito('+h.id+')">Borrar</button>'+
-    '<button style="font-size:11px;padding:3px 8px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button>'+
+    '<button style="font-size:11px;padding:3px 8px;background:none;border:1px solid #aaa;cursor:pointer;font-family:monospace;color:#666;border-radius:3px;margin-left:4px" data-mvid="'+h.id+'" onclick="verMemoriaExtendida('+h.id+')">+ Memoria extendida</button>'+
     '</div>';
   content.appendChild(card);
 }
