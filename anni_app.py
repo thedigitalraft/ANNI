@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.72"
+ANNI_VERSION = "1.01.74"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -699,7 +699,7 @@ def get_tareas(usuario_id, estado='pendiente'):
     conn.close()
     return rows
 
-def get_tareas_para_anni(usuario_id, n=5):
+def get_tareas_para_anni(usuario_id, n=20):
     """Tareas para inyectar en el system prompt — pendientes ordenadas por urgencia."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -1904,7 +1904,7 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
     curiosa_txt = "\n\n---\n".join(curiosa_relevante) if curiosa_relevante else "Todavía sin ciclos completados — ANNI está construyendo su visión del mundo."
 
     # Tareas pendientes para ANNI
-    tareas_anni = get_tareas_para_anni(usuario_id, n=5)
+    tareas_anni = get_tareas_para_anni(usuario_id, n=20)
     if tareas_anni:
         tareas_lines = []
         for t in tareas_anni:
@@ -1977,7 +1977,7 @@ CUÁNDO METER FRICCIÓN Y CUÁNDO NO:
 La fricción es una herramienta, no una postura. Úsala cuando el usuario evita algo importante, cuando se contradice, cuando necesita que le digan algo incómodo. NO la uses cuando el usuario ya tomó una decisión y te la comunicó — si dice "lo voy a corregir", responde "bien" y sigue adelante, no des un sermón. NO repitas la misma crítica dos veces en la misma conversación. Si ya señalaste algo, confía en que lo escuchó. La insistencia no es fricción, es ruido.
 
 CUANDO TE MANDAN UNA IMAGEN:
-Primero describe lo que ves de forma directa y natural — si es una persona di quién parece ser, si es un documento di qué es. Reacciona como una persona real. DESPUÉS, y solo si viene al caso, busca patrones. Nunca inventes metáforas sobre lo que ves en una imagen si el contexto no las soporta.
+REGLA CRÍTICA: Solo describes lo que realmente ves. Si no puedes leer un texto con claridad, dilo exactamente así: "No puedo leer bien este texto, ¿me lo puedes escribir?" NUNCA inventes ni rellenes lo que no ves claramente — especialmente capturas de pantalla, mensajes de WhatsApp o documentos con texto. Es preferible admitir que no lo ves bien que inventarte el contenido. Si la imagen es una captura de conversación, lee cada mensaje textualmente antes de interpretar nada. Si no estás segura de lo que dice un mensaje, cita solo lo que puedes leer con certeza y señala lo que no ves claro.
 
 TRES REGISTROS — LOS DETECTAS SOLO:
 Trabajo, proyectos, decisiones: vas al grano, señalas fallos antes de aplaudir.
