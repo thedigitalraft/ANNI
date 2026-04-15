@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.71"
+ANNI_VERSION = "1.01.72"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3515,16 +3515,22 @@ POINTS.filter(p=>!p.isCenter).forEach((p,i)=>{
   });
 });
 
-// Lunas — observaciones orbitando su hito más cercano
+// Lunas — observaciones con colores y tamaños variados seeded por id
 if(typeof LUNAS !== 'undefined' && LUNAS.length){
-  const lunaGeo=new THREE.SphereGeometry(1.2,8,8);
+  const LUNA_COLORES=[0xffffff,0xcccccc,0xaaddaa,0xaaccff,0xffbbcc];
+  const LUNA_SIZES=[0.9,1.2,1.6,2.1];
   LUNAS.forEach(function(l){
-    const lunaMat=new THREE.MeshBasicMaterial({
-      color:0xffffff, transparent:true, opacity:0.45
-    });
-    const luna=new THREE.Mesh(lunaGeo,lunaMat);
+    // Seed determinista por id para reproducibilidad
+    var seed=(l.id*2654435761)>>>0;
+    var colorIdx=seed%5;
+    var sizeIdx=(seed>>8)%4;
+    var opacity=0.35+((seed>>16)%3)*0.1; // 0.35, 0.45 o 0.55
+    var size=LUNA_SIZES[sizeIdx];
+    var color=LUNA_COLORES[colorIdx];
+    const lunaMat=new THREE.MeshBasicMaterial({color:color,transparent:true,opacity:opacity});
+    const luna=new THREE.Mesh(new THREE.SphereGeometry(size,8,8),lunaMat);
     luna.position.set(l.x,l.y,l.z);
-    luna.userData={isLuna:true, label:l.label||'', id:l.id};
+    luna.userData={isLuna:true, label:l.label||'', id:l.id, baseOpacity:opacity};
     scene.add(luna);
     meshes.push(luna);
   });
@@ -3543,7 +3549,7 @@ window.addEventListener('mousemove',e=>{
     if(obj.userData.isLuna){
       // Hover luna — resaltar y mostrar contenido
       if(hovered&&hovered!==obj){
-        if(hovered.userData.isLuna) hovered.material.opacity=0.45;
+        if(hovered.userData.isLuna) hovered.material.opacity=hovered.userData.baseOpacity||0.45;
         else if(hovered.material.emissiveIntensity!==undefined) hovered.material.emissiveIntensity=0.7;
       }
       hovered=obj;
@@ -3553,7 +3559,7 @@ window.addEventListener('mousemove',e=>{
     } else {
       // Hover hito normal
       if(hovered&&hovered!==obj){
-        if(hovered.userData.isLuna) hovered.material.opacity=0.45;
+        if(hovered.userData.isLuna) hovered.material.opacity=hovered.userData.baseOpacity||0.45;
         else if(hovered.material.emissiveIntensity!==undefined) hovered.material.emissiveIntensity=0.7;
       }
       hovered=obj;
