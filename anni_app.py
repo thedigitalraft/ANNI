@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.68"
+ANNI_VERSION = "1.01.69"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3174,60 +3174,101 @@ def cron_tick():
         return jsonify({'ok': False, 'error': str(e)})
 
 
+# ── FAMILIAS DE OBSERVACIONES ────────────────────────────────────────────────
+# Asignación semántica explícita — escala automáticamente con nuevas obs
+# Nuevas observaciones sin ID asignado van a la familia más cercana por tipo
+
+OBS_FAMILIAS = {
+    'personas_cercanas':    [2,26,35,37,38,40,42,83,85,86,87,89,92,96,97,39,41,82,88,91,103],
+    'trabajo_negocio':      [20,32,33,47,49,51,52,56,58,61,62,64,71,16,45,69],
+    'ia_tecnologia':        [12,13,21,24,25,54,59,95,101,43],
+    'velocidad_ejecucion':  [44,74,77,79,90,100,102,104,105],
+    'energia_motivacion':   [1,7,9,14,55,60,68,70,72,94,98,19,22,27,46,75,80],
+    'emociones':            [3,11,23,31,34,50,53,65,78,81,84,93],
+    'patrones_pensamiento': [10,15,28,30,36,66,76,6,67],
+    'evitacion_resistencia':[17,18,29,48,57,63,73,99],
+}
+
+# Hitos de cada familia — para calcular el centroide geométrico
+FAMILIA_HITOS = {
+    'personas_cercanas':    [3,33,17,16,43,49],
+    'trabajo_negocio':      [68,34,42,52,53,54,55,40,41],
+    'ia_tecnologia':        [27,11,28,14,21,7],
+    'velocidad_ejecucion':  [1,5],
+    'energia_motivacion':   [1,45,26],
+    'emociones':            [3,17,16,33],
+    'patrones_pensamiento': [27,28,14,7,21],
+    'evitacion_resistencia':[1,68],
+}
+
+# Fallback por tipo técnico para observaciones nuevas no asignadas
+TIPO_A_FAMILIA = {
+    'emocion':   'emociones',
+    'energia':   'energia_motivacion',
+    'patron':    'patrones_pensamiento',
+    'evitacion': 'evitacion_resistencia',
+    'velocidad': 'velocidad_ejecucion',
+    'tono':      'personas_cercanas',
+}
+
 def calcular_lunas_orbitales(obs_rows, rows, coords, n_hitos_pca):
-    """Posiciona cada luna cerca del hito semánticamente más cercano.
-    Usa distancia coseno entre embeddings del PCA."""
-    import struct, math, random
+    """Posiciona cada luna como nube orgánica alrededor de su familia de hitos.
+    Asignación explícita por ID, fallback por tipo para observaciones nuevas."""
+    import math, random
     lunas = []
     if not obs_rows or not rows:
         return lunas
 
-    # Vectores PCA de los hitos (ya normalizados)
-    hito_coords = [coords[i] for i in range(n_hitos_pca)]
     hito_ids = [rows[i][0] for i in range(n_hitos_pca)]
+    hito_coords = [coords[i] for i in range(n_hitos_pca)]
+    hid_to_idx = {hito_ids[i]: i for i in range(n_hitos_pca)}
 
-    ORBIT_RADIUS = 22.0  # radio de órbita alrededor del hito
+    # Construir mapa obs_id → familia
+    obs_id_a_familia = {}
+    for familia, ids in OBS_FAMILIAS.items():
+        for oid in ids:
+            obs_id_a_familia[oid] = familia
+
+    # Calcular centroide geométrico de cada familia en espacio PCA
+    centroides = {}
+    for familia, hids in FAMILIA_HITOS.items():
+        pts = [hito_coords[hid_to_idx[h]] for h in hids if h in hid_to_idx]
+        if not pts:
+            # fallback al centroide general
+            pts = hito_coords
+        cx = sum(p[0] for p in pts) / len(pts)
+        cy = sum(p[1] for p in pts) / len(pts)
+        cz = sum(p[2] for p in pts) / len(pts)
+        centroides[familia] = (cx, cy, cz)
+
+    # Parámetros de nube
+    CLOUD_SPREAD = 35.0   # dispersión gaussiana — qué tan grande es la nube
 
     for j, obs in enumerate(obs_rows):
-        oid = obs[0]
-        label = obs[1]
-        obs_idx = n_hitos_pca + j
-        obs_coord = coords[obs_idx]
+        oid = obs[0] if len(obs) > 0 else j
+        label = obs[1] if len(obs) > 1 else ''
+        tipo = obs[2] if len(obs) > 2 else ''
 
-        # Encontrar hito más cercano por distancia euclidea en espacio PCA
-        min_dist = float('inf')
-        nearest_i = 0
-        for i in range(n_hitos_pca):
-            if hito_ids[i] == 1:  # skip centro
-                continue
-            dx = obs_coord[0] - hito_coords[i][0]
-            dy = obs_coord[1] - hito_coords[i][1]
-            dz = obs_coord[2] - hito_coords[i][2]
-            dist = (dx*dx + dy*dy + dz*dz) ** 0.5
-            if dist < min_dist:
-                min_dist = dist
-                nearest_i = i
+        # Asignar familia
+        familia = obs_id_a_familia.get(oid)
+        if not familia:
+            familia = TIPO_A_FAMILIA.get(tipo, 'energia_motivacion')
 
-        # Posición orbital — distribución esférica alrededor del hito
-        # Usar índice j para distribuir uniformemente (golden angle en esfera)
-        golden = (1 + 5**0.5) / 2
-        theta = 2 * math.pi * j / golden
-        phi = math.acos(1 - 2 * (j + 0.5) / max(len(obs_rows), 1))
-        ox = ORBIT_RADIUS * math.sin(phi) * math.cos(theta)
-        oy = ORBIT_RADIUS * math.sin(phi) * math.sin(theta)
-        oz = ORBIT_RADIUS * math.cos(phi)
+        cx, cy, cz = centroides.get(familia, (0, 0, 0))
 
-        hx = hito_coords[nearest_i][0]
-        hy = hito_coords[nearest_i][1]
-        hz = hito_coords[nearest_i][2]
+        # Nube gaussiana seeded por obs_id para reproducibilidad
+        rng = random.Random(oid * 7919 + 42)
+        nx = rng.gauss(0, CLOUD_SPREAD)
+        ny = rng.gauss(0, CLOUD_SPREAD * 0.7)  # un poco más plana en Y
+        nz = rng.gauss(0, CLOUD_SPREAD)
 
         lunas.append({
-            'x': float(hx + ox),
-            'y': float(hy + oy),
-            'z': float(hz + oz),
+            'x': float(cx + nx),
+            'y': float(cy + ny),
+            'z': float(cz + nz),
             'label': str(label)[:200],
-            'id': oid,
-            'hito_id': int(hito_ids[nearest_i])
+            'id': int(oid),
+            'familia': familia
         })
 
     return lunas
@@ -3251,7 +3292,7 @@ def universo_page():
                  WHERE h.usuario_id=? AND h.activo=1
                  ORDER BY h.peso DESC""", (usuario_id,))
     rows = c.fetchall()
-    c.execute("""SELECT o.id, SUBSTR(o.contenido,1,150), e.embedding
+    c.execute("""SELECT o.id, SUBSTR(o.contenido,1,150), e.embedding, o.tipo
                  FROM observaciones o
                  JOIN embeddings e ON e.tabla_origen='observaciones' AND e.registro_id=o.id
                  WHERE o.usuario_id=? AND o.activa=1
@@ -4048,7 +4089,7 @@ def recalcular_universo(usuario_id):
                      ORDER BY h.peso DESC""", (usuario_id,))
         rows = c.fetchall()
         # Observaciones con embeddings — lunas del universo
-        c.execute("""SELECT o.id, SUBSTR(o.contenido,1,150), e.embedding
+        c.execute("""SELECT o.id, SUBSTR(o.contenido,1,150), e.embedding, o.tipo
                      FROM observaciones o
                      JOIN embeddings e ON e.tabla_origen='observaciones' AND e.registro_id=o.id
                      WHERE o.usuario_id=? AND o.activa=1
