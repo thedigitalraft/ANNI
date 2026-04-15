@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.74"
+ANNI_VERSION = "1.01.75"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -18,7 +18,7 @@ ANNI_ADMIN_KEY = os.environ.get("ANNI_ADMIN_KEY", "")
 if not FLASK_SECRET:
     raise RuntimeError("FLASK_SECRET no está configurado en las variables de entorno.")
 
-CHAT_MODEL = "claude-sonnet-4-5"  # Anthropic Sonnet via API directa
+CHAT_MODEL = "claude-haiku-4-5-20251001"  # Anthropic Haiku 4.5 — multimodal, 3x más barato que Sonnet
 CHAT_MODEL_FALLBACK = "deepseek-ai/DeepSeek-V3"  # Together AI — fallback y funciones internas
 CHAT_MODEL_FALLBACK = "deepseek-ai/DeepSeek-V3"
 EMBED_MODEL = "intfloat/multilingual-e5-large-instruct"
