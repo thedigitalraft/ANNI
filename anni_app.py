@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.69"
+ANNI_VERSION = "1.01.70"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3247,7 +3247,8 @@ def calcular_lunas_orbitales(obs_rows, rows, coords, n_hitos_pca):
     for j, obs in enumerate(obs_rows):
         oid = obs[0] if len(obs) > 0 else j
         label = obs[1] if len(obs) > 1 else ''
-        tipo = obs[2] if len(obs) > 2 else ''
+        # obs[2] es el blob del embedding, obs[3] es el tipo
+        tipo = obs[3] if len(obs) > 3 else (obs[2] if len(obs) > 2 and isinstance(obs[2], str) else '')
 
         # Asignar familia
         familia = obs_id_a_familia.get(oid)
@@ -3309,7 +3310,7 @@ def universo_page():
         nv = len(blob) // 4
         vecs.append(list(struct.unpack(f'{nv}f', blob)))
     n_hitos_pca = len(vecs)
-    for oid, label, blob in obs_rows:
+    for oid, label, blob, tipo_obs in obs_rows:
         nv = len(blob) // 4
         vecs.append(list(struct.unpack(f'{nv}f', blob)))
     n_total = len(vecs)
@@ -4116,7 +4117,7 @@ def recalcular_universo(usuario_id):
         n_hitos_pca = len(vecs)
 
         # Añadir observaciones al PCA
-        for oid, label, blob in obs_rows:
+        for oid, label, blob, tipo_obs in obs_rows:
             nv = len(blob) // 4
             vecs.append(list(struct.unpack(f'{nv}f', blob)))
         n_total = len(vecs)
