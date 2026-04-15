@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.70"
+ANNI_VERSION = "1.01.71"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3310,9 +3310,6 @@ def universo_page():
         nv = len(blob) // 4
         vecs.append(list(struct.unpack(f'{nv}f', blob)))
     n_hitos_pca = len(vecs)
-    for oid, label, blob, tipo_obs in obs_rows:
-        nv = len(blob) // 4
-        vecs.append(list(struct.unpack(f'{nv}f', blob)))
     n_total = len(vecs)
 
     coords = pca_python(vecs, n_components=3)
@@ -4115,12 +4112,8 @@ def recalcular_universo(usuario_id):
             nv = len(blob) // 4
             vecs.append(list(struct.unpack(f'{nv}f', blob)))
         n_hitos_pca = len(vecs)
-
-        # Añadir observaciones al PCA
-        for oid, label, blob, tipo_obs in obs_rows:
-            nv = len(blob) // 4
-            vecs.append(list(struct.unpack(f'{nv}f', blob)))
-        n_total = len(vecs)
+        # PCA solo con hitos — obs se posicionan geométricamente
+        n_total = n_hitos_pca
 
         coords = pca_python(vecs, n_components=3)
 
