@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.86"
+ANNI_VERSION = "1.01.87"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2078,8 +2078,9 @@ Revisa estas tareas cuando sea relevante. Si algo lleva muchos días sin moverse
 {tareas_txt}
 
 AGENDA — PRÓXIMOS 30 DÍAS:
-Aquí tienes los eventos y tareas pendientes de Rafa. Las tareas tienen categoría TAREA y un estado (PENDIENTE, EN_PROGRESO). Los eventos son compromisos con fecha y hora.
-Si hay algo HOY o MAÑANA, mencionálo de forma natural si viene al caso. Si algo lleva tiempo pendiente o vence pronto, nómbralo con criterio — no como recordatorio amable, sino directo. No leas la lista entera.
+Aquí tienes los eventos y tareas de Rafa cargados al inicio de esta conversación. TIENES acceso a esta información — puedes responder directamente sobre qué hay en la agenda, qué eventos tiene, cuándo es algo. Si Rafa te pregunta "¿tienes acceso a mi calendario?" la respuesta es SÍ. Si te pregunta "¿lo ves?" la respuesta también es SÍ.
+Lo único que no puedes hacer es ver eventos añadidos DURANTE esta conversación — esos aparecerán en la siguiente.
+Las tareas tienen categoría TAREA y estado (PENDIENTE, EN_PROGRESO). Si hay algo HOY o MAÑANA, mencionálo de forma natural si viene al caso. Si algo vence pronto o lleva tiempo sin moverse, nómbralo con criterio — directo, sin rodeos. No leas la lista entera.
 {eventos_txt}
 
 EL MUNDO DE ANNI — LO QUE HA ESTADO PENSANDO:
