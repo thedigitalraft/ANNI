@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.82"
+ANNI_VERSION = "1.01.83"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4841,7 +4841,7 @@ button#s:disabled{background:#ddd;cursor:not-allowed}
 .page-header h1{font-size:22px;font-weight:900;color:#111;flex:1}
 .page-close{font-size:14px;font-weight:700;color:#cc0000;cursor:pointer;padding:8px 14px;border:2px solid #ffcccc;border-radius:8px;background:none;flex-shrink:0;order:-1}
 .page-body{flex:1;overflow-y:auto;padding:20px;max-width:760px;width:100%;margin:0 auto}
-.page-body.fullscreen{max-width:100%!important;padding:12px!important;height:calc(100vh - 60px);box-sizing:border-box}
+.page-body.fullscreen{max-width:100%!important;padding:12px!important;height:calc(100vh - 60px);box-sizing:border-box;display:flex;flex-direction:column}
 /* Custom pickers */
 .picker-wrap{position:relative;display:inline-block;width:100%}
 .picker-input{width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box;cursor:pointer;background:#fff;text-align:left}
@@ -5604,7 +5604,7 @@ function renderCalMes(){
 
   // Cabecera navegación
   var nav = document.createElement('div');
-  nav.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px';
+  nav.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-shrink:0';
   var btnPrev = document.createElement('button');
   btnPrev.className = 'nav-btn';
   btnPrev.textContent = '←';
@@ -5621,10 +5621,10 @@ function renderCalMes(){
 
   // Cabecera días semana (empieza en lunes)
   var grid = document.createElement('div');
-  grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:2px';
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:1fr;gap:2px;flex:1;min-height:0';
   diasSem.forEach(function(d){
     var h = document.createElement('div');
-    h.style.cssText = 'text-align:center;font-size:11px;font-weight:900;color:#aaa;letter-spacing:1px;padding:6px 0';
+    h.style.cssText = 'text-align:center;font-size:11px;font-weight:900;color:#aaa;letter-spacing:1px;padding:6px 0;height:24px;box-sizing:border-box';
     h.textContent = d;
     grid.appendChild(h);
   });
@@ -5648,7 +5648,7 @@ function renderCalMes(){
     // Celdas vacías antes del primer día
     for(var i=0; i<offset; i++){
       var vacia = document.createElement('div');
-      vacia.style.cssText = 'min-height:70px;background:#fafafa;border-radius:4px';
+      vacia.style.cssText = 'background:#fafafa;border-radius:4px';
       grid.appendChild(vacia);
     }
 
@@ -5657,8 +5657,8 @@ function renderCalMes(){
       var fechaStr = año+'-'+mesStr+'-'+String(d).padStart(2,'0');
       var celda = document.createElement('div');
       var esHoy = fechaStr === hoyStr;
-      celda.style.cssText = 'min-height:70px;background:'+(esHoy?'#fff8f8':'#fff')+
-        ';border:1px solid '+(esHoy?'#cc0000':'#f0f0f0')+';border-radius:4px;padding:4px;box-sizing:border-box';
+      celda.style.cssText = 'background:'+(esHoy?'#fff8f8':'#fff')+
+        ';border:1px solid '+(esHoy?'#cc0000':'#f0f0f0')+';border-radius:4px;padding:4px;box-sizing:border-box;overflow:hidden';
       if(esHoy) celda.dataset.hoy = '1';
 
       var numDia = document.createElement('div');
