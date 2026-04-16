@@ -236,6 +236,22 @@ def init_db():
         ts_completada REAL DEFAULT NULL
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_tareas_usuario ON tareas(usuario_id, estado)")
+    # Tabla eventos (calendario ANNI)
+    c.execute("""CREATE TABLE IF NOT EXISTS eventos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario_id INTEGER NOT NULL,
+        titulo TEXT NOT NULL,
+        fecha DATE NOT NULL,
+        hora TEXT DEFAULT '',
+        descripcion TEXT DEFAULT '',
+        lugar TEXT DEFAULT '',
+        todo_el_dia INTEGER DEFAULT 0,
+        recurrencia TEXT DEFAULT '',
+        ts_creacion REAL DEFAULT (unixepoch('now','subsec')),
+        activo INTEGER DEFAULT 1,
+        FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_eventos_usuario ON eventos(usuario_id, fecha)")
 
     # Tablas para ANNI CURIOSA
     c.execute("""CREATE TABLE IF NOT EXISTS dominios_curiosa (
@@ -707,6 +723,21 @@ def get_tareas_para_anni(usuario_id, n=20):
                  FROM tareas WHERE usuario_id=? AND estado IN ('pendiente','en_progreso')
                  ORDER BY due_date ASC NULLS LAST, veces_mencionada DESC, ts_creacion ASC
                  LIMIT ?""", (usuario_id, n))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def get_eventos_para_anni(usuario_id, dias_adelante=7):
+    """Eventos próximos para inyectar en el system prompt."""
+    import datetime
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    hoy = datetime.date.today().isoformat()
+    fin = (datetime.date.today() + datetime.timedelta(days=dias_adelante)).isoformat()
+    c.execute("""SELECT titulo, fecha, hora, descripcion, lugar, todo_el_dia
+                 FROM eventos WHERE usuario_id=? AND activo=1
+                 AND fecha >= ? AND fecha <= ?
+                 ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy, fin))
     rows = c.fetchall()
     conn.close()
     return rows
@@ -1921,6 +1952,26 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
     else:
         tareas_txt = "Sin tareas pendientes."
 
+    # Eventos próximos — calendario ANNI
+    import datetime as dt_mod
+    eventos_anni = get_eventos_para_anni(usuario_id, dias_adelante=7)
+    if eventos_anni:
+        hoy = dt_mod.date.today().isoformat()
+        manana = (dt_mod.date.today() + dt_mod.timedelta(days=1)).isoformat()
+        ev_lines = []
+        for titulo, fecha, hora, desc, lugar, todo_el_dia in eventos_anni:
+            if fecha == hoy: prefijo = "HOY"
+            elif fecha == manana: prefijo = "MAÑANA"
+            else: prefijo = fecha
+            linea = f"- [{prefijo}] {titulo}"
+            if hora and not todo_el_dia: linea += f" a las {hora}"
+            if lugar: linea += f" — {lugar}"
+            if desc: linea += f" | {desc[:80]}"
+            ev_lines.append(linea)
+        eventos_txt = '\n'.join(ev_lines)
+    else:
+        eventos_txt = "Sin eventos próximos."
+
     # Memoria extendida — documentos ricos recuperados por relevancia semántica
     mem_ext = get_memoria_extendida_relevante(usuario_id, query or "contexto general", n=2)
     mem_ext_txt = "\n\n---\n".join(mem_ext) if mem_ext else ""
@@ -2006,6 +2057,10 @@ PERSONAS EN SU VIDA:
 TAREAS PENDIENTES:
 Revisa estas tareas cuando sea relevante. Si algo lleva muchos días sin moverse o está próximo a vencer, nómbralo con tu voz — no como recordatorio amable, sino con criterio real.
 {tareas_txt}
+
+CALENDARIO — PRÓXIMOS 7 DÍAS:
+Si hay eventos hoy o mañana, mencionálos de forma natural al arrancar la conversación si viene al caso. No leas la lista entera — solo lo más relevante e inmediato.
+{eventos_txt}
 
 EL MUNDO DE ANNI — LO QUE HA ESTADO PENSANDO:
 Estos son ciclos de pensamiento que completaste por tu cuenta, explorando temas que te interesan. Son tuya opinión real, construida a través de un proceso de hipótesis y crítica.
@@ -4274,6 +4329,77 @@ def api_mundo_estado():
 
 # ── TAREAS ────────────────────────────────────────────────────────────────────
 
+# ── CALENDARIO ────────────────────────────────────────────────────────────────
+
+@app.route('/api/eventos', methods=['GET'])
+@login_required
+def api_get_eventos():
+    usuario_id = session['usuario_id']
+    vista = request.args.get('vista', 'proximos')
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    import datetime as dt_mod
+    if vista == 'pasados':
+        hoy = dt_mod.date.today().isoformat()
+        c.execute("""SELECT id, titulo, fecha, hora, descripcion, lugar, todo_el_dia, recurrencia
+                     FROM eventos WHERE usuario_id=? AND activo=1 AND fecha < ?
+                     ORDER BY fecha DESC, hora DESC LIMIT 50""", (usuario_id, hoy))
+    else:
+        hoy = dt_mod.date.today().isoformat()
+        c.execute("""SELECT id, titulo, fecha, hora, descripcion, lugar, todo_el_dia, recurrencia
+                     FROM eventos WHERE usuario_id=? AND activo=1 AND fecha >= ?
+                     ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy))
+    rows = c.fetchall()
+    conn.close()
+    eventos = [{'id':r[0],'titulo':r[1],'fecha':r[2],'hora':r[3],'descripcion':r[4],
+                'lugar':r[5],'todo_el_dia':r[6],'recurrencia':r[7]} for r in rows]
+    return jsonify({'eventos': eventos})
+
+@app.route('/api/eventos', methods=['POST'])
+@login_required
+def api_crear_evento():
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    titulo = data.get('titulo','').strip()
+    fecha = data.get('fecha','').strip()
+    if not titulo or not fecha:
+        return jsonify({'ok': False, 'error': 'Título y fecha son obligatorios'})
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.execute("""INSERT INTO eventos (usuario_id, titulo, fecha, hora, descripcion, lugar, todo_el_dia, recurrencia)
+                             VALUES (?,?,?,?,?,?,?,?)""",
+        (usuario_id, titulo, fecha, data.get('hora','').strip(),
+         data.get('descripcion','').strip(), data.get('lugar','').strip(),
+         int(data.get('todo_el_dia', 0)), data.get('recurrencia','').strip()))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'id': cursor.lastrowid})
+
+@app.route('/api/eventos/<int:eid>', methods=['PUT'])
+@login_required
+def api_editar_evento(eid):
+    usuario_id = session['usuario_id']
+    data = request.json or {}
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""UPDATE eventos SET titulo=?, fecha=?, hora=?, descripcion=?, lugar=?, todo_el_dia=?, recurrencia=?
+                    WHERE id=? AND usuario_id=?""",
+        (data.get('titulo','').strip(), data.get('fecha','').strip(),
+         data.get('hora','').strip(), data.get('descripcion','').strip(),
+         data.get('lugar','').strip(), int(data.get('todo_el_dia',0)),
+         data.get('recurrencia','').strip(), eid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/eventos/<int:eid>', methods=['DELETE'])
+@login_required
+def api_borrar_evento(eid):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE eventos SET activo=0 WHERE id=? AND usuario_id=?", (eid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
 @app.route('/api/tareas', methods=['GET'])
 @login_required
 def api_get_tareas():
@@ -4664,6 +4790,7 @@ textarea{font-size:16px}}
 <!-- BARRA NAV -->
 <div id='nav'>
   <button class='nav-btn' onclick='showPage("tareas")'>TAREAS</button>
+  <button class='nav-btn' onclick='showPage("calendario")'>CALENDARIO</button>
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
   <button class='nav-btn' onclick='showPage("diario")'>DIARIO</button>
   <button class='nav-btn' onclick='showPage("memoria_anni")'>MEMORIA ANNI</button>
@@ -4977,7 +5104,7 @@ document.getElementById('modal-bd').classList.remove('open');})
 
 function showPage(sec){
 currentSection=sec;currentPage=1;
-var titles={universo:'Universo ANNI',mundo:'El mundo de ANNI',tareas:'Tareas',memoria_anni:'Memoria ANNI',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
+var titles={universo:'Universo ANNI',mundo:'El mundo de ANNI',tareas:'Tareas',calendario:'Calendario',memoria_anni:'Memoria ANNI',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
 document.getElementById('page-title').textContent=titles[sec]||sec;
 document.getElementById('page').classList.add('open');
 loadPage(sec,1);}
@@ -4987,6 +5114,7 @@ document.getElementById('page-body').innerHTML='<p style="color:#999;padding:20p
 if(sec==='universo'){window.location.href='/universo';return;}
 else if(sec==='mundo')loadMundo(page);
 else if(sec==='tareas')loadTareas(page);
+else if(sec==='calendario')loadCalendario();
 else if(sec==='memoria_anni')loadMemoriaAnni();
 else if(sec==='chats')loadChats(page);
 else if(sec==='diario')loadDiario(page);
@@ -5066,6 +5194,145 @@ function delTema(id, btn){
 
 // ── TAREAS ────────────────────────────────────────────────────────────────────
 var tareasVista = 'activas'; // 'activas' o 'completada'
+
+function loadCalendario(){
+  var body=document.getElementById('page-body');
+  body.innerHTML='';
+  var vistaActual='proximos';
+
+  // Tabs
+  var tabs=document.createElement('div');
+  tabs.style.cssText='display:flex;gap:8px;margin-bottom:20px';
+  ['proximos','pasados'].forEach(function(v){
+    var btn=document.createElement('button');
+    btn.className='nav-btn'+(vistaActual===v?' active':'');
+    btn.style.cssText=vistaActual===v?'background:#cc0000;color:#fff;border-color:#cc0000':'';
+    btn.textContent=v==='proximos'?'Próximos':'Pasados';
+    btn.onclick=function(){vistaActual=v;renderEventos(v);};
+    tabs.appendChild(btn);
+  });
+  body.appendChild(tabs);
+
+  // Formulario nuevo evento
+  var form=document.createElement('div');
+  form.style.cssText='background:#f9f9f9;border:1px solid #e8e8e8;border-radius:10px;padding:16px;margin-bottom:20px';
+  form.innerHTML=
+    '<div style="font-size:11px;font-weight:900;letter-spacing:1px;color:#aaa;margin-bottom:12px">NUEVO EVENTO</div>'+
+    '<input id="ev-titulo" placeholder="Título *" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'+
+    '<input id="ev-fecha" type="date" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box">'+
+    '<input id="ev-hora" type="time" placeholder="Hora (opcional)" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box">'+
+    '</div>'+
+    '<input id="ev-lugar" placeholder="Lugar (opcional)" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
+    '<textarea id="ev-desc" placeholder="Descripción (opcional)" rows="2" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;margin-bottom:8px;box-sizing:border-box"></textarea>'+
+    '<label style="font-size:13px;color:#555;margin-bottom:12px;display:block"><input id="ev-todo" type="checkbox" style="margin-right:6px">Todo el día</label>'+
+    '<button onclick="crearEvento()" style="background:#cc0000;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:700;cursor:pointer">Añadir evento</button>';
+  body.appendChild(form);
+
+  // Contenedor lista
+  var lista=document.createElement('div');
+  lista.id='eventos-lista';
+  body.appendChild(lista);
+
+  function renderEventos(vista){
+    lista.innerHTML='<p style="color:#bbb;font-size:13px">Cargando...</p>';
+    fetch('/api/eventos?vista='+vista).then(r=>r.json()).then(function(d){
+      lista.innerHTML='';
+      if(!d.eventos.length){
+        lista.innerHTML='<p style="color:#bbb;font-size:13px;font-style:italic;padding:8px 0">'+(vista==='proximos'?'Sin eventos próximos.':'Sin eventos pasados.')+'</p>';
+        return;
+      }
+      var fechaActual='';
+      d.eventos.forEach(function(ev){
+        // Separador de fecha
+        if(ev.fecha!==fechaActual){
+          fechaActual=ev.fecha;
+          var sep=document.createElement('div');
+          sep.style.cssText='font-size:11px;font-weight:900;color:#aaa;letter-spacing:2px;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid #f0f0f0';
+          var d2=new Date(ev.fecha+'T12:00:00');
+          var hoy=new Date(); hoy.setHours(0,0,0,0);
+          var manana=new Date(hoy); manana.setDate(manana.getDate()+1);
+          var label=d2<hoy?ev.fecha:d2.getTime()===hoy.getTime()?'HOY — '+ev.fecha:d2.getTime()===manana.getTime()?'MAÑANA — '+ev.fecha:ev.fecha;
+          sep.textContent=label;
+          lista.appendChild(sep);
+        }
+        var card=document.createElement('div');
+        card.className='item-card';
+        card.id='evento-'+ev.id;
+        var hora_txt=ev.hora&&!ev.todo_el_dia?'<span style="font-size:12px;color:#888;margin-right:8px">'+escH(ev.hora)+'</span>':'';
+        var lugar_txt=ev.lugar?'<span style="font-size:12px;color:#888;margin-right:8px">📍 '+escH(ev.lugar)+'</span>':'';
+        var todo_badge=ev.todo_el_dia?'<span style="font-size:11px;background:#e3f2fd;border:1px solid #90caf9;border-radius:4px;padding:2px 6px;margin-right:6px;color:#1565c0">Todo el día</span>':'';
+        card.innerHTML=
+          '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:4px">'+
+          todo_badge+hora_txt+lugar_txt+
+          '</div>'+
+          '<div id="evtit-'+ev.id+'" style="font-size:15px;font-weight:900;color:#111;margin-bottom:4px">'+escH(ev.titulo)+'</div>'+
+          (ev.descripcion?'<div id="evdesc-'+ev.id+'" style="font-size:13px;color:#555;line-height:1.5">'+escH(ev.descripcion)+'</div>':'')+
+          '<div class="item-actions">'+
+          '<button class="btn-edit" onclick="editEvento('+ev.id+',this)">Editar</button>'+
+          '<button class="btn-del" onclick="borrarEvento('+ev.id+')">Borrar</button>'+
+          '</div>';
+        lista.appendChild(card);
+      });
+    });
+  }
+
+  renderEventos('proximos');
+
+  // Guardar referencia para que crearEvento pueda recargar
+  window._recargarCalendario=function(){renderEventos(vistaActual);};
+}
+
+function crearEvento(){
+  var titulo=document.getElementById('ev-titulo').value.trim();
+  var fecha=document.getElementById('ev-fecha').value;
+  if(!titulo||!fecha){alert('Título y fecha son obligatorios');return;}
+  fetch('/api/eventos',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      titulo:titulo, fecha:fecha,
+      hora:document.getElementById('ev-hora').value||'',
+      lugar:document.getElementById('ev-lugar').value.trim()||'',
+      descripcion:document.getElementById('ev-desc').value.trim()||'',
+      todo_el_dia:document.getElementById('ev-todo').checked?1:0
+    })
+  }).then(r=>r.json()).then(function(d){
+    if(d.ok){
+      document.getElementById('ev-titulo').value='';
+      document.getElementById('ev-fecha').value='';
+      document.getElementById('ev-hora').value='';
+      document.getElementById('ev-lugar').value='';
+      document.getElementById('ev-desc').value='';
+      document.getElementById('ev-todo').checked=false;
+      if(window._recargarCalendario) window._recargarCalendario();
+    }
+  });
+}
+
+function editEvento(id, btn){
+  var card=document.getElementById('evento-'+id);
+  var titEl=card.querySelector('#evtit-'+id);
+  var descEl=card.querySelector('#evdesc-'+id);
+  var origTit=titEl?titEl.textContent:'';
+  var origDesc=descEl?descEl.textContent:'';
+  if(titEl) titEl.innerHTML='<input id="evedit-tit-'+id+'" value="'+escH(origTit)+'" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:14px;font-weight:900;font-family:inherit">';
+  btn.textContent='Guardar';
+  btn.onclick=function(){
+    var nuevoTit=document.getElementById('evedit-tit-'+id).value.trim();
+    if(!nuevoTit){alert('El título no puede estar vacío');return;}
+    fetch('/api/eventos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({titulo:nuevoTit,fecha:'',hora:'',descripcion:origDesc,lugar:'',todo_el_dia:0,recurrencia:''})
+    }).then(r=>r.json()).then(function(d){
+      if(d.ok&&window._recargarCalendario) window._recargarCalendario();
+    });
+  };
+}
+
+function borrarEvento(id){
+  if(!confirm('¿Borrar este evento?'))return;
+  fetch('/api/eventos/'+id,{method:'DELETE'}).then(r=>r.json()).then(function(d){
+    if(d.ok&&window._recargarCalendario) window._recargarCalendario();
+  });
+}
 
 function loadTareas(page){
   var body=document.getElementById('page-body');
