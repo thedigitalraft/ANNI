@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.78"
+ANNI_VERSION = "1.01.80"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4722,7 +4722,7 @@ html,body{height:100%;overflow:hidden}
 body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;display:flex;flex-direction:column}
 
 /* BARRA NAV */
-#nav{background:#fff;border-bottom:1px solid #e8e8e8;padding:8px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+#nav{background:#fff;border-bottom:1px solid #e8e8e8;padding:8px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
 .nav-btn{font-size:12px;font-weight:700;color:#555;background:#fff;border:1px solid #d0d0d0;border-radius:6px;padding:6px 12px;cursor:pointer;-webkit-appearance:none;letter-spacing:0.5px}
 .nav-btn:hover{background:#f5f5f5}
 .nav-btn.salir{color:#cc0000;border-color:#ffcccc;margin-left:auto}
@@ -4812,7 +4812,7 @@ button#s:disabled{background:#ddd;cursor:not-allowed}
 .dia-badge{background:#cc0000;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;display:inline-block;margin-bottom:6px}
 
 @media(max-width:600px){
-#nav{padding:8px 12px;gap:6px}.nav-btn{font-size:11px;padding:5px 9px}
+#nav{padding:6px 8px;gap:5px}.nav-btn{font-size:10px;padding:4px 8px;letter-spacing:0}
 .logo{font-size:40px}
 #chat{padding:16px;gap:16px}
 .msg-anni .txt,.msg-user .burbuja,.pro{font-size:16px}
@@ -5279,89 +5279,88 @@ function renderCalMes(){
   // Calcular primer día del mes (lunes=0)
   var primero = new Date(año, mes, 1);
   var diaSemana = primero.getDay(); // 0=dom
-  var offset = diaSemana === 0 ? 6 : diaSemana - 1; // ajuste lunes
+  var offset = diaSemana === 0 ? 6 : diaSemana - 1; // ajuste lunes: Lu=0
   var diasEnMes = new Date(año, mes+1, 0).getDate();
   var hoyStr = new Date().toISOString().slice(0,10);
 
-  // Cargar eventos del mes
-  fetch('/api/eventos?vista=proximos&mes='+año+'-'+(String(mes+1).padStart(2,'0'))).then(r=>r.json()).then(function(data){
-    // Indexar eventos por fecha
-    var eventosPorDia = {};
-    (data.eventos||[]).forEach(function(ev){
-      var fInicio = ev.fecha;
-      var fFin = ev.fecha_fin && ev.fecha_fin !== ev.fecha ? ev.fecha_fin : ev.fecha;
-      // Expandir eventos multi-día
-      var cur = new Date(fInicio+'T12:00:00');
-      var fin2 = new Date(fFin+'T12:00:00');
-      while(cur <= fin2){
-        var ds = cur.toISOString().slice(0,10);
-        if(!eventosPorDia[ds]) eventosPorDia[ds] = [];
-        eventosPorDia[ds].push(ev);
-        cur.setDate(cur.getDate()+1);
-      }
-    });
+  // Fechas inicio/fin del mes para el fetch
+  var mesStr = String(mes+1).padStart(2,'0');
+  var fechaIni = año+'-'+mesStr+'-01';
+  var fechaFinMes = año+'-'+mesStr+'-'+String(diasEnMes).padStart(2,'0');
+
+  function buildGrid(eventosPorDia){
+    // Limpiar el grid (conservar headers)
+    while(grid.children.length > 7) grid.removeChild(grid.lastChild);
 
     // Celdas vacías antes del primer día
     for(var i=0; i<offset; i++){
       var vacia = document.createElement('div');
-      vacia.style.cssText = 'min-height:80px;background:#fafafa;border-radius:4px';
+      vacia.style.cssText = 'min-height:70px;background:#fafafa;border-radius:4px';
       grid.appendChild(vacia);
     }
 
     // Días del mes
     for(var d=1; d<=diasEnMes; d++){
-      var fechaStr = año+'-'+String(mes+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+      var fechaStr = año+'-'+mesStr+'-'+String(d).padStart(2,'0');
       var celda = document.createElement('div');
       var esHoy = fechaStr === hoyStr;
-      celda.style.cssText = 'min-height:80px;background:'+(esHoy?'#fff8f8':'#fff')+
-        ';border:1px solid '+(esHoy?'#cc0000':'#f0f0f0')+';border-radius:4px;padding:4px;position:relative;cursor:pointer;transition:background 0.15s';
-      celda.onmouseover = function(){ this.style.background='#fafafa'; };
-      celda.onmouseout  = function(){ this.style.background = this.dataset.hoy==='1'?'#fff8f8':'#fff'; };
+      celda.style.cssText = 'min-height:70px;background:'+(esHoy?'#fff8f8':'#fff')+
+        ';border:1px solid '+(esHoy?'#cc0000':'#f0f0f0')+';border-radius:4px;padding:4px;box-sizing:border-box';
       if(esHoy) celda.dataset.hoy = '1';
 
-      // Número del día
       var numDia = document.createElement('div');
-      numDia.style.cssText = 'font-size:13px;font-weight:'+(esHoy?'900':'600')+
-        ';color:'+(esHoy?'#cc0000':'#333')+';margin-bottom:4px';
+      numDia.style.cssText = 'font-size:12px;font-weight:'+(esHoy?'900':'600')+
+        ';color:'+(esHoy?'#cc0000':'#555')+';margin-bottom:3px';
       numDia.textContent = d;
       celda.appendChild(numDia);
 
-      // Eventos del día
       var evsDia = eventosPorDia[fechaStr] || [];
-      evsDia.slice(0,3).forEach(function(ev){
+      evsDia.slice(0,2).forEach(function(ev){
         var cat = ev.categoria || 'personal';
         var color = CAT_COLORS[cat] || '#888';
         var pill = document.createElement('div');
-        pill.style.cssText = 'background:'+color+';color:#fff;font-size:10px;font-weight:700;'+
-          'border-radius:3px;padding:1px 5px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer';
+        pill.style.cssText = 'background:'+color+';color:#fff;font-size:9px;font-weight:700;'+
+          'border-radius:3px;padding:1px 4px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
         pill.textContent = ev.titulo;
-        pill.title = ev.titulo + (ev.hora?' · '+ev.hora:'');
         celda.appendChild(pill);
       });
-      if(evsDia.length > 3){
+      if(evsDia.length > 2){
         var mas = document.createElement('div');
-        mas.style.cssText = 'font-size:10px;color:#aaa;margin-top:2px';
-        mas.textContent = '+' + (evsDia.length-3) + ' más';
+        mas.style.cssText = 'font-size:9px;color:#aaa';
+        mas.textContent = '+' + (evsDia.length-2);
         celda.appendChild(mas);
       }
-
       grid.appendChild(celda);
     }
+  }
 
-    body.appendChild(grid);
+  // Cargar eventos del mes (tanto próximos como pasados)
+  Promise.all([
+    fetch('/api/eventos?vista=proximos').then(r=>r.json()),
+    fetch('/api/eventos?vista=pasados').then(r=>r.json())
+  ]).then(function(results){
+    var todos = (results[0].eventos||[]).concat(results[1].eventos||[]);
+    var eventosPorDia = {};
+    todos.forEach(function(ev){
+      var fInicio = ev.fecha;
+      var fFin = (ev.fecha_fin && ev.fecha_fin > fInicio) ? ev.fecha_fin : fInicio;
+      var cur = new Date(fInicio+'T12:00:00');
+      var fin2 = new Date(fFin+'T12:00:00');
+      while(cur <= fin2){
+        var ds = cur.toISOString().slice(0,10);
+        if(ds >= fechaIni && ds <= fechaFinMes){
+          if(!eventosPorDia[ds]) eventosPorDia[ds] = [];
+          eventosPorDia[ds].push(ev);
+        }
+        cur.setDate(cur.getDate()+1);
+      }
+    });
+    buildGrid(eventosPorDia);
   }).catch(function(){
-    // Si falla, igual mostramos el grid vacío
-    for(var d=1; d<=diasEnMes; d++){
-      var celda = document.createElement('div');
-      celda.style.cssText = 'min-height:80px;background:#fff;border:1px solid #f0f0f0;border-radius:4px;padding:4px';
-      var numDia = document.createElement('div');
-      numDia.style.cssText = 'font-size:13px;color:#333';
-      numDia.textContent = d;
-      celda.appendChild(numDia);
-      grid.appendChild(celda);
-    }
-    body.appendChild(grid);
+    buildGrid({});
   });
+
+  body.appendChild(grid);
 }
 
 // ── FIN VISTA CALENDARIO MENSUAL ─────────────────────────────────────────────
