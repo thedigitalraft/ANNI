@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.75"
+ANNI_VERSION = "1.01.76"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -242,15 +242,23 @@ def init_db():
         usuario_id INTEGER NOT NULL,
         titulo TEXT NOT NULL,
         fecha DATE NOT NULL,
+        fecha_fin DATE DEFAULT '',
         hora TEXT DEFAULT '',
         descripcion TEXT DEFAULT '',
         lugar TEXT DEFAULT '',
+        categoria TEXT DEFAULT 'personal',
         todo_el_dia INTEGER DEFAULT 0,
         recurrencia TEXT DEFAULT '',
         ts_creacion REAL DEFAULT (unixepoch('now','subsec')),
         activo INTEGER DEFAULT 1,
         FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
     )""")
+    # Migraciones para BDs existentes
+    for col, defval in [('fecha_fin',"''"),('categoria',"'personal'")]:
+        try:
+            c.execute(f"ALTER TABLE eventos ADD COLUMN {col} TEXT DEFAULT {defval}")
+        except:
+            pass
     c.execute("CREATE INDEX IF NOT EXISTS idx_eventos_usuario ON eventos(usuario_id, fecha)")
 
     # Tablas para ANNI CURIOSA
@@ -727,14 +735,14 @@ def get_tareas_para_anni(usuario_id, n=20):
     conn.close()
     return rows
 
-def get_eventos_para_anni(usuario_id, dias_adelante=7):
-    """Eventos próximos para inyectar en el system prompt."""
+def get_eventos_para_anni(usuario_id, dias_adelante=30):
+    """Eventos próximos para inyectar en el system prompt (30 días)."""
     import datetime
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     hoy = datetime.date.today().isoformat()
     fin = (datetime.date.today() + datetime.timedelta(days=dias_adelante)).isoformat()
-    c.execute("""SELECT titulo, fecha, hora, descripcion, lugar, todo_el_dia
+    c.execute("""SELECT titulo, fecha, fecha_fin, hora, descripcion, lugar, todo_el_dia, categoria
                  FROM eventos WHERE usuario_id=? AND activo=1
                  AND fecha >= ? AND fecha <= ?
                  ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy, fin))
@@ -1952,18 +1960,20 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
     else:
         tareas_txt = "Sin tareas pendientes."
 
-    # Eventos próximos — calendario ANNI
+    # Eventos próximos — calendario ANNI (30 días)
     import datetime as dt_mod
-    eventos_anni = get_eventos_para_anni(usuario_id, dias_adelante=7)
+    eventos_anni = get_eventos_para_anni(usuario_id, dias_adelante=30)
     if eventos_anni:
         hoy = dt_mod.date.today().isoformat()
         manana = (dt_mod.date.today() + dt_mod.timedelta(days=1)).isoformat()
         ev_lines = []
-        for titulo, fecha, hora, desc, lugar, todo_el_dia in eventos_anni:
+        for titulo, fecha, fecha_fin, hora, desc, lugar, todo_el_dia, categoria in eventos_anni:
             if fecha == hoy: prefijo = "HOY"
             elif fecha == manana: prefijo = "MAÑANA"
             else: prefijo = fecha
-            linea = f"- [{prefijo}] {titulo}"
+            cat = (categoria or 'personal').upper()
+            linea = f"- [{prefijo}] [{cat}] {titulo}"
+            if fecha_fin and fecha_fin != fecha: linea += f" → {fecha_fin}"
             if hora and not todo_el_dia: linea += f" a las {hora}"
             if lugar: linea += f" — {lugar}"
             if desc: linea += f" | {desc[:80]}"
@@ -4341,18 +4351,18 @@ def api_get_eventos():
     import datetime as dt_mod
     if vista == 'pasados':
         hoy = dt_mod.date.today().isoformat()
-        c.execute("""SELECT id, titulo, fecha, hora, descripcion, lugar, todo_el_dia, recurrencia
+        c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, descripcion, lugar, categoria, todo_el_dia, recurrencia
                      FROM eventos WHERE usuario_id=? AND activo=1 AND fecha < ?
                      ORDER BY fecha DESC, hora DESC LIMIT 50""", (usuario_id, hoy))
     else:
         hoy = dt_mod.date.today().isoformat()
-        c.execute("""SELECT id, titulo, fecha, hora, descripcion, lugar, todo_el_dia, recurrencia
+        c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, descripcion, lugar, categoria, todo_el_dia, recurrencia
                      FROM eventos WHERE usuario_id=? AND activo=1 AND fecha >= ?
                      ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy))
     rows = c.fetchall()
     conn.close()
-    eventos = [{'id':r[0],'titulo':r[1],'fecha':r[2],'hora':r[3],'descripcion':r[4],
-                'lugar':r[5],'todo_el_dia':r[6],'recurrencia':r[7]} for r in rows]
+    eventos = [{'id':r[0],'titulo':r[1],'fecha':r[2],'fecha_fin':r[3],'hora':r[4],'descripcion':r[5],
+                'lugar':r[6],'categoria':r[7],'todo_el_dia':r[8],'recurrencia':r[9]} for r in rows]
     return jsonify({'eventos': eventos})
 
 @app.route('/api/eventos', methods=['POST'])
@@ -4365,10 +4375,11 @@ def api_crear_evento():
     if not titulo or not fecha:
         return jsonify({'ok': False, 'error': 'Título y fecha son obligatorios'})
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.execute("""INSERT INTO eventos (usuario_id, titulo, fecha, hora, descripcion, lugar, todo_el_dia, recurrencia)
-                             VALUES (?,?,?,?,?,?,?,?)""",
-        (usuario_id, titulo, fecha, data.get('hora','').strip(),
-         data.get('descripcion','').strip(), data.get('lugar','').strip(),
+    cursor = conn.execute("""INSERT INTO eventos (usuario_id, titulo, fecha, fecha_fin, hora, descripcion, lugar, categoria, todo_el_dia, recurrencia)
+                             VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (usuario_id, titulo, fecha, data.get('fecha_fin','').strip(),
+         data.get('hora','').strip(), data.get('descripcion','').strip(),
+         data.get('lugar','').strip(), data.get('categoria','personal').strip(),
          int(data.get('todo_el_dia', 0)), data.get('recurrencia','').strip()))
     conn.commit()
     conn.close()
@@ -4380,11 +4391,12 @@ def api_editar_evento(eid):
     usuario_id = session['usuario_id']
     data = request.json or {}
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("""UPDATE eventos SET titulo=?, fecha=?, hora=?, descripcion=?, lugar=?, todo_el_dia=?, recurrencia=?
+    conn.execute("""UPDATE eventos SET titulo=?, fecha=?, fecha_fin=?, hora=?, descripcion=?, lugar=?, categoria=?, todo_el_dia=?, recurrencia=?
                     WHERE id=? AND usuario_id=?""",
         (data.get('titulo','').strip(), data.get('fecha','').strip(),
-         data.get('hora','').strip(), data.get('descripcion','').strip(),
-         data.get('lugar','').strip(), int(data.get('todo_el_dia',0)),
+         data.get('fecha_fin','').strip(), data.get('hora','').strip(),
+         data.get('descripcion','').strip(), data.get('lugar','').strip(),
+         data.get('categoria','personal').strip(), int(data.get('todo_el_dia',0)),
          data.get('recurrencia','').strip(), eid, usuario_id))
     conn.commit()
     conn.close()
@@ -4791,6 +4803,7 @@ textarea{font-size:16px}}
 <div id='nav'>
   <button class='nav-btn' onclick='showPage("tareas")'>TAREAS</button>
   <button class='nav-btn' onclick='showPage("calendario")'>CALENDARIO</button>
+  <button class='nav-btn' onclick='showPage("cal_mes")'>VISTA MES</button>
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
   <button class='nav-btn' onclick='showPage("diario")'>DIARIO</button>
   <button class='nav-btn' onclick='showPage("memoria_anni")'>MEMORIA ANNI</button>
@@ -5104,7 +5117,7 @@ document.getElementById('modal-bd').classList.remove('open');})
 
 function showPage(sec){
 currentSection=sec;currentPage=1;
-var titles={universo:'Universo ANNI',mundo:'El mundo de ANNI',tareas:'Tareas',calendario:'Calendario',memoria_anni:'Memoria ANNI',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
+var titles={universo:'Universo ANNI',mundo:'El mundo de ANNI',tareas:'Tareas',calendario:'Calendario',cal_mes:'Calendario mensual',memoria_anni:'Memoria ANNI',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
 document.getElementById('page-title').textContent=titles[sec]||sec;
 document.getElementById('page').classList.add('open');
 loadPage(sec,1);}
@@ -5115,6 +5128,7 @@ if(sec==='universo'){window.location.href='/universo';return;}
 else if(sec==='mundo')loadMundo(page);
 else if(sec==='tareas')loadTareas(page);
 else if(sec==='calendario')loadCalendario();
+else if(sec==='cal_mes')loadCalMes();
 else if(sec==='memoria_anni')loadMemoriaAnni();
 else if(sec==='chats')loadChats(page);
 else if(sec==='diario')loadDiario(page);
@@ -5195,6 +5209,152 @@ function delTema(id, btn){
 // ── TAREAS ────────────────────────────────────────────────────────────────────
 var tareasVista = 'activas'; // 'activas' o 'completada'
 
+// ── VISTA CALENDARIO MENSUAL ────────────────────────────────────────────────
+var calMesActual = new Date();
+
+function loadCalMes(){
+  calMesActual = new Date();
+  renderCalMes();
+}
+
+function renderCalMes(){
+  var body = document.getElementById('page-body');
+  body.innerHTML = '';
+
+  var año = calMesActual.getFullYear();
+  var mes = calMesActual.getMonth(); // 0-11
+
+  var meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+               'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  var diasSem = ['Lu','Ma','Mi','Ju','Vi','Sá','Do'];
+
+  // Cabecera navegación
+  var nav = document.createElement('div');
+  nav.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px';
+  var btnPrev = document.createElement('button');
+  btnPrev.className = 'nav-btn';
+  btnPrev.textContent = '←';
+  btnPrev.onclick = function(){ calMesActual.setMonth(calMesActual.getMonth()-1); renderCalMes(); };
+  var titulo = document.createElement('div');
+  titulo.style.cssText = 'font-size:18px;font-weight:900;letter-spacing:1px';
+  titulo.textContent = meses[mes] + ' ' + año;
+  var btnNext = document.createElement('button');
+  btnNext.className = 'nav-btn';
+  btnNext.textContent = '→';
+  btnNext.onclick = function(){ calMesActual.setMonth(calMesActual.getMonth()+1); renderCalMes(); };
+  nav.appendChild(btnPrev); nav.appendChild(titulo); nav.appendChild(btnNext);
+  body.appendChild(nav);
+
+  // Cabecera días semana (empieza en lunes)
+  var grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);gap:2px';
+  diasSem.forEach(function(d){
+    var h = document.createElement('div');
+    h.style.cssText = 'text-align:center;font-size:11px;font-weight:900;color:#aaa;letter-spacing:1px;padding:6px 0';
+    h.textContent = d;
+    grid.appendChild(h);
+  });
+
+  // Calcular primer día del mes (lunes=0)
+  var primero = new Date(año, mes, 1);
+  var diaSemana = primero.getDay(); // 0=dom
+  var offset = diaSemana === 0 ? 6 : diaSemana - 1; // ajuste lunes
+  var diasEnMes = new Date(año, mes+1, 0).getDate();
+  var hoyStr = new Date().toISOString().slice(0,10);
+
+  // Cargar eventos del mes
+  fetch('/api/eventos?vista=proximos&mes='+año+'-'+(String(mes+1).padStart(2,'0'))).then(r=>r.json()).then(function(data){
+    // Indexar eventos por fecha
+    var eventosPorDia = {};
+    (data.eventos||[]).forEach(function(ev){
+      var fInicio = ev.fecha;
+      var fFin = ev.fecha_fin && ev.fecha_fin !== ev.fecha ? ev.fecha_fin : ev.fecha;
+      // Expandir eventos multi-día
+      var cur = new Date(fInicio+'T12:00:00');
+      var fin2 = new Date(fFin+'T12:00:00');
+      while(cur <= fin2){
+        var ds = cur.toISOString().slice(0,10);
+        if(!eventosPorDia[ds]) eventosPorDia[ds] = [];
+        eventosPorDia[ds].push(ev);
+        cur.setDate(cur.getDate()+1);
+      }
+    });
+
+    // Celdas vacías antes del primer día
+    for(var i=0; i<offset; i++){
+      var vacia = document.createElement('div');
+      vacia.style.cssText = 'min-height:80px;background:#fafafa;border-radius:4px';
+      grid.appendChild(vacia);
+    }
+
+    // Días del mes
+    for(var d=1; d<=diasEnMes; d++){
+      var fechaStr = año+'-'+String(mes+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+      var celda = document.createElement('div');
+      var esHoy = fechaStr === hoyStr;
+      celda.style.cssText = 'min-height:80px;background:'+(esHoy?'#fff8f8':'#fff')+
+        ';border:1px solid '+(esHoy?'#cc0000':'#f0f0f0')+';border-radius:4px;padding:4px;position:relative;cursor:pointer;transition:background 0.15s';
+      celda.onmouseover = function(){ this.style.background='#fafafa'; };
+      celda.onmouseout  = function(){ this.style.background = this.dataset.hoy==='1'?'#fff8f8':'#fff'; };
+      if(esHoy) celda.dataset.hoy = '1';
+
+      // Número del día
+      var numDia = document.createElement('div');
+      numDia.style.cssText = 'font-size:13px;font-weight:'+(esHoy?'900':'600')+
+        ';color:'+(esHoy?'#cc0000':'#333')+';margin-bottom:4px';
+      numDia.textContent = d;
+      celda.appendChild(numDia);
+
+      // Eventos del día
+      var evsDia = eventosPorDia[fechaStr] || [];
+      evsDia.slice(0,3).forEach(function(ev){
+        var cat = ev.categoria || 'personal';
+        var color = CAT_COLORS[cat] || '#888';
+        var pill = document.createElement('div');
+        pill.style.cssText = 'background:'+color+';color:#fff;font-size:10px;font-weight:700;'+
+          'border-radius:3px;padding:1px 5px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer';
+        pill.textContent = ev.titulo;
+        pill.title = ev.titulo + (ev.hora?' · '+ev.hora:'');
+        celda.appendChild(pill);
+      });
+      if(evsDia.length > 3){
+        var mas = document.createElement('div');
+        mas.style.cssText = 'font-size:10px;color:#aaa;margin-top:2px';
+        mas.textContent = '+' + (evsDia.length-3) + ' más';
+        celda.appendChild(mas);
+      }
+
+      grid.appendChild(celda);
+    }
+
+    body.appendChild(grid);
+  }).catch(function(){
+    // Si falla, igual mostramos el grid vacío
+    for(var d=1; d<=diasEnMes; d++){
+      var celda = document.createElement('div');
+      celda.style.cssText = 'min-height:80px;background:#fff;border:1px solid #f0f0f0;border-radius:4px;padding:4px';
+      var numDia = document.createElement('div');
+      numDia.style.cssText = 'font-size:13px;color:#333';
+      numDia.textContent = d;
+      celda.appendChild(numDia);
+      grid.appendChild(celda);
+    }
+    body.appendChild(grid);
+  });
+}
+
+// ── FIN VISTA CALENDARIO MENSUAL ─────────────────────────────────────────────
+
+// Colores y labels de categorías
+var CAT_COLORS={'personal':'#2e7d32','tarea':'#1565c0','reunion':'#111111','curso':'#cc0000'};
+var CAT_LABELS={'personal':'Personal','tarea':'Tarea','reunion':'Reunión','curso':'Curso'};
+
+function catBadge(cat){
+  var c=CAT_COLORS[cat]||'#888';
+  var l=CAT_LABELS[cat]||cat;
+  return '<span style="font-size:11px;font-weight:700;color:#fff;background:'+c+';border-radius:4px;padding:2px 8px;margin-right:6px">'+escH(l)+'</span>';
+}
+
 function loadCalendario(){
   var body=document.getElementById('page-body');
   body.innerHTML='';
@@ -5219,10 +5379,19 @@ function loadCalendario(){
   form.innerHTML=
     '<div style="font-size:11px;font-weight:900;letter-spacing:1px;color:#aaa;margin-bottom:12px">NUEVO EVENTO</div>'+
     '<input id="ev-titulo" placeholder="Título *" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
+    '<select id="ev-cat" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
+    '<option value="personal">🟢 Personal</option>'+
+    '<option value="tarea">🔵 Tarea</option>'+
+    '<option value="reunion">⚫ Reunión</option>'+
+    '<option value="curso">🔴 Curso</option>'+
+    '</select>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'+
-    '<input id="ev-fecha" type="date" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box">'+
-    '<input id="ev-hora" type="time" placeholder="Hora (opcional)" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box">'+
+    '<div><div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">FECHA INICIO *</div>'+
+    '<input id="ev-fecha" type="date" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box"></div>'+
+    '<div><div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">FECHA FIN</div>'+
+    '<input id="ev-fecha-fin" type="date" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box"></div>'+
     '</div>'+
+    '<input id="ev-hora" type="time" placeholder="Hora (opcional)" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
     '<input id="ev-lugar" placeholder="Lugar (opcional)" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
     '<textarea id="ev-desc" placeholder="Descripción (opcional)" rows="2" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;margin-bottom:8px;box-sizing:border-box"></textarea>'+
     '<label style="font-size:13px;color:#555;margin-bottom:12px;display:block"><input id="ev-todo" type="checkbox" style="margin-right:6px">Todo el día</label>'+
@@ -5259,12 +5428,18 @@ function loadCalendario(){
         var card=document.createElement('div');
         card.className='item-card';
         card.id='evento-'+ev.id;
-        var hora_txt=ev.hora&&!ev.todo_el_dia?'<span style="font-size:12px;color:#888;margin-right:8px">'+escH(ev.hora)+'</span>':'';
+        var cat=ev.categoria||'personal';
+        var catColor=CAT_COLORS[cat]||'#888';
+        var catLabel=CAT_LABELS[cat]||cat;
+        var hora_txt=ev.hora&&!ev.todo_el_dia?'<span style="font-size:12px;color:#888;margin-right:8px">🕐 '+escH(ev.hora)+'</span>':'';
         var lugar_txt=ev.lugar?'<span style="font-size:12px;color:#888;margin-right:8px">📍 '+escH(ev.lugar)+'</span>':'';
-        var todo_badge=ev.todo_el_dia?'<span style="font-size:11px;background:#e3f2fd;border:1px solid #90caf9;border-radius:4px;padding:2px 6px;margin-right:6px;color:#1565c0">Todo el día</span>':'';
+        var fechafin_txt=ev.fecha_fin&&ev.fecha_fin!==ev.fecha?'<span style="font-size:12px;color:#888;margin-right:8px">→ '+escH(ev.fecha_fin)+'</span>':'';
+        var todo_badge=ev.todo_el_dia?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:2px 6px;margin-right:6px;color:#555">Todo el día</span>':'';
+        card.style.borderLeft='4px solid '+catColor;
         card.innerHTML=
-          '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:4px">'+
-          todo_badge+hora_txt+lugar_txt+
+          '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:6px">'+
+          '<span style="font-size:11px;font-weight:700;color:#fff;background:'+catColor+';border-radius:4px;padding:2px 8px;margin-right:4px">'+escH(catLabel)+'</span>'+
+          todo_badge+hora_txt+fechafin_txt+lugar_txt+
           '</div>'+
           '<div id="evtit-'+ev.id+'" style="font-size:15px;font-weight:900;color:#111;margin-bottom:4px">'+escH(ev.titulo)+'</div>'+
           (ev.descripcion?'<div id="evdesc-'+ev.id+'" style="font-size:13px;color:#555;line-height:1.5">'+escH(ev.descripcion)+'</div>':'')+
@@ -5290,6 +5465,8 @@ function crearEvento(){
   fetch('/api/eventos',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       titulo:titulo, fecha:fecha,
+      fecha_fin:document.getElementById('ev-fecha-fin').value||'',
+      categoria:document.getElementById('ev-cat').value||'personal',
       hora:document.getElementById('ev-hora').value||'',
       lugar:document.getElementById('ev-lugar').value.trim()||'',
       descripcion:document.getElementById('ev-desc').value.trim()||'',
@@ -5299,6 +5476,8 @@ function crearEvento(){
     if(d.ok){
       document.getElementById('ev-titulo').value='';
       document.getElementById('ev-fecha').value='';
+      document.getElementById('ev-fecha-fin').value='';
+      document.getElementById('ev-cat').value='personal';
       document.getElementById('ev-hora').value='';
       document.getElementById('ev-lugar').value='';
       document.getElementById('ev-desc').value='';
