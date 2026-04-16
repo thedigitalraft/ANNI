@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.75"
+ANNI_VERSION = "1.01.76"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2285,6 +2285,34 @@ def chat_page():
     html = CHAT_HTML.replace('__NOMBRE_USUARIO__', nombre_display or 'tu')
     html = html.replace('__ANNI_VERSION__', ANNI_VERSION)
     return make_response(html)
+
+@app.route('/api/tts', methods=['POST'])
+@login_required
+def api_tts():
+    """Convierte texto a voz usando Together AI Orpheus TTS."""
+    data = request.json or {}
+    texto = data.get('texto', '').strip()
+    if not texto:
+        return jsonify({'ok': False, 'error': 'Texto vacío'})
+    # Limpiar markdown básico para que suene bien
+    import re
+    texto_limpio = re.sub(r'\*+', '', texto)
+    texto_limpio = re.sub(r'#+\s', '', texto_limpio)
+    texto_limpio = re.sub(r'`+', '', texto_limpio)
+    texto_limpio = texto_limpio[:1000]  # limitar longitud
+    try:
+        response = together.audio.speech.create(
+            model="canopylabs/orpheus-3b-0.1-ft",
+            input=texto_limpio,
+            voice="tara",
+            response_format="mp3",
+        )
+        import base64
+        audio_b64 = base64.b64encode(response.content).decode('utf-8')
+        return jsonify({'ok': True, 'audio': audio_b64})
+    except Exception as e:
+        print(f"[ANNI] Error TTS: {e}")
+        return jsonify({'ok': False, 'error': str(e)})
 
 @app.route('/api/chat', methods=['POST'])
 @login_required
@@ -4951,8 +4979,40 @@ d.appendChild(lbl);d.appendChild(bur);
 d.className='msg-anni';
 var lbl=document.createElement('div');lbl.className='lbl';lbl.textContent='ANNI - '+hora;
 var t=document.createElement('div');t.className='txt';t.textContent=txt;
-d.appendChild(lbl);d.appendChild(t);}
+// Botón de voz
+var voiceBtn=document.createElement('button');
+voiceBtn.title='Escuchar';
+voiceBtn.style.cssText='background:none;border:none;cursor:pointer;color:#ccc;font-size:14px;padding:2px 4px;margin-top:4px;align-self:flex-start;transition:color 0.2s';
+voiceBtn.textContent='🔊';
+voiceBtn.onclick=function(){speakAnni(txt, voiceBtn);};
+d.appendChild(lbl);d.appendChild(t);d.appendChild(voiceBtn);}
 C.appendChild(d);C.scrollTop=C.scrollHeight;return d;}
+
+function speakAnni(texto, btn){
+  if(btn._playing){
+    btn._audio.pause();
+    btn._audio.currentTime=0;
+    btn._playing=false;
+    btn.textContent='🔊';
+    btn.style.color='#ccc';
+    return;
+  }
+  btn.textContent='⏳';
+  btn.style.color='#cc0000';
+  fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({texto:texto})
+  }).then(r=>r.json()).then(function(d){
+    if(!d.ok){btn.textContent='🔊';btn.style.color='#ccc';return;}
+    var audio=new Audio('data:audio/mp3;base64,'+d.audio);
+    btn._audio=audio;
+    btn._playing=true;
+    btn.textContent='⏹';
+    btn.style.color='#cc0000';
+    audio.onended=function(){btn._playing=false;btn.textContent='🔊';btn.style.color='#ccc';};
+    audio.onerror=function(){btn._playing=false;btn.textContent='🔊';btn.style.color='#ccc';};
+    audio.play();
+  }).catch(function(){btn.textContent='🔊';btn.style.color='#ccc';});
+}
 
 function typing(){
 var d=document.createElement('div');d.className='msg-anni';d.id='ty';
