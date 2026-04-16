@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.85"
+ANNI_VERSION = "1.01.86"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4407,10 +4407,17 @@ def api_migrar_tareas():
 def api_get_eventos():
     usuario_id = session['usuario_id']
     vista = request.args.get('vista', 'proximos')
+    todos = request.args.get('todos', '0') == '1'  # todos=1 ignora cerrado/fecha
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     import datetime as dt_mod
-    if vista == 'pasados':
+    if todos:
+        # Para vistas calendario: todos los eventos activos sin filtrar por fecha ni cerrado
+        c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria,
+                            todo_el_dia, recurrencia, estado, cliente, es_tarea
+                     FROM eventos WHERE usuario_id=? AND activo=1
+                     ORDER BY fecha ASC, hora ASC""", (usuario_id,))
+    elif vista == 'pasados':
         hoy = dt_mod.date.today().isoformat()
         c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria,
                             todo_el_dia, recurrencia, estado, cliente, es_tarea
@@ -5481,11 +5488,8 @@ function renderCalSemana(){
   nav.appendChild(bp); nav.appendChild(tit); nav.appendChild(bn);
   body.appendChild(nav);
 
-  Promise.all([
-    fetch('/api/eventos?vista=proximos').then(r=>r.json()),
-    fetch('/api/eventos?vista=pasados').then(r=>r.json())
-  ]).then(function(res){
-    var todos=(res[0].eventos||[]).concat(res[1].eventos||[]);
+  fetch('/api/eventos?todos=1').then(r=>r.json()).then(function(res){
+    var todos=res.eventos||[];
     var evPorDia={};
     todos.forEach(function(ev){
       var fi=ev.fecha; var ff=(ev.fecha_fin&&ev.fecha_fin>fi)?ev.fecha_fin:fi;
@@ -5545,11 +5549,8 @@ function renderCalDia(){
   nav.appendChild(bp); nav.appendChild(tit); nav.appendChild(bn);
   body.appendChild(nav);
 
-  Promise.all([
-    fetch('/api/eventos?vista=proximos').then(r=>r.json()),
-    fetch('/api/eventos?vista=pasados').then(r=>r.json())
-  ]).then(function(res){
-    var todos=(res[0].eventos||[]).concat(res[1].eventos||[]);
+  fetch('/api/eventos?todos=1').then(r=>r.json()).then(function(res){
+    var todos=res.eventos||[];
     var evsDia=todos.filter(function(ev){
       var fi=ev.fecha; var ff=(ev.fecha_fin&&ev.fecha_fin>fi)?ev.fecha_fin:fi;
       return diaStr>=fi&&diaStr<=ff;
@@ -5707,11 +5708,8 @@ function renderCalMes(){
   }
 
   // Cargar eventos del mes (tanto próximos como pasados)
-  Promise.all([
-    fetch('/api/eventos?vista=proximos').then(r=>r.json()),
-    fetch('/api/eventos?vista=pasados').then(r=>r.json())
-  ]).then(function(results){
-    var todos = (results[0].eventos||[]).concat(results[1].eventos||[]);
+  fetch('/api/eventos?todos=1').then(r=>r.json()).then(function(results){
+    var todos = results.eventos||[];
     var eventosPorDia = {};
     todos.forEach(function(ev){
       var fInicio = ev.fecha;
