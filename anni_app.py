@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.84"
+ANNI_VERSION = "1.01.85"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5508,8 +5508,9 @@ function renderCalSemana(){
         var cat=ev.categoria||'personal';
         var color=CAT_COLORS[cat]||'#888';
         var pill=document.createElement('div');
-        pill.style.cssText='background:'+color+';color:#fff;font-size:9px;font-weight:700;border-radius:3px;padding:2px 4px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+        pill.style.cssText='background:'+color+';color:#fff;font-size:12px;font-weight:700;border-radius:4px;padding:3px 6px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer';
         pill.textContent=(ev.hora?ev.hora+' ':'')+ev.titulo;
+        pill.onclick=(function(evento){return function(e){e.stopPropagation();mostrarDetalleEvento(evento);};})(ev);
         col.appendChild(pill);
       });
       grid.appendChild(col);
@@ -5685,9 +5686,14 @@ function renderCalMes(){
         var cat = ev.categoria || 'personal';
         var color = CAT_COLORS[cat] || '#888';
         var pill = document.createElement('div');
-        pill.style.cssText = 'background:'+color+';color:#fff;font-size:9px;font-weight:700;'+
-          'border-radius:3px;padding:1px 4px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
-        pill.textContent = ev.titulo;
+        pill.style.cssText = 'background:'+color+';color:#fff;font-size:12px;font-weight:700;'+
+          'border-radius:4px;padding:3px 6px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer';
+        pill.textContent = (ev.hora?ev.hora+' ':'')+ev.titulo;
+        pill.title = ev.titulo+(ev.hora?' · '+ev.hora:'')+(ev.lugar?' · '+ev.lugar:'');
+        pill.onclick=(function(evento){return function(e){
+          e.stopPropagation();
+          mostrarDetalleEvento(evento);
+        };})(ev);
         celda.appendChild(pill);
       });
       if(evsDia.length > 2){
@@ -5983,6 +5989,68 @@ function editEvento(id, btn){
   var bCancel=document.createElement('button'); bCancel.textContent='Cancelar'; bCancel.style.cssText='flex:1;background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:10px;font-size:13px;font-weight:700;cursor:pointer';
   bCancel.onclick=function(){document.body.removeChild(overlay);};
   btns.appendChild(bGuard); btns.appendChild(bCancel); modal.appendChild(btns);
+  overlay.appendChild(modal);
+  overlay.onclick=function(e){if(e.target===overlay)document.body.removeChild(overlay);};
+  document.body.appendChild(overlay);
+}
+
+
+function mostrarDetalleEvento(ev){
+  var overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
+  var modal=document.createElement('div');
+  modal.style.cssText='background:#fff;border-radius:12px;padding:20px;width:100%;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,0.2)';
+
+  var cat=ev.categoria||'personal';
+  var color=CAT_COLORS[cat]||'#888';
+  var catLabel=CAT_LABELS[cat]||cat;
+
+  // Badge categoría
+  var badge=document.createElement('div');
+  badge.style.cssText='display:inline-block;background:'+color+';color:#fff;font-size:11px;font-weight:700;border-radius:4px;padding:3px 10px;margin-bottom:12px';
+  badge.textContent=catLabel.toUpperCase(); modal.appendChild(badge);
+
+  // Título
+  var tit=document.createElement('div');
+  tit.style.cssText='font-size:20px;font-weight:900;color:#111;margin-bottom:10px;line-height:1.2';
+  tit.textContent=ev.titulo; modal.appendChild(tit);
+
+  // Fecha y hora
+  var meta=document.createElement('div');
+  meta.style.cssText='font-size:14px;color:#555;margin-bottom:6px';
+  var fechaTxt=ev.fecha+(ev.fecha_fin&&ev.fecha_fin!==ev.fecha?' → '+ev.fecha_fin:'');
+  var horaTxt=ev.hora?(ev.hora+(ev.hora_fin?' → '+ev.hora_fin:'')):'';
+  meta.textContent='📅 '+fechaTxt+(horaTxt?' · 🕐 '+horaTxt:'');
+  modal.appendChild(meta);
+
+  // Lugar
+  if(ev.lugar){var l=document.createElement('div');l.style.cssText='font-size:14px;color:#555;margin-bottom:6px';l.textContent='📍 '+ev.lugar;modal.appendChild(l);}
+
+  // Cliente
+  if(ev.cliente){var c=document.createElement('div');c.style.cssText='font-size:14px;color:#555;margin-bottom:6px';c.textContent='👤 '+ev.cliente;modal.appendChild(c);}
+
+  // Descripción
+  if(ev.descripcion){
+    var d=document.createElement('div');
+    d.style.cssText='font-size:14px;color:#444;margin-top:10px;padding:10px;background:#f9f9f9;border-radius:6px;line-height:1.5';
+    d.textContent=ev.descripcion; modal.appendChild(d);
+  }
+
+  // Botones
+  var btns=document.createElement('div');
+  btns.style.cssText='display:flex;gap:8px;margin-top:16px';
+  var bEdit=document.createElement('button');
+  bEdit.textContent='Editar'; bEdit.style.cssText='flex:1;background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:10px;font-size:13px;font-weight:700;cursor:pointer';
+  bEdit.onclick=function(){document.body.removeChild(overlay);editEvento(ev.id,bEdit);};
+  var bCerrar=document.createElement('button');
+  bCerrar.textContent='✓ Cerrar'; bCerrar.style.cssText='flex:1;background:#e8f5e9;border:1px solid #81c784;color:#2e7d32;border-radius:6px;padding:10px;font-size:13px;font-weight:700;cursor:pointer';
+  bCerrar.onclick=function(){document.body.removeChild(overlay);cerrarEvento(ev.id);};
+  var bClose=document.createElement('button');
+  bClose.textContent='×'; bClose.style.cssText='background:none;border:none;font-size:22px;cursor:pointer;color:#aaa;padding:0 4px';
+  bClose.onclick=function(){document.body.removeChild(overlay);};
+  btns.appendChild(bEdit); btns.appendChild(bCerrar); btns.appendChild(bClose);
+  modal.appendChild(btns);
+
   overlay.appendChild(modal);
   overlay.onclick=function(e){if(e.target===overlay)document.body.removeChild(overlay);};
   document.body.appendChild(overlay);
