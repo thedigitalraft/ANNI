@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.87"
+ANNI_VERSION = "1.01.88"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4882,7 +4882,7 @@ button#s:disabled{background:#ddd;cursor:not-allowed}
 .time-col div{padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600}
 .time-col div:hover{background:#f0f0f0}
 .time-col div.selected{background:#cc0000;color:#fff}
-.item-card{border:1px solid #e8e8e8;border-radius:12px;padding:16px;margin-bottom:14px}
+.item-card{border:1px solid #e8e8e8;border-radius:12px;margin-bottom:14px;overflow:hidden}
 .item-meta{font-size:12px;color:#999;margin-bottom:6px}
 .item-content{font-size:15px;line-height:1.6;color:#111}
 .item-actions{display:flex;gap:8px;margin-top:10px}
@@ -5867,10 +5867,22 @@ function loadCalendario(){
         var lugar_txt=ev.lugar?'<span style="font-size:12px;color:#888;margin-right:8px">📍 '+escH(ev.lugar)+'</span>':'';
         var fechafin_txt=ev.fecha_fin&&ev.fecha_fin!==ev.fecha?'<span style="font-size:12px;color:#888;margin-right:8px">→ '+escH(ev.fecha_fin)+'</span>':'';
         var todo_badge=ev.todo_el_dia?'<span style="font-size:11px;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:2px 6px;margin-right:6px;color:#555">Todo el día</span>':'';
-        card.style.borderLeft='4px solid '+catColor;
-        card.innerHTML=
+        // Pleca lateral con texto rotado
+        card.style.cssText='display:flex;align-items:stretch';
+        var pleca=document.createElement('div');
+        pleca.style.cssText='width:28px;flex-shrink:0;background:'+catColor+';display:flex;align-items:center;justify-content:center;border-radius:6px 0 0 6px';
+        var plecaTxt=document.createElement('span');
+        plecaTxt.style.cssText='color:#fff;font-size:10px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap';
+        plecaTxt.textContent=catLabel;
+        pleca.appendChild(plecaTxt);
+        var cardInner=document.createElement('div');
+        cardInner.style.cssText='flex:1;padding:12px 16px';
+        card.appendChild(pleca);
+        card.appendChild(cardInner);
+        // Mover el contenido restante al cardInner
+        card._inner=cardInner;
+        cardInner.innerHTML=
           '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:6px">'+
-          '<span style="font-size:11px;font-weight:700;color:#fff;background:'+catColor+';border-radius:4px;padding:2px 8px;margin-right:4px">'+escH(catLabel)+'</span>'+
           todo_badge+horaRange+fechafin_txt+lugar_txt+
           '</div>'+
           '<div id="evtit-'+ev.id+'" style="font-size:15px;font-weight:900;color:#111;margin-bottom:4px">'+escH(ev.titulo)+'</div>'+
