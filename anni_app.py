@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.81"
+ANNI_VERSION = "1.01.82"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4841,7 +4841,26 @@ button#s:disabled{background:#ddd;cursor:not-allowed}
 .page-header h1{font-size:22px;font-weight:900;color:#111;flex:1}
 .page-close{font-size:14px;font-weight:700;color:#cc0000;cursor:pointer;padding:8px 14px;border:2px solid #ffcccc;border-radius:8px;background:none;flex-shrink:0;order:-1}
 .page-body{flex:1;overflow-y:auto;padding:20px;max-width:760px;width:100%;margin:0 auto}
-.page-body.fullscreen{max-width:100%!important;padding:12px!important}
+.page-body.fullscreen{max-width:100%!important;padding:12px!important;height:calc(100vh - 60px);box-sizing:border-box}
+/* Custom pickers */
+.picker-wrap{position:relative;display:inline-block;width:100%}
+.picker-input{width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box;cursor:pointer;background:#fff;text-align:left}
+.picker-drop{position:absolute;top:calc(100% + 4px);left:0;z-index:999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);min-width:220px;padding:8px}
+.picker-drop.hidden{display:none}
+.picker-cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.picker-cal-head button{background:none;border:none;font-size:16px;cursor:pointer;padding:2px 6px;color:#555}
+.picker-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.picker-cal-day-lbl{text-align:center;font-size:10px;font-weight:700;color:#aaa;padding:2px 0}
+.picker-cal-day{text-align:center;font-size:13px;padding:5px 2px;border-radius:4px;cursor:pointer}
+.picker-cal-day:hover{background:#f0f0f0}
+.picker-cal-day.today{color:#cc0000;font-weight:900}
+.picker-cal-day.selected{background:#cc0000;color:#fff;border-radius:4px}
+.picker-cal-day.empty{cursor:default}
+.time-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:200px}
+.time-col{overflow-y:auto;max-height:200px}
+.time-col div{padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600}
+.time-col div:hover{background:#f0f0f0}
+.time-col div.selected{background:#cc0000;color:#fff}
 .item-card{border:1px solid #e8e8e8;border-radius:12px;padding:16px;margin-bottom:14px}
 .item-meta{font-size:12px;color:#999;margin-bottom:6px}
 .item-content{font-size:15px;line-height:1.6;color:#111}
@@ -5280,6 +5299,138 @@ function delTema(id, btn){
 var tareasVista = 'activas'; // 'activas' o 'completada'
 
 
+
+
+function agendaNav(vistaActiva){
+  var nav=document.createElement('div');
+  nav.style.cssText='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px';
+  var vistas=[
+    {id:'calendario',label:'Lista'},
+    {id:'cal_mes',label:'Mes'},
+    {id:'cal_semana',label:'Semana'},
+    {id:'cal_dia',label:'Día'}
+  ];
+  vistas.forEach(function(v){
+    var btn=document.createElement('button');
+    btn.className='nav-btn';
+    if(v.id===vistaActiva) btn.style.cssText='background:#cc0000;color:#fff;border-color:#cc0000';
+    btn.textContent=v.label;
+    btn.onclick=function(){showPage(v.id);};
+    nav.appendChild(btn);
+  });
+  return nav;
+}
+// ── DATE PICKER CUSTOM (semana empieza lunes) ─────────────────────────────────
+var MESES_ES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+var DIAS_CORTOS=['Lu','Ma','Mi','Ju','Vi','Sá','Do'];
+
+function createDatePicker(inputId, placeholder){
+  var wrap=document.createElement('div'); wrap.className='picker-wrap';
+  var btn=document.createElement('button'); btn.type='button'; btn.className='picker-input';
+  btn.textContent=placeholder||'Seleccionar fecha'; btn.dataset.value='';
+  var drop=document.createElement('div'); drop.className='picker-drop hidden';
+  var nav=new Date(); nav.setDate(1);
+
+  function render(){
+    drop.innerHTML='';
+    var año=nav.getFullYear(); var mes=nav.getMonth();
+    // Cabecera
+    var head=document.createElement('div'); head.className='picker-cal-head';
+    var prev=document.createElement('button'); prev.textContent='←'; prev.type='button';
+    prev.onclick=function(e){e.stopPropagation();nav.setMonth(nav.getMonth()-1);render();};
+    var next=document.createElement('button'); next.textContent='→'; next.type='button';
+    next.onclick=function(e){e.stopPropagation();nav.setMonth(nav.getMonth()+1);render();};
+    var lbl=document.createElement('span'); lbl.style.fontWeight='700'; lbl.style.fontSize='13px';
+    lbl.textContent=MESES_ES[mes]+' '+año;
+    head.appendChild(prev); head.appendChild(lbl); head.appendChild(next);
+    drop.appendChild(head);
+    // Grid
+    var grid=document.createElement('div'); grid.className='picker-cal-grid';
+    DIAS_CORTOS.forEach(function(d){var l=document.createElement('div');l.className='picker-cal-day-lbl';l.textContent=d;grid.appendChild(l);});
+    var primero=new Date(año,mes,1);
+    var dow=primero.getDay(); var offset=dow===0?6:dow-1;
+    for(var i=0;i<offset;i++){var e=document.createElement('div');e.className='picker-cal-day empty';grid.appendChild(e);}
+    var diasMes=new Date(año,mes+1,0).getDate();
+    var hoyStr=new Date().toISOString().slice(0,10);
+    for(var d=1;d<=diasMes;d++){
+      var ds=año+'-'+String(mes+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+      var cell=document.createElement('div'); cell.className='picker-cal-day';
+      if(ds===hoyStr) cell.classList.add('today');
+      if(ds===btn.dataset.value) cell.classList.add('selected');
+      cell.textContent=d;
+      cell.onclick=(function(dateStr){return function(e){
+        e.stopPropagation();
+        btn.dataset.value=dateStr;
+        btn.textContent=dateStr;
+        drop.classList.add('hidden');
+        if(btn._onChange) btn._onChange(dateStr);
+      };})(ds);
+      grid.appendChild(cell);
+    }
+    drop.appendChild(grid);
+  }
+
+  btn.onclick=function(e){e.stopPropagation();drop.classList.toggle('hidden');if(!drop.classList.contains('hidden'))render();};
+  document.addEventListener('click',function(){drop.classList.add('hidden');});
+  drop.addEventListener('click',function(e){e.stopPropagation();});
+  wrap.appendChild(btn); wrap.appendChild(drop);
+  wrap._getVal=function(){return btn.dataset.value;};
+  wrap._setVal=function(v){btn.dataset.value=v||'';btn.textContent=v||placeholder||'Seleccionar fecha';};
+  wrap._onChange=function(fn){btn._onChange=fn;};
+  return wrap;
+}
+
+function createTimePicker(placeholder){
+  var wrap=document.createElement('div'); wrap.className='picker-wrap';
+  var btn=document.createElement('button'); btn.type='button'; btn.className='picker-input';
+  btn.textContent=placeholder||'--:--'; btn.dataset.value='';
+  var drop=document.createElement('div'); drop.className='picker-drop hidden';
+  var selH=null; var selM=null;
+
+  function render(){
+    drop.innerHTML='';
+    var grid=document.createElement('div'); grid.className='time-grid';
+    // Horas 00-23
+    var colH=document.createElement('div'); colH.className='time-col';
+    for(var h=0;h<24;h++){
+      var hStr=String(h).padStart(2,'0');
+      var d=document.createElement('div'); d.textContent=hStr;
+      if(hStr===selH) d.classList.add('selected');
+      d.onclick=(function(hs){return function(e){e.stopPropagation();selH=hs;render();updateBtn();};})(hStr);
+      colH.appendChild(d);
+    }
+    // Minutos 00,15,30,45
+    var colM=document.createElement('div'); colM.className='time-col';
+    ['00','15','30','45'].forEach(function(ms){
+      var d=document.createElement('div'); d.textContent=ms;
+      if(ms===selM) d.classList.add('selected');
+      d.onclick=function(e){e.stopPropagation();selM=ms;render();updateBtn();};
+      colM.appendChild(d);
+    });
+    grid.appendChild(colH); grid.appendChild(colM);
+    drop.appendChild(grid);
+    // Scroll a hora seleccionada
+    if(selH){var idx=parseInt(selH);var items=colH.children;if(items[idx])items[idx].scrollIntoView({block:'nearest'});}
+  }
+
+  function updateBtn(){
+    if(selH&&selM){var v=selH+':'+selM;btn.dataset.value=v;btn.textContent=v;if(btn._onChange)btn._onChange(v);}
+  }
+
+  btn.onclick=function(e){e.stopPropagation();drop.classList.toggle('hidden');if(!drop.classList.contains('hidden')){render();if(selH){setTimeout(function(){var colH=drop.querySelector('.time-col');if(colH){var idx=parseInt(selH);var items=colH.children;if(items[idx])items[idx].scrollIntoView({block:'center'});}},50);}}};
+  document.addEventListener('click',function(){drop.classList.add('hidden');});
+  drop.addEventListener('click',function(e){e.stopPropagation();});
+  wrap.appendChild(btn); wrap.appendChild(drop);
+  wrap._getVal=function(){return btn.dataset.value;};
+  wrap._setVal=function(v){
+    btn.dataset.value=v||''; btn.textContent=v||placeholder||'--:--';
+    if(v&&v.includes(':')){var p=v.split(':');selH=p[0];selM=p[1];}
+  };
+  wrap._onChange=function(fn){btn._onChange=fn;};
+  return wrap;
+}
+// ── FIN PICKERS ───────────────────────────────────────────────────────────────
+
 // ── VISTA SEMANAL ─────────────────────────────────────────────────────────────
 var calSemanaRef = new Date();
 
@@ -5289,6 +5440,7 @@ function renderCalSemana(){
   var body = document.getElementById('page-body');
   body.innerHTML = '';
   body.classList.add('fullscreen');
+  body.appendChild(agendaNav('cal_semana'));
   var hoy = new Date(calSemanaRef);
   // Ir al lunes de la semana
   var dow = hoy.getDay(); var diff = dow===0?-6:1-dow;
@@ -5361,6 +5513,8 @@ function loadCalDia(){ calDiaRef = new Date(); renderCalDia(); }
 function renderCalDia(){
   var body = document.getElementById('page-body');
   body.innerHTML = '';
+  body.classList.remove('fullscreen');
+  body.appendChild(agendaNav('cal_dia'));
   var hoyStr = new Date().toISOString().slice(0,10);
   var diaStr = calDiaRef.toISOString().slice(0,10);
   var label = calDiaRef.toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
@@ -5439,6 +5593,7 @@ function renderCalMes(){
   var body = document.getElementById('page-body');
   body.innerHTML = '';
   body.classList.add('fullscreen');
+  body.appendChild(agendaNav('cal_mes'));
 
   var año = calMesActual.getFullYear();
   var mes = calMesActual.getMonth(); // 0-11
@@ -5609,35 +5764,48 @@ function loadCalendario(){
   });
   body.appendChild(tabs);
 
-  // Formulario nuevo evento
+  // Formulario nuevo evento con pickers custom
   var form=document.createElement('div');
   form.style.cssText='background:#f9f9f9;border:1px solid #e8e8e8;border-radius:10px;padding:16px;margin-bottom:20px';
-  form.innerHTML=
-    '<div style="font-size:11px;font-weight:900;letter-spacing:1px;color:#aaa;margin-bottom:12px">NUEVO EVENTO</div>'+
-    '<input id="ev-titulo" placeholder="Título *" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
-    '<select id="ev-cat" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
-    '<option value="personal">🟢 Personal</option>'+
-    '<option value="tarea">🔵 Tarea</option>'+
-    '<option value="reunion">⚫ Reunión</option>'+
-    '<option value="curso">🔴 Curso</option>'+
-    '</select>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'+
-    '<div><div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">FECHA INICIO *</div>'+
-    '<input id="ev-fecha" type="date" min="" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box"></div>'+
-    '<div><div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">FECHA FIN</div>'+
-    '<input id="ev-fecha-fin" type="date" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box"></div>'+
-    '</div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">'+
-    '<div><div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">HORA INICIO</div>'+
-    '<input id="ev-hora" type="time" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box"></div>'+
-    '<div><div style="font-size:11px;color:#aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px">HORA FIN</div>'+
-    '<input id="ev-hora-fin" type="time" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;box-sizing:border-box"></div>'+
-    '</div>'+
-    '<input id="ev-lugar" placeholder="Lugar (opcional)" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
-    '<textarea id="ev-desc" placeholder="Descripción (opcional)" rows="2" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;margin-bottom:8px;box-sizing:border-box"></textarea>'+
-    '<input id="ev-cliente" placeholder="Cliente (opcional)" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
-    '<label style="font-size:13px;color:#555;margin-bottom:12px;display:block"><input id="ev-todo" type="checkbox" style="margin-right:6px">Todo el día</label>'+
-    '<button onclick="crearEvento()" style="background:#cc0000;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:700;cursor:pointer">Añadir</button>';
+  var iStyle='width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box;display:block';
+  var lStyle='font-size:11px;color:#aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px';
+  var formLbl=document.createElement('div'); formLbl.style.cssText='font-size:11px;font-weight:900;letter-spacing:1px;color:#aaa;margin-bottom:12px'; formLbl.textContent='NUEVO EVENTO'; form.appendChild(formLbl);
+  var evTitulo=document.createElement('input'); evTitulo.placeholder='Título *'; evTitulo.style.cssText=iStyle; form.appendChild(evTitulo);
+  var evCat=document.createElement('select'); evCat.style.cssText=iStyle;
+  [{v:'personal',l:'🟢 Personal'},{v:'tarea',l:'🔵 Tarea'},{v:'reunion',l:'⚫ Reunión'},{v:'curso',l:'🔴 Curso'}].forEach(function(o){var opt=document.createElement('option');opt.value=o.v;opt.textContent=o.l;evCat.appendChild(opt);}); form.appendChild(evCat);
+  // Fechas
+  var gf=document.createElement('div'); gf.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px';
+  var df1=document.createElement('div'); var lf1=document.createElement('div'); lf1.style.cssText=lStyle; lf1.textContent='FECHA INICIO *'; df1.appendChild(lf1);
+  var dpInicio=createDatePicker('','Fecha inicio'); df1.appendChild(dpInicio); gf.appendChild(df1);
+  var df2=document.createElement('div'); var lf2=document.createElement('div'); lf2.style.cssText=lStyle; lf2.textContent='FECHA FIN'; df2.appendChild(lf2);
+  var dpFin=createDatePicker('','Fecha fin'); df2.appendChild(dpFin); gf.appendChild(df2);
+  form.appendChild(gf);
+  // Horas
+  var gh=document.createElement('div'); gh.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px';
+  var dh1=document.createElement('div'); var lh1=document.createElement('div'); lh1.style.cssText=lStyle; lh1.textContent='HORA INICIO'; dh1.appendChild(lh1);
+  var tpInicio=createTimePicker('--:--'); dh1.appendChild(tpInicio); gh.appendChild(dh1);
+  var dh2=document.createElement('div'); var lh2=document.createElement('div'); lh2.style.cssText=lStyle; lh2.textContent='HORA FIN'; dh2.appendChild(lh2);
+  var tpFin=createTimePicker('--:--'); dh2.appendChild(tpFin); gh.appendChild(dh2);
+  form.appendChild(gh);
+  var evLugar=document.createElement('input'); evLugar.placeholder='Lugar (opcional)'; evLugar.style.cssText=iStyle; form.appendChild(evLugar);
+  var evCliente=document.createElement('input'); evCliente.placeholder='Cliente (opcional)'; evCliente.style.cssText=iStyle; form.appendChild(evCliente);
+  var evDesc=document.createElement('textarea'); evDesc.placeholder='Descripción (opcional)'; evDesc.rows=2; evDesc.style.cssText=iStyle+'resize:vertical'; form.appendChild(evDesc);
+  var evTodo=document.createElement('input'); evTodo.type='checkbox';
+  var evTodoLbl=document.createElement('label'); evTodoLbl.style.cssText='font-size:13px;color:#555;margin-bottom:12px;display:flex;align-items:center;gap:6px'; evTodoLbl.appendChild(evTodo); evTodoLbl.appendChild(document.createTextNode('Todo el día')); form.appendChild(evTodoLbl);
+  var btnAdd=document.createElement('button'); btnAdd.textContent='Añadir'; btnAdd.style.cssText='background:#cc0000;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:700;cursor:pointer';
+  btnAdd.onclick=function(){
+    var titulo=evTitulo.value.trim(); var fecha=dpInicio._getVal();
+    if(!titulo||!fecha){alert('Título y fecha de inicio son obligatorios');return;}
+    fetch('/api/eventos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      titulo:titulo,fecha:fecha,fecha_fin:dpFin._getVal()||'',categoria:evCat.value||'personal',
+      hora:tpInicio._getVal()||'',hora_fin:tpFin._getVal()||'',lugar:evLugar.value.trim()||'',
+      cliente:evCliente.value.trim()||'',descripcion:evDesc.value.trim()||'',
+      es_tarea:evCat.value==='tarea'?1:0,estado:'pendiente',todo_el_dia:evTodo.checked?1:0
+    })}).then(r=>r.json()).then(function(d){
+      if(d.ok){evTitulo.value='';dpInicio._setVal('');dpFin._setVal('');evCat.value='personal';tpInicio._setVal('');tpFin._setVal('');evLugar.value='';evCliente.value='';evDesc.value='';evTodo.checked=false;if(window._recargarCalendario)window._recargarCalendario();}
+    });
+  };
+  form.appendChild(btnAdd);
   body.appendChild(form);
 
   // Contenedor lista
@@ -5670,6 +5838,7 @@ function loadCalendario(){
         var card=document.createElement('div');
         card.className='item-card';
         card.id='evento-'+ev.id;
+        card.dataset.ev=JSON.stringify(ev);
         var cat=ev.categoria||'personal';
         var catColor=CAT_COLORS[cat]||'#888';
         var catLabel=CAT_LABELS[cat]||cat;
@@ -5739,22 +5908,70 @@ function crearEvento(){
 }
 
 function editEvento(id, btn){
+  // Buscar datos del evento desde la card
   var card=document.getElementById('evento-'+id);
-  var titEl=card.querySelector('#evtit-'+id);
-  var descEl=card.querySelector('#evdesc-'+id);
-  var origTit=titEl?titEl.textContent:'';
-  var origDesc=descEl?descEl.textContent:'';
-  if(titEl) titEl.innerHTML='<input id="evedit-tit-'+id+'" value="'+escH(origTit)+'" style="width:100%;padding:6px;border:2px solid #cc0000;border-radius:6px;font-size:14px;font-weight:900;font-family:inherit">';
-  btn.textContent='Guardar';
-  btn.onclick=function(){
-    var nuevoTit=document.getElementById('evedit-tit-'+id).value.trim();
-    if(!nuevoTit){alert('El título no puede estar vacío');return;}
-    fetch('/api/eventos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({titulo:nuevoTit,fecha:'',hora:'',descripcion:origDesc,lugar:'',todo_el_dia:0,recurrencia:''})
-    }).then(r=>r.json()).then(function(d){
-      if(d.ok&&window._recargarCalendario) window._recargarCalendario();
+  var ev=null;
+  try{ ev=JSON.parse(card.dataset.ev||'null'); }catch(e){}
+  if(!ev){if(window._recargarCalendario)window._recargarCalendario();return;}
+
+  // Crear modal de edición
+  var overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
+  var modal=document.createElement('div');
+  modal.style.cssText='background:#fff;border-radius:12px;padding:20px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.2)';
+
+  var iS='width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box;display:block';
+  var lS='font-size:11px;color:#aaa;font-weight:700;letter-spacing:1px;margin-bottom:4px';
+
+  var hdr=document.createElement('div'); hdr.style.cssText='font-size:13px;font-weight:900;letter-spacing:1px;color:#aaa;margin-bottom:12px'; hdr.textContent='EDITAR EVENTO'; modal.appendChild(hdr);
+
+  var eTit=document.createElement('input'); eTit.value=ev.titulo||''; eTit.placeholder='Título *'; eTit.style.cssText=iS; modal.appendChild(eTit);
+
+  var eCat=document.createElement('select'); eCat.style.cssText=iS;
+  [{v:'personal',l:'🟢 Personal'},{v:'tarea',l:'🔵 Tarea'},{v:'reunion',l:'⚫ Reunión'},{v:'curso',l:'🔴 Curso'}].forEach(function(o){var opt=document.createElement('option');opt.value=o.v;opt.textContent=o.l;if(o.v===ev.categoria)opt.selected=true;eCat.appendChild(opt);}); modal.appendChild(eCat);
+
+  // Fechas
+  var gf=document.createElement('div'); gf.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px';
+  var df1=document.createElement('div'); var lf1=document.createElement('div'); lf1.style.cssText=lS; lf1.textContent='FECHA INICIO *'; df1.appendChild(lf1);
+  var dpI=createDatePicker('','Fecha inicio'); dpI._setVal(ev.fecha||''); df1.appendChild(dpI); gf.appendChild(df1);
+  var df2=document.createElement('div'); var lf2=document.createElement('div'); lf2.style.cssText=lS; lf2.textContent='FECHA FIN'; df2.appendChild(lf2);
+  var dpF=createDatePicker('','Fecha fin'); dpF._setVal(ev.fecha_fin||''); df2.appendChild(dpF); gf.appendChild(df2);
+  modal.appendChild(gf);
+
+  // Horas
+  var gh=document.createElement('div'); gh.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px';
+  var dh1=document.createElement('div'); var lh1=document.createElement('div'); lh1.style.cssText=lS; lh1.textContent='HORA INICIO'; dh1.appendChild(lh1);
+  var tpI=createTimePicker('--:--'); tpI._setVal(ev.hora||''); dh1.appendChild(tpI); gh.appendChild(dh1);
+  var dh2=document.createElement('div'); var lh2=document.createElement('div'); lh2.style.cssText=lS; lh2.textContent='HORA FIN'; dh2.appendChild(lh2);
+  var tpF=createTimePicker('--:--'); tpF._setVal(ev.hora_fin||''); dh2.appendChild(tpF); gh.appendChild(dh2);
+  modal.appendChild(gh);
+
+  var eLugar=document.createElement('input'); eLugar.value=ev.lugar||''; eLugar.placeholder='Lugar'; eLugar.style.cssText=iS; modal.appendChild(eLugar);
+  var eCli=document.createElement('input'); eCli.value=ev.cliente||''; eCli.placeholder='Cliente'; eCli.style.cssText=iS; modal.appendChild(eCli);
+  var eDesc=document.createElement('textarea'); eDesc.value=ev.descripcion||''; eDesc.placeholder='Descripción'; eDesc.rows=3; eDesc.style.cssText=iS+'resize:vertical'; modal.appendChild(eDesc);
+
+  var btns=document.createElement('div'); btns.style.cssText='display:flex;gap:8px;margin-top:8px';
+  var bGuard=document.createElement('button'); bGuard.textContent='Guardar'; bGuard.style.cssText='flex:1;background:#cc0000;color:#fff;border:none;border-radius:6px;padding:10px;font-size:13px;font-weight:700;cursor:pointer';
+  bGuard.onclick=function(){
+    var titulo=eTit.value.trim(); var fecha=dpI._getVal();
+    if(!titulo||!fecha){alert('Título y fecha son obligatorios');return;}
+    fetch('/api/eventos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      titulo:titulo,fecha:fecha,fecha_fin:dpF._getVal()||'',categoria:eCat.value,
+      hora:tpI._getVal()||'',hora_fin:tpF._getVal()||'',lugar:eLugar.value.trim(),
+      cliente:eCli.value.trim(),descripcion:eDesc.value.trim(),
+      todo_el_dia:ev.todo_el_dia||0,recurrencia:ev.recurrencia||'',
+      estado:ev.estado||'pendiente'
+    })}).then(r=>r.json()).then(function(d){
+      document.body.removeChild(overlay);
+      if(d.ok&&window._recargarCalendario)window._recargarCalendario();
     });
   };
+  var bCancel=document.createElement('button'); bCancel.textContent='Cancelar'; bCancel.style.cssText='flex:1;background:#f5f5f5;border:1px solid #ddd;border-radius:6px;padding:10px;font-size:13px;font-weight:700;cursor:pointer';
+  bCancel.onclick=function(){document.body.removeChild(overlay);};
+  btns.appendChild(bGuard); btns.appendChild(bCancel); modal.appendChild(btns);
+  overlay.appendChild(modal);
+  overlay.onclick=function(e){if(e.target===overlay)document.body.removeChild(overlay);};
+  document.body.appendChild(overlay);
 }
 
 function borrarEvento(id){
