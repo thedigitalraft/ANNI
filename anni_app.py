@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.88"
+ANNI_VERSION = "1.01.89"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5737,8 +5737,8 @@ function renderCalMes(){
 // ── FIN VISTA CALENDARIO MENSUAL ─────────────────────────────────────────────
 
 // Colores y labels de categorías
-var CAT_COLORS={'personal':'#2e7d32','tarea':'#1565c0','reunion':'#111111','curso':'#cc0000'};
-var CAT_LABELS={'personal':'Personal','tarea':'Tarea','reunion':'Reunión','curso':'Curso'};
+var CAT_COLORS={'personal':'#2e7d32','tarea':'#1565c0','reunion':'#111111','curso':'#cc0000','cumpleanos':'#e91e8c'};
+var CAT_LABELS={'personal':'Personal','tarea':'Tarea','reunion':'Reunión','curso':'Curso','cumpleanos':'Cumpleaños'};
 
 function catBadge(cat){
   var c=CAT_COLORS[cat]||'#888';
@@ -5790,7 +5790,7 @@ function loadCalendario(){
   var formLbl=document.createElement('div'); formLbl.style.cssText='font-size:11px;font-weight:900;letter-spacing:1px;color:#aaa;margin-bottom:12px'; formLbl.textContent='NUEVO EVENTO'; form.appendChild(formLbl);
   var evTitulo=document.createElement('input'); evTitulo.placeholder='Título *'; evTitulo.style.cssText=iStyle; form.appendChild(evTitulo);
   var evCat=document.createElement('select'); evCat.style.cssText=iStyle;
-  [{v:'personal',l:'🟢 Personal'},{v:'tarea',l:'🔵 Tarea'},{v:'reunion',l:'⚫ Reunión'},{v:'curso',l:'🔴 Curso'}].forEach(function(o){var opt=document.createElement('option');opt.value=o.v;opt.textContent=o.l;evCat.appendChild(opt);}); form.appendChild(evCat);
+  [{v:'personal',l:'🟢 Personal'},{v:'tarea',l:'🔵 Tarea'},{v:'reunion',l:'⚫ Reunión'},{v:'curso',l:'🔴 Curso'},{v:'cumpleanos',l:'🩷 Cumpleaños'}].forEach(function(o){var opt=document.createElement('option');opt.value=o.v;opt.textContent=o.l;evCat.appendChild(opt);}); form.appendChild(evCat);
   // Fechas
   var gf=document.createElement('div'); gf.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px';
   var df1=document.createElement('div'); var lf1=document.createElement('div'); lf1.style.cssText=lStyle; lf1.textContent='FECHA INICIO *'; df1.appendChild(lf1);
@@ -5959,7 +5959,7 @@ function editEvento(id, btn){
   var eTit=document.createElement('input'); eTit.value=ev.titulo||''; eTit.placeholder='Título *'; eTit.style.cssText=iS; modal.appendChild(eTit);
 
   var eCat=document.createElement('select'); eCat.style.cssText=iS;
-  [{v:'personal',l:'🟢 Personal'},{v:'tarea',l:'🔵 Tarea'},{v:'reunion',l:'⚫ Reunión'},{v:'curso',l:'🔴 Curso'}].forEach(function(o){var opt=document.createElement('option');opt.value=o.v;opt.textContent=o.l;if(o.v===ev.categoria)opt.selected=true;eCat.appendChild(opt);}); modal.appendChild(eCat);
+  [{v:'personal',l:'🟢 Personal'},{v:'tarea',l:'🔵 Tarea'},{v:'reunion',l:'⚫ Reunión'},{v:'curso',l:'🔴 Curso'},{v:'cumpleanos',l:'🩷 Cumpleaños'}].forEach(function(o){var opt=document.createElement('option');opt.value=o.v;opt.textContent=o.l;if(o.v===ev.categoria)opt.selected=true;eCat.appendChild(opt);}); modal.appendChild(eCat);
 
   // Fechas
   var gf=document.createElement('div'); gf.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px';
