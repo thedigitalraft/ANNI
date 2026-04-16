@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.80"
+ANNI_VERSION = "1.01.81"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -254,7 +254,11 @@ def init_db():
         FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
     )""")
     # Migraciones para BDs existentes
-    for col, defval in [('fecha_fin',"''"),('categoria',"'personal'"),('hora_fin',"''")]:
+    for col, defval in [
+        ('fecha_fin',"''"),('categoria',"'personal'"),('hora_fin',"''"),
+        ('estado',"'pendiente'"),('cliente',"''"),('veces_mencionada','0'),
+        ('es_tarea','0'),('ts_completada','NULL')
+    ]:
         try:
             c.execute(f"ALTER TABLE eventos ADD COLUMN {col} TEXT DEFAULT {defval}")
         except:
@@ -736,15 +740,17 @@ def get_tareas_para_anni(usuario_id, n=20):
     return rows
 
 def get_eventos_para_anni(usuario_id, dias_adelante=30):
-    """Eventos próximos para inyectar en el system prompt (30 días)."""
+    """Eventos y tareas próximos para inyectar en el system prompt (30 días)."""
     import datetime
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     hoy = datetime.date.today().isoformat()
     fin = (datetime.date.today() + datetime.timedelta(days=dias_adelante)).isoformat()
-    c.execute("""SELECT titulo, fecha, fecha_fin, hora, descripcion, lugar, todo_el_dia, categoria
+    c.execute("""SELECT titulo, fecha, fecha_fin, hora, descripcion, lugar, todo_el_dia,
+                        categoria, estado, cliente, es_tarea
                  FROM eventos WHERE usuario_id=? AND activo=1
                  AND fecha >= ? AND fecha <= ?
+                 AND (estado IS NULL OR estado != 'completada')
                  ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy, fin))
     rows = c.fetchall()
     conn.close()
@@ -1967,12 +1973,15 @@ def get_system_prompt(usuario_id, username, nombre='', query=None):
         hoy = dt_mod.date.today().isoformat()
         manana = (dt_mod.date.today() + dt_mod.timedelta(days=1)).isoformat()
         ev_lines = []
-        for titulo, fecha, fecha_fin, hora, desc, lugar, todo_el_dia, categoria in eventos_anni:
+        for row in eventos_anni:
+            titulo, fecha, fecha_fin, hora, desc, lugar, todo_el_dia, categoria, estado, cliente, es_tarea = row
             if fecha == hoy: prefijo = "HOY"
             elif fecha == manana: prefijo = "MAÑANA"
             else: prefijo = fecha
             cat = (categoria or 'personal').upper()
             linea = f"- [{prefijo}] [{cat}] {titulo}"
+            if es_tarea and estado: linea += f" [{estado.upper()}]"
+            if cliente: linea += f" ({cliente})"
             if fecha_fin and fecha_fin != fecha: linea += f" → {fecha_fin}"
             if hora and not todo_el_dia: linea += f" a las {hora}"
             if lugar: linea += f" — {lugar}"
@@ -2068,8 +2077,9 @@ TAREAS PENDIENTES:
 Revisa estas tareas cuando sea relevante. Si algo lleva muchos días sin moverse o está próximo a vencer, nómbralo con tu voz — no como recordatorio amable, sino con criterio real.
 {tareas_txt}
 
-CALENDARIO — PRÓXIMOS 7 DÍAS:
-Si hay eventos hoy o mañana, mencionálos de forma natural al arrancar la conversación si viene al caso. No leas la lista entera — solo lo más relevante e inmediato.
+AGENDA — PRÓXIMOS 30 DÍAS:
+Aquí tienes los eventos y tareas pendientes de Rafa. Las tareas tienen categoría TAREA y un estado (PENDIENTE, EN_PROGRESO). Los eventos son compromisos con fecha y hora.
+Si hay algo HOY o MAÑANA, mencionálo de forma natural si viene al caso. Si algo lleva tiempo pendiente o vence pronto, nómbralo con criterio — no como recordatorio amable, sino directo. No leas la lista entera.
 {eventos_txt}
 
 EL MUNDO DE ANNI — LO QUE HA ESTADO PENSANDO:
@@ -4361,6 +4371,37 @@ def api_mundo_estado():
 
 # ── CALENDARIO ────────────────────────────────────────────────────────────────
 
+@app.route('/api/migrar-tareas', methods=['POST'])
+@login_required
+def api_migrar_tareas():
+    """Migra tareas existentes a la tabla eventos."""
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    try:
+        c.execute("""SELECT id, titulo, cliente, due_date, descripcion, estado, ts_creacion
+                     FROM tareas WHERE usuario_id=? AND activo=1""", (usuario_id,))
+        tareas = c.fetchall()
+        migradas = 0
+        for t in tareas:
+            tid, titulo, cliente, due_date, desc, estado, ts = t
+            fecha = due_date or datetime.date.today().isoformat()
+            # Verificar si ya fue migrada
+            c.execute("SELECT id FROM eventos WHERE usuario_id=? AND titulo=? AND es_tarea=1", (usuario_id, titulo))
+            if c.fetchone():
+                continue
+            conn.execute("""INSERT INTO eventos (usuario_id, titulo, fecha, categoria, descripcion,
+                             cliente, estado, es_tarea, ts_creacion, activo)
+                             VALUES (?,?,?,'tarea',?,?,?,1,?,1)""",
+                (usuario_id, titulo, fecha, desc or '', cliente or '', estado or 'pendiente', ts or 0))
+            migradas += 1
+        conn.commit()
+        return jsonify({'ok': True, 'migradas': migradas})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+    finally:
+        conn.close()
+
 @app.route('/api/eventos', methods=['GET'])
 @login_required
 def api_get_eventos():
@@ -4371,18 +4412,21 @@ def api_get_eventos():
     import datetime as dt_mod
     if vista == 'pasados':
         hoy = dt_mod.date.today().isoformat()
-        c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria, todo_el_dia, recurrencia
+        c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria,
+                            todo_el_dia, recurrencia, estado, cliente, es_tarea
                      FROM eventos WHERE usuario_id=? AND activo=1 AND fecha < ?
                      ORDER BY fecha DESC, hora DESC LIMIT 50""", (usuario_id, hoy))
     else:
         hoy = dt_mod.date.today().isoformat()
-        c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria, todo_el_dia, recurrencia
+        c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria,
+                            todo_el_dia, recurrencia, estado, cliente, es_tarea
                      FROM eventos WHERE usuario_id=? AND activo=1 AND fecha >= ?
                      ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy))
     rows = c.fetchall()
     conn.close()
-    eventos = [{'id':r[0],'titulo':r[1],'fecha':r[2],'fecha_fin':r[3],'hora':r[4],'hora_fin':r[5],'descripcion':r[6],
-                'lugar':r[7],'categoria':r[8],'todo_el_dia':r[9],'recurrencia':r[10]} for r in rows]
+    eventos = [{'id':r[0],'titulo':r[1],'fecha':r[2],'fecha_fin':r[3],'hora':r[4],'hora_fin':r[5],
+                'descripcion':r[6],'lugar':r[7],'categoria':r[8],'todo_el_dia':r[9],
+                'recurrencia':r[10],'estado':r[11],'cliente':r[12],'es_tarea':r[13]} for r in rows]
     return jsonify({'eventos': eventos})
 
 @app.route('/api/eventos', methods=['POST'])
@@ -4395,12 +4439,14 @@ def api_crear_evento():
     if not titulo or not fecha:
         return jsonify({'ok': False, 'error': 'Título y fecha son obligatorios'})
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.execute("""INSERT INTO eventos (usuario_id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria, todo_el_dia, recurrencia)
-                             VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+    cursor = conn.execute("""INSERT INTO eventos (usuario_id, titulo, fecha, fecha_fin, hora, hora_fin,
+                             descripcion, lugar, categoria, cliente, es_tarea, estado, todo_el_dia, recurrencia)
+                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (usuario_id, titulo, fecha, data.get('fecha_fin','').strip(),
          data.get('hora','').strip(), data.get('hora_fin','').strip(),
-         data.get('descripcion','').strip(),
-         data.get('lugar','').strip(), data.get('categoria','personal').strip(),
+         data.get('descripcion','').strip(), data.get('lugar','').strip(),
+         data.get('categoria','personal').strip(), data.get('cliente','').strip(),
+         int(data.get('es_tarea', 0)), data.get('estado','pendiente').strip(),
          int(data.get('todo_el_dia', 0)), data.get('recurrencia','').strip()))
     conn.commit()
     conn.close()
@@ -4795,6 +4841,7 @@ button#s:disabled{background:#ddd;cursor:not-allowed}
 .page-header h1{font-size:22px;font-weight:900;color:#111;flex:1}
 .page-close{font-size:14px;font-weight:700;color:#cc0000;cursor:pointer;padding:8px 14px;border:2px solid #ffcccc;border-radius:8px;background:none;flex-shrink:0;order:-1}
 .page-body{flex:1;overflow-y:auto;padding:20px;max-width:760px;width:100%;margin:0 auto}
+.page-body.fullscreen{max-width:100%!important;padding:12px!important}
 .item-card{border:1px solid #e8e8e8;border-radius:12px;padding:16px;margin-bottom:14px}
 .item-meta{font-size:12px;color:#999;margin-bottom:6px}
 .item-content{font-size:15px;line-height:1.6;color:#111}
@@ -4823,8 +4870,8 @@ textarea{font-size:16px}}
 
 <!-- BARRA NAV -->
 <div id='nav'>
-  <button class='nav-btn' onclick='showPage("tareas")'>TAREAS</button>
-  <button class='nav-btn' onclick='showPage("calendario")'>CALENDARIO</button>
+  <button class='nav-btn' 
+  <button class='nav-btn' onclick='showPage("calendario")'>AGENDA</button>
   <button class='nav-btn' onclick='showPage("chats")'>CHATS</button>
   <button class='nav-btn' onclick='showPage("diario")'>DIARIO</button>
   <button class='nav-btn' onclick='showPage("memoria_anni")'>MEMORIA ANNI</button>
@@ -5138,7 +5185,7 @@ document.getElementById('modal-bd').classList.remove('open');})
 
 function showPage(sec){
 currentSection=sec;currentPage=1;
-var titles={universo:'Universo ANNI',mundo:'El mundo de ANNI',tareas:'Tareas',calendario:'Calendario',cal_mes:'Calendario mensual',memoria_anni:'Memoria ANNI',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
+var titles={universo:'Universo ANNI',mundo:'El mundo de ANNI',calendario:'Agenda',cal_mes:'Vista mensual',memoria_anni:'Memoria ANNI',chats:'Conversaciones',memoria:'Memoria viva',diario:'Diario'};
 document.getElementById('page-title').textContent=titles[sec]||sec;
 document.getElementById('page').classList.add('open');
 loadPage(sec,1);}
@@ -5150,6 +5197,8 @@ else if(sec==='mundo')loadMundo(page);
 else if(sec==='tareas')loadTareas(page);
 else if(sec==='calendario')loadCalendario();
 else if(sec==='cal_mes')loadCalMes();
+else if(sec==='cal_semana')loadCalSemana();
+else if(sec==='cal_dia')loadCalDia();
 else if(sec==='memoria_anni')loadMemoriaAnni();
 else if(sec==='chats')loadChats(page);
 else if(sec==='diario')loadDiario(page);
@@ -5230,6 +5279,154 @@ function delTema(id, btn){
 // ── TAREAS ────────────────────────────────────────────────────────────────────
 var tareasVista = 'activas'; // 'activas' o 'completada'
 
+
+// ── VISTA SEMANAL ─────────────────────────────────────────────────────────────
+var calSemanaRef = new Date();
+
+function loadCalSemana(){ calSemanaRef = new Date(); renderCalSemana(); }
+
+function renderCalSemana(){
+  var body = document.getElementById('page-body');
+  body.innerHTML = '';
+  body.classList.add('fullscreen');
+  var hoy = new Date(calSemanaRef);
+  // Ir al lunes de la semana
+  var dow = hoy.getDay(); var diff = dow===0?-6:1-dow;
+  hoy.setDate(hoy.getDate()+diff);
+  var lunes = new Date(hoy);
+  var dias = []; var labels = ['Lu','Ma','Mi','Ju','Vi','Sá','Do'];
+  for(var i=0;i<7;i++){
+    var d=new Date(lunes); d.setDate(lunes.getDate()+i);
+    dias.push(d);
+  }
+  var hoyStr = new Date().toISOString().slice(0,10);
+
+  // Nav
+  var nav=document.createElement('div');
+  nav.style.cssText='display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px';
+  var bp=document.createElement('button'); bp.className='nav-btn'; bp.textContent='←';
+  bp.onclick=function(){calSemanaRef.setDate(calSemanaRef.getDate()-7);renderCalSemana();};
+  var bn=document.createElement('button'); bn.className='nav-btn'; bn.textContent='→';
+  bn.onclick=function(){calSemanaRef.setDate(calSemanaRef.getDate()+7);renderCalSemana();};
+  var tit=document.createElement('div');
+  tit.style.cssText='font-size:15px;font-weight:900';
+  var f1=lunes.toLocaleDateString('es-ES',{day:'numeric',month:'short'});
+  var f2=new Date(lunes.getTime()+6*86400000).toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'});
+  tit.textContent=f1+' – '+f2;
+  nav.appendChild(bp); nav.appendChild(tit); nav.appendChild(bn);
+  body.appendChild(nav);
+
+  Promise.all([
+    fetch('/api/eventos?vista=proximos').then(r=>r.json()),
+    fetch('/api/eventos?vista=pasados').then(r=>r.json())
+  ]).then(function(res){
+    var todos=(res[0].eventos||[]).concat(res[1].eventos||[]);
+    var evPorDia={};
+    todos.forEach(function(ev){
+      var fi=ev.fecha; var ff=(ev.fecha_fin&&ev.fecha_fin>fi)?ev.fecha_fin:fi;
+      var cur=new Date(fi+'T12:00:00'); var fin2=new Date(ff+'T12:00:00');
+      while(cur<=fin2){ var ds=cur.toISOString().slice(0,10); if(!evPorDia[ds])evPorDia[ds]=[];evPorDia[ds].push(ev); cur.setDate(cur.getDate()+1); }
+    });
+
+    var grid=document.createElement('div');
+    grid.style.cssText='display:grid;grid-template-columns:repeat(7,1fr);gap:3px;width:100%';
+    dias.forEach(function(d,i){
+      var ds=d.toISOString().slice(0,10);
+      var col=document.createElement('div');
+      var esH=ds===hoyStr;
+      col.style.cssText='min-height:120px;border:1px solid '+(esH?'#cc0000':'#e8e8e8')+';border-radius:6px;padding:6px;background:'+(esH?'#fff8f8':'#fff');
+      var hdr=document.createElement('div');
+      hdr.style.cssText='font-size:11px;font-weight:900;color:'+(esH?'#cc0000':'#aaa')+';margin-bottom:4px;text-align:center';
+      hdr.textContent=labels[i]+' '+d.getDate();
+      col.appendChild(hdr);
+      (evPorDia[ds]||[]).forEach(function(ev){
+        var cat=ev.categoria||'personal';
+        var color=CAT_COLORS[cat]||'#888';
+        var pill=document.createElement('div');
+        pill.style.cssText='background:'+color+';color:#fff;font-size:9px;font-weight:700;border-radius:3px;padding:2px 4px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+        pill.textContent=(ev.hora?ev.hora+' ':'')+ev.titulo;
+        col.appendChild(pill);
+      });
+      grid.appendChild(col);
+    });
+    body.appendChild(grid);
+  });
+}
+
+// ── VISTA DIARIA ──────────────────────────────────────────────────────────────
+var calDiaRef = new Date();
+
+function loadCalDia(){ calDiaRef = new Date(); renderCalDia(); }
+
+function renderCalDia(){
+  var body = document.getElementById('page-body');
+  body.innerHTML = '';
+  var hoyStr = new Date().toISOString().slice(0,10);
+  var diaStr = calDiaRef.toISOString().slice(0,10);
+  var label = calDiaRef.toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+
+  var nav=document.createElement('div');
+  nav.style.cssText='display:flex;align-items:center;justify-content:space-between;margin-bottom:16px';
+  var bp=document.createElement('button'); bp.className='nav-btn'; bp.textContent='←';
+  bp.onclick=function(){calDiaRef.setDate(calDiaRef.getDate()-1);renderCalDia();};
+  var bn=document.createElement('button'); bn.className='nav-btn'; bn.textContent='→';
+  bn.onclick=function(){calDiaRef.setDate(calDiaRef.getDate()+1);renderCalDia();};
+  var tit=document.createElement('div');
+  tit.style.cssText='font-size:15px;font-weight:900;color:'+(diaStr===hoyStr?'#cc0000':'#111');
+  tit.textContent=label.charAt(0).toUpperCase()+label.slice(1);
+  nav.appendChild(bp); nav.appendChild(tit); nav.appendChild(bn);
+  body.appendChild(nav);
+
+  Promise.all([
+    fetch('/api/eventos?vista=proximos').then(r=>r.json()),
+    fetch('/api/eventos?vista=pasados').then(r=>r.json())
+  ]).then(function(res){
+    var todos=(res[0].eventos||[]).concat(res[1].eventos||[]);
+    var evsDia=todos.filter(function(ev){
+      var fi=ev.fecha; var ff=(ev.fecha_fin&&ev.fecha_fin>fi)?ev.fecha_fin:fi;
+      return diaStr>=fi&&diaStr<=ff;
+    });
+    evsDia.sort(function(a,b){return (a.hora||'').localeCompare(b.hora||'');});
+
+    if(!evsDia.length){
+      var empty=document.createElement('p');
+      empty.style.cssText='color:#bbb;font-style:italic;font-size:14px;padding:16px 0';
+      empty.textContent='Sin eventos para este día.';
+      body.appendChild(empty); return;
+    }
+
+    evsDia.forEach(function(ev){
+      var cat=ev.categoria||'personal';
+      var color=CAT_COLORS[cat]||'#888';
+      var card=document.createElement('div');
+      card.style.cssText='border-left:4px solid '+color+';background:#fff;border-radius:6px;padding:12px 16px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.06)';
+      var hora_txt=ev.hora?(ev.hora+(ev.hora_fin?' → '+ev.hora_fin:''))+' · ':'';
+      var cli_txt=ev.cliente?' · '+ev.cliente:'';
+      var meta=document.createElement('div');
+      meta.style.cssText='font-size:11px;color:'+color+';font-weight:700;margin-bottom:4px';
+      meta.textContent=(CAT_LABELS[cat]||cat).toUpperCase()+(ev.es_tarea&&ev.estado?' · '+ev.estado.toUpperCase():'')+cli_txt;
+      var tit2=document.createElement('div');
+      tit2.style.cssText='font-size:16px;font-weight:900;color:#111;margin-bottom:4px';
+      tit2.textContent=hora_txt+ev.titulo;
+      card.appendChild(meta); card.appendChild(tit2);
+      if(ev.lugar){var l=document.createElement('div');l.style.cssText='font-size:13px;color:#888';l.textContent='📍 '+ev.lugar;card.appendChild(l);}
+      if(ev.descripcion){var d=document.createElement('div');d.style.cssText='font-size:13px;color:#555;margin-top:4px';d.textContent=ev.descripcion;card.appendChild(d);}
+      // Botón completar para tareas
+      if(ev.es_tarea&&ev.estado!=='completada'){
+        var btnC=document.createElement('button');
+        btnC.style.cssText='margin-top:8px;background:#e8f5e9;border:1px solid #81c784;color:#2e7d32;border-radius:4px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer';
+        btnC.textContent='✓ Completar';
+        btnC.onclick=(function(eid){return function(){
+          fetch('/api/eventos/'+eid,{method:'PUT',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({estado:'completada'})}).then(function(){renderCalDia();});
+        };})(ev.id);
+        card.appendChild(btnC);
+      }
+      body.appendChild(card);
+    });
+  });
+}
+
 // ── VISTA CALENDARIO MENSUAL ────────────────────────────────────────────────
 var calMesActual = new Date();
 
@@ -5241,6 +5438,7 @@ function loadCalMes(){
 function renderCalMes(){
   var body = document.getElementById('page-body');
   body.innerHTML = '';
+  body.classList.add('fullscreen');
 
   var año = calMesActual.getFullYear();
   var mes = calMesActual.getMonth(); // 0-11
@@ -5378,30 +5576,37 @@ function catBadge(cat){
 function loadCalendario(){
   var body=document.getElementById('page-body');
   body.innerHTML='';
+  body.classList.remove('fullscreen');
   var vistaActual='proximos';
+  // Migrar tareas al entrar por primera vez
+  fetch('/api/migrar-tareas',{method:'POST'}).catch(function(){});
 
-  // Tabs — Próximos, Pasados, Vista Mes
+  // Tabs
   var tabs=document.createElement('div');
-  tabs.style.cssText='display:flex;gap:8px;margin-bottom:20px';
-  ['proximos','pasados'].forEach(function(v){
+  tabs.style.cssText='display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap';
+  var tabDefs=[
+    {id:'proximos',label:'Próximos'},
+    {id:'pasados',label:'Pasados'},
+    {id:'_mes',label:'Vista mes'},
+    {id:'_semana',label:'Vista semana'},
+    {id:'_dia',label:'Vista día'}
+  ];
+  tabDefs.forEach(function(td){
     var btn=document.createElement('button');
-    btn.className='nav-btn'+(vistaActual===v?' active':'');
-    btn.style.cssText=vistaActual===v?'background:#cc0000;color:#fff;border-color:#cc0000':'';
-    btn.textContent=v==='proximos'?'Próximos':'Pasados';
+    btn.className='nav-btn'+(td.id==='proximos'?' active':'');
+    if(td.id==='proximos') btn.style.cssText='background:#cc0000;color:#fff;border-color:#cc0000';
+    btn.textContent=td.label;
+    btn.dataset.tid=td.id;
     btn.onclick=function(){
-      vistaActual=v;
       tabs.querySelectorAll('button').forEach(function(b){b.style.cssText='';b.className='nav-btn';});
       this.style.cssText='background:#cc0000;color:#fff;border-color:#cc0000';
-      renderEventos(v);
+      if(td.id==='_mes'){showPage('cal_mes');return;}
+      if(td.id==='_semana'){showPage('cal_semana');return;}
+      if(td.id==='_dia'){showPage('cal_dia');return;}
+      vistaActual=td.id; renderEventos(td.id);
     };
     tabs.appendChild(btn);
   });
-  // Botón Vista Mes
-  var btnMes=document.createElement('button');
-  btnMes.className='nav-btn';
-  btnMes.textContent='Vista mes';
-  btnMes.onclick=function(){showPage('cal_mes');};
-  tabs.appendChild(btnMes);
   body.appendChild(tabs);
 
   // Formulario nuevo evento
@@ -5430,8 +5635,9 @@ function loadCalendario(){
     '</div>'+
     '<input id="ev-lugar" placeholder="Lugar (opcional)" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
     '<textarea id="ev-desc" placeholder="Descripción (opcional)" rows="2" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;margin-bottom:8px;box-sizing:border-box"></textarea>'+
+    '<input id="ev-cliente" placeholder="Cliente (opcional)" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;margin-bottom:8px;box-sizing:border-box">'+
     '<label style="font-size:13px;color:#555;margin-bottom:12px;display:block"><input id="ev-todo" type="checkbox" style="margin-right:6px">Todo el día</label>'+
-    '<button onclick="crearEvento()" style="background:#cc0000;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:700;cursor:pointer">Añadir evento</button>';
+    '<button onclick="crearEvento()" style="background:#cc0000;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:13px;font-weight:700;cursor:pointer">Añadir</button>';
   body.appendChild(form);
 
   // Contenedor lista
@@ -5509,7 +5715,10 @@ function crearEvento(){
       hora:document.getElementById('ev-hora').value||'',
       hora_fin:document.getElementById('ev-hora-fin').value||'',
       lugar:document.getElementById('ev-lugar').value.trim()||'',
+      cliente:document.getElementById('ev-cliente').value.trim()||'',
       descripcion:document.getElementById('ev-desc').value.trim()||'',
+      es_tarea:document.getElementById('ev-cat').value==='tarea'?1:0,
+      estado:'pendiente',
       todo_el_dia:document.getElementById('ev-todo').checked?1:0
     })
   }).then(r=>r.json()).then(function(d){
@@ -5522,6 +5731,7 @@ function crearEvento(){
       document.getElementById('ev-hora-fin').value='';
       document.getElementById('ev-lugar').value='';
       document.getElementById('ev-desc').value='';
+      document.getElementById('ev-cliente').value='';
       document.getElementById('ev-todo').checked=false;
       if(window._recargarCalendario) window._recargarCalendario();
     }
