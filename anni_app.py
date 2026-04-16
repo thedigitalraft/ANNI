@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.83"
+ANNI_VERSION = "1.01.84"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -257,7 +257,7 @@ def init_db():
     for col, defval in [
         ('fecha_fin',"''"),('categoria',"'personal'"),('hora_fin',"''"),
         ('estado',"'pendiente'"),('cliente',"''"),('veces_mencionada','0'),
-        ('es_tarea','0'),('ts_completada','NULL')
+        ('es_tarea','0'),('ts_completada','NULL'),('cerrado','0')
     ]:
         try:
             c.execute(f"ALTER TABLE eventos ADD COLUMN {col} TEXT DEFAULT {defval}")
@@ -4414,13 +4414,16 @@ def api_get_eventos():
         hoy = dt_mod.date.today().isoformat()
         c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria,
                             todo_el_dia, recurrencia, estado, cliente, es_tarea
-                     FROM eventos WHERE usuario_id=? AND activo=1 AND fecha < ?
+                     FROM eventos WHERE usuario_id=? AND activo=1
+                     AND ((COALESCE(NULLIF(fecha_fin,''), fecha)) < ? OR cerrado = 1)
                      ORDER BY fecha DESC, hora DESC LIMIT 50""", (usuario_id, hoy))
     else:
         hoy = dt_mod.date.today().isoformat()
         c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria,
                             todo_el_dia, recurrencia, estado, cliente, es_tarea
-                     FROM eventos WHERE usuario_id=? AND activo=1 AND fecha >= ?
+                     FROM eventos WHERE usuario_id=? AND activo=1
+                     AND (COALESCE(NULLIF(fecha_fin,''), fecha)) >= ?
+                     AND (cerrado IS NULL OR cerrado = 0)
                      ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy))
     rows = c.fetchall()
     conn.close()
@@ -4466,6 +4469,16 @@ def api_editar_evento(eid):
          data.get('descripcion','').strip(), data.get('lugar','').strip(),
          data.get('categoria','personal').strip(), int(data.get('todo_el_dia',0)),
          data.get('recurrencia','').strip(), eid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/eventos/<int:eid>/cerrar', methods=['POST'])
+@login_required
+def api_cerrar_evento(eid):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE eventos SET cerrado=1 WHERE id=? AND usuario_id=?", (eid, usuario_id))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -5859,6 +5872,7 @@ function loadCalendario(){
           (ev.descripcion?'<div id="evdesc-'+ev.id+'" style="font-size:13px;color:#555;line-height:1.5">'+escH(ev.descripcion)+'</div>':'')+
           '<div class="item-actions">'+
           '<button class="btn-edit" onclick="editEvento('+ev.id+',this)">Editar</button>'+
+          '<button class="btn-edit" style="background:#e8f5e9;border-color:#81c784;color:#2e7d32" onclick="cerrarEvento('+ev.id+')">✓ Cerrar</button>'+
           '<button class="btn-del" onclick="borrarEvento('+ev.id+')">Borrar</button>'+
           '</div>';
         lista.appendChild(card);
@@ -5972,6 +5986,12 @@ function editEvento(id, btn){
   overlay.appendChild(modal);
   overlay.onclick=function(e){if(e.target===overlay)document.body.removeChild(overlay);};
   document.body.appendChild(overlay);
+}
+
+function cerrarEvento(id){
+  fetch('/api/eventos/'+id+'/cerrar',{method:'POST'}).then(r=>r.json()).then(function(d){
+    if(d.ok&&window._recargarCalendario) window._recargarCalendario();
+  });
 }
 
 function borrarEvento(id){
