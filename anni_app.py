@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.89"
+ANNI_VERSION = "1.01.90"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5737,7 +5737,7 @@ function renderCalMes(){
 // ── FIN VISTA CALENDARIO MENSUAL ─────────────────────────────────────────────
 
 // Colores y labels de categorías
-var CAT_COLORS={'personal':'#2e7d32','tarea':'#1565c0','reunion':'#111111','curso':'#cc0000','cumpleanos':'#e91e8c'};
+var CAT_COLORS={'personal':'#2e7d32','tarea':'#1565c0','reunion':'#111111','curso':'#f59e0b','cumpleanos':'#e91e8c'};
 var CAT_LABELS={'personal':'Personal','tarea':'Tarea','reunion':'Reunión','curso':'Curso','cumpleanos':'Cumpleaños'};
 
 function catBadge(cat){
