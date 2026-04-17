@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.26"
+ANNI_VERSION = "1.02.28"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5848,7 +5848,8 @@ function renderCalSemana(){
     var todos=res.eventos||[];
     var evPorDia={};
     todos.forEach(function(ev){
-      if(ev.es_tarea) return; // tareas solo en vista Lista
+      if(ev.categoria==='tarea') return; // tareas solo en vista Lista
+      if(!ev.fecha) return; // eventos sin fecha no se pintan
       var fi=ev.fecha; var ff=(ev.fecha_fin&&ev.fecha_fin>fi)?ev.fecha_fin:fi;
       var cur=new Date(fi+'T12:00:00'); var fin2=new Date(ff+'T12:00:00');
       while(cur<=fin2){ var ds=cur.getFullYear()+'-'+String(cur.getMonth()+1).padStart(2,'0')+'-'+String(cur.getDate()).padStart(2,'0'); if(!evPorDia[ds])evPorDia[ds]=[];evPorDia[ds].push(ev); cur.setDate(cur.getDate()+1); }
@@ -6042,26 +6043,23 @@ function renderCalMes(){
       celda.appendChild(numDia);
 
       var evsDia = eventosPorDia[fechaStr] || [];
-      evsDia.slice(0,2).forEach(function(ev){
+      var pillsWrap = document.createElement('div');
+      pillsWrap.style.cssText = 'overflow-y:auto;max-height:80px;display:flex;flex-direction:column;gap:2px';
+      evsDia.forEach(function(ev){
         var cat = ev.categoria || 'personal';
         var color = CAT_COLORS[cat] || '#888';
         var pill = document.createElement('div');
         pill.style.cssText = 'background:'+color+';color:#fff;font-size:12px;font-weight:700;'+
-          'border-radius:4px;padding:3px 6px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer';
+          'border-radius:4px;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;flex-shrink:0';
         pill.textContent = (ev.hora?ev.hora+' ':'')+ev.titulo;
         pill.title = ev.titulo+(ev.hora?' · '+ev.hora:'')+(ev.lugar?' · '+ev.lugar:'');
         pill.onclick=(function(evento){return function(e){
           e.stopPropagation();
           mostrarDetalleEvento(evento);
         };})(ev);
-        celda.appendChild(pill);
+        pillsWrap.appendChild(pill);
       });
-      if(evsDia.length > 2){
-        var mas = document.createElement('div');
-        mas.style.cssText = 'font-size:9px;color:#aaa';
-        mas.textContent = '+' + (evsDia.length-2);
-        celda.appendChild(mas);
-      }
+      celda.appendChild(pillsWrap);
       grid.appendChild(celda);
     }
   }
