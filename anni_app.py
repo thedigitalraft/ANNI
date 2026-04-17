@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.09"
+ANNI_VERSION = "1.02.10"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5552,6 +5552,12 @@ seccion('Temas abiertos', d.temas_abiertos, function(t){
 });
 }
 
+function delObservacionPage(id){
+  if(!confirm('¿Borrar esta observación?')) return;
+  fetch('/api/observaciones/'+id,{method:'DELETE'}).then(r=>r.json()).then(function(d){
+    if(d.ok){var card=document.getElementById('obs-card-'+id);if(card)card.remove();}
+  });
+}
 function delObservacion(id, btn){
   if(!confirm('¿Borrar esta observación?')) return;
   fetch('/api/observacion/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{
@@ -7120,7 +7126,8 @@ function loadMemoriaAnni(){
     {id:'cruda',label:'Memoria cruda',desc:'Mensajes y conversaciones — lo que pasó'},
     {id:'interpretada',label:'Memoria interpretada',desc:'Observaciones, personas, temas — lo que ANNI cree que pasó'},
     {id:'validada',label:'Memoria validada',desc:'Anclas cognitivas confirmadas — lo que es verdad operativa'},
-    {id:'extendida',label:'Memoria extendida',desc:'Biografías y contexto profundo por persona o tema'}
+    {id:'extendida',label:'Memoria extendida',desc:'Biografías y contexto profundo por persona o tema'},
+    {id:'observaciones',label:'Observaciones ANNI',desc:'Patrones detectados automáticamente — revisa y limpia'}
   ];
   var activeTab='validada';
 
@@ -7369,6 +7376,63 @@ function loadMemoriaAnni(){
 
       }).catch(function(err){
         content.innerHTML='<p style="color:#999;padding:20px">Error cargando memoria interpretada: '+(err?err.toString():'')+'. Intenta recargar la página.</p>';
+      });
+
+    } else if(tabId==='observaciones'){
+      fetch('/api/observaciones').then(r=>r.json()).then(function(d){
+        content.innerHTML='';
+        var obs=d.observaciones||[];
+        if(!obs.length){
+          content.innerHTML='<p style="color:#999;padding:20px;font-size:13px">Sin observaciones activas.</p>';
+          return;
+        }
+        // Contador
+        var header=document.createElement('div');
+        header.style.cssText='font-size:11px;color:#aaa;font-family:monospace;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #f0f0f0';
+        header.textContent=obs.length+' observaciones activas';
+        content.appendChild(header);
+
+        // Agrupar por tipo
+        var tipos={};
+        obs.forEach(function(o){
+          var t=o.tipo||'otro';
+          if(!tipos[t]) tipos[t]=[];
+          tipos[t].push(o);
+        });
+
+        Object.keys(tipos).sort().forEach(function(tipo){
+          var grp=document.createElement('div');
+          grp.style.cssText='margin-bottom:20px';
+          var grpHeader=document.createElement('div');
+          grpHeader.style.cssText='font-size:11px;font-weight:900;letter-spacing:2px;color:#cc0000;text-transform:uppercase;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #f5f5f5';
+          grpHeader.textContent=tipo+' ('+tipos[tipo].length+')';
+          grp.appendChild(grpHeader);
+
+          tipos[tipo].forEach(function(o){
+            var card=document.createElement('div');
+            card.className='item-card';
+            card.id='obs-card-'+o.id;
+            card.innerHTML=
+              '<div id="obs-txt-'+o.id+'" style="font-size:14px;color:#222;line-height:1.5;margin-bottom:4px">'+escH(o.contenido)+'</div>'+
+              '<textarea id="obs-edit-'+o.id+'" style="display:none;width:100%;font-size:13px;padding:6px;border:1px solid #ddd;border-radius:4px;font-family:monospace;resize:vertical;min-height:56px;box-sizing:border-box">'+escH(o.contenido)+'</textarea>'+
+              '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+
+              '<select id="obs-tipo-'+o.id+'" style="font-size:11px;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:2px 6px;font-family:monospace">'+
+              ['patron','emocion','energia','evitacion','velocidad','tono','frustracion'].map(function(t){
+                return '<option value="'+t+'"'+(o.tipo===t?' selected':'')+'>'+t+'</option>';
+              }).join('')+
+              '</select>'+
+              '<span style="font-size:11px;color:#ccc">peso: '+o.peso+'</span>'+
+              '</div>'+
+              '<div class="item-actions" id="obs-actions-'+o.id+'">'+
+              '<button class="btn-edit" onclick="editObservacion('+o.id+')">Editar</button>'+
+              '<button class="btn-del" onclick="delObservacionPage('+o.id+')">Borrar</button>'+
+              '</div>';
+            grp.appendChild(card);
+          });
+          content.appendChild(grp);
+        });
+      }).catch(function(){
+        content.innerHTML='<p style="color:#999;padding:20px">Error cargando observaciones.</p>';
       });
     }
   }
