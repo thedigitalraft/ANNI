@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.99"
+ANNI_VERSION = "1.02.00"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2401,12 +2401,11 @@ def api_chat():
         try:
             flux_resp = together.images.generate(
                 prompt=msg_completo,
-                model='black-forest-labs/FLUX.1-schnell-Free',
-                steps=4, n=1,
-                response_format='b64_json'
+                model='black-forest-labs/FLUX.1-schnell',
+                width=1024, height=1024, steps=4, n=1,
             )
-            img_b64 = flux_resp.data[0].b64_json
-            img_msg = f'[FLUX_IMAGE]{img_b64}[/FLUX_IMAGE]'
+            img_url = flux_resp.data[0].url
+            img_msg = f'[FLUX_URL]{img_url}[/FLUX_URL]'
             save_mensaje(usuario_id, 'assistant', img_msg, 'flux')
             return jsonify({'response': img_msg, 'conv_id': conv_id, 'modelo': 'flux'})
         except Exception as e:
@@ -5181,24 +5180,34 @@ reader.onload=function(e){archivoData={tipo:'texto',data:e.target.result,nombre:
 reader.readAsText(f);}}
 
 function renderRespuesta(resp, ts){
-  // Detectar imagen Flux
-  if(resp && resp.indexOf('[FLUX_IMAGE]')===0){
-    var b64=resp.replace('[FLUX_IMAGE]','').replace('[/FLUX_IMAGE]','');
+  // Detectar imagen Flux por URL
+  if(resp && resp.indexOf('[FLUX_URL]')===0){
+    var url=resp.replace('[FLUX_URL]','').replace('[/FLUX_URL]','');
     var d=document.createElement('div');d.className='msg-anni';
     var lbl=document.createElement('div');lbl.className='lbl';
     lbl.textContent='ANNI · 🎨 Imagen generada';
     var wrap=document.createElement('div');wrap.className='img-flux-wrap';
     var img=document.createElement('img');
-    img.src='data:image/webp;base64,'+b64;
-    img.alt='Imagen generada';
+    img.src=url; img.alt='Imagen generada';
     var dl=document.createElement('a');
-    dl.href='data:image/webp;base64,'+b64;
-    dl.download='anni-imagen.webp';
+    dl.href=url; dl.target='_blank';
+    dl.download='anni-imagen.jpg';
     dl.textContent='⬇ Descargar imagen';
     wrap.appendChild(img);wrap.appendChild(dl);
     d.appendChild(lbl);d.appendChild(wrap);
     C.appendChild(d);C.scrollTop=C.scrollHeight;
     return;
+  }
+  // Compatibilidad con b64 antiguo
+  if(resp && resp.indexOf('[FLUX_IMAGE]')===0){
+    var b64=resp.replace('[FLUX_IMAGE]','').replace('[/FLUX_IMAGE]','');
+    var d=document.createElement('div');d.className='msg-anni';
+    var lbl=document.createElement('div');lbl.className='lbl';lbl.textContent='ANNI · 🎨 Imagen generada';
+    var wrap=document.createElement('div');wrap.className='img-flux-wrap';
+    var img=document.createElement('img');img.src='data:image/webp;base64,'+b64;
+    var dl=document.createElement('a');dl.href=img.src;dl.download='anni-imagen.webp';dl.textContent='⬇ Descargar imagen';
+    wrap.appendChild(img);wrap.appendChild(dl);d.appendChild(lbl);d.appendChild(wrap);
+    C.appendChild(d);C.scrollTop=C.scrollHeight;return;
   }
   add('anni',resp,null,ts);
 }
