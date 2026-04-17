@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.13"
+ANNI_VERSION = "1.02.14"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -978,26 +978,32 @@ Responde SOLO con este JSON exacto, sin nada más:
 
 REGLAS PARA OBSERVACIONES:
 
-Una observación es válida solo si cumple LOS TRES criterios siguientes:
+Antes de escribir cada observación hazte esta pregunta: "Si ANNI lee esto en una conversación futura sin recordar nada de hoy, ¿le cambia algo en cómo responde o qué anticipa?" Si la respuesta es no, no la escribas.
+
+Una observación es válida solo si cumple LOS TRES criterios:
 1. ES ESTRUCTURAL — describe algo que probablemente se repetiría en otras conversaciones, no un evento único de esta
 2. ES ACCIONABLE — cuando ANNI la lea en el futuro, le cambia algo: cómo pregunta, qué anticipa, qué señala
 3. TIENE EVIDENCIA — hay una frase concreta del usuario que la demuestra, no es una inferencia
 
+DISTINCIÓN CRÍTICA — hito vs observación:
+Si describes un hecho biográfico o dato permanente sobre el usuario (dónde vive, con quién fundó algo, quién falleció, su estructura familiar, su trabajo) → eso es un HITO, no una observación. Las observaciones describen comportamiento dinámico y recurrente, no hechos estáticos.
+
 Tipos y qué significan:
-- patron: algo que el usuario hace recurrentemente que revela cómo funciona su mente o sus decisiones. Ej: "Tiende a reiniciar proyectos cuando siente que perdieron el rumbo" ✓ / "Menciona la edad de sus hijos" ✗
+- patron: algo que el usuario hace o piensa recurrentemente que revela cómo funciona su mente o sus decisiones. Ej: "Tiende a reiniciar proyectos cuando siente que perdieron el rumbo" ✓ / "Menciona que fundó su empresa con su pareja" ✗ (eso es un hito)
 - emocion: estado emocional con frecuencia o intensidad notable, no una reacción puntual. Ej: "Expresa culpa recurrente cuando no dedica tiempo a su familia" ✓ / "Tono neutro al relatar un dato" ✗
-- energia: patrón de cómo arranca, decae o se activa — no una descripción de un mensaje concreto. Ej: "Alta energía al inicio de proyectos nuevos, decae cuando entran en fase de mantenimiento" ✓ / "Confirma acción inmediata" ✗
+- energia: patrón de cómo arranca, decae o se activa — no una descripción de un mensaje concreto. Ej: "Alta energía al inicio de proyectos, tiende a decaer en fase de mantenimiento" ✓ / "Confirma acción inmediata" ✗
 - evitacion: algo que el usuario pospone, justifica o rodea de forma consistente. Ej: "Usa el cansancio como justificación para no involucrarse con sus hijos" ✓ / "Tardó 2 días en completar una tarea" ✗
-- velocidad: patrón real de ejecución que revela algo sobre cómo decide o actúa. Ej: "Ejecuta inmediatamente las tareas financieras simples, dilata las que implican negociación" ✓ / "La tarea tardó 7 días, el doble del promedio de 3.4 días" ✗
+- velocidad: patrón real de ejecución que revela cómo decide o actúa. NUNCA uses estadísticas de tareas. Ej: "Ejecuta inmediatamente lo financiero, dilata lo que implica negociación o conflicto interpersonal" ✓ / "La tarea tardó 7 días, el doble del promedio de 3.4 días" ✗
 
-NUNCA generes una observación de estos tipos — son ruido, no memoria útil:
-- Métricas o estadísticas de tareas concretas ("tardó X días", "el doble del promedio")
-- Comportamientos obvios de comunicación ("responde directo", "usa imágenes", "confirma acciones")
-- Hechos factuales puntuales que pertenecen a hitos, no a patrones ("menciona su estructura familiar", "cita a una autoridad")
-- Eventos únicos sin evidencia de repetición
-- Observaciones sobre ANNI, el sistema, o la conversación misma
+NUNCA generes observaciones de estos tipos — son ruido garantizado:
+- Métricas de tareas ("tardó X días", "el doble del promedio", "completó en 0 días")
+- Comportamientos de comunicación obvios ("responde directo", "usa imágenes", "confirma acciones", "indica finalización con frases de cierre")
+- Datos biográficos o factuales ("menciona su estructura familiar", "cita a una autoridad", "menciona que fundó un negocio")
+- Cómo el usuario interactúa con ANNI o el sistema ("reorganiza la memoria", "insiste en crear un hito", "proporciona información biográfica para el sistema")
+- Eventos únicos de esta conversación sin evidencia de repetición
+- Descripciones de lo que el usuario hizo en esta conversación ("redactó un mail", "organizó ideas", "buscó explicación")
 
-Máximo 2 observaciones por conversación. Si no hay nada que cumpla los tres criterios, deja el array vacío. Menos y mejor.
+Máximo 2 observaciones por conversación. Si no hay nada que cumpla los tres criterios, deja el array vacío. Una observación buena vale más que dos mediocres.
 
 Para PERSONAS:
 - Registrar CUALQUIER nombre propio de persona real mencionado en la conversación
