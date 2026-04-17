@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.11"
+ANNI_VERSION = "1.02.12"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -958,7 +958,7 @@ def analizar_conversacion(usuario_id, ultimos_mensajes, resumen=''):
     # Incluir el resumen si existe — contiene información ya interpretada
     resumen_section = f"\n\nRESUMEN DE LA CONVERSACIÓN (ya interpretado por ANNI):\n{resumen}" if resumen else ""
 
-    prompt = f"""Eres el sistema de memoria de ANNI. Analiza esta conversación y extrae información estructurada sobre el usuario.
+    prompt = f"""Eres el sistema de memoria de ANNI. Tu trabajo es extraer observaciones que le sean genuinamente útiles a ANNI para conocer mejor al usuario y responderle mejor en el futuro.
 
 CONVERSACIÓN:
 {texto_completo}{resumen_section}
@@ -966,7 +966,7 @@ CONVERSACIÓN:
 Responde SOLO con este JSON exacto, sin nada más:
 {{
   "observaciones": [
-    {{"tipo": "patron|emocion|evitacion|energia|velocidad", "contenido": "descripción concreta y específica del patrón observado", "evidencia": "frase exacta del usuario que lo demuestra"}}
+    {{"tipo": "patron|emocion|evitacion|energia|velocidad", "contenido": "descripción del patrón", "evidencia": "frase exacta del usuario que lo demuestra"}}
   ],
   "personas": [
     {{"nombre": "nombre propio", "relacion": "padre|madre|hijo|hija|pareja|esposa|esposo|hermano|hermana|suegro|suegra|amigo|amiga|socio|socia|colega|jefe|cliente|hijastra|hijastro", "tono": "positivo|neutro|negativo|ausente|preocupado", "contexto": "una frase de contexto sobre esta persona"}}
@@ -976,13 +976,28 @@ Responde SOLO con este JSON exacto, sin nada más:
   ]
 }}
 
-REGLAS ESTRICTAS:
+REGLAS PARA OBSERVACIONES:
 
-Para OBSERVACIONES:
-- Máximo 3, solo las más significativas y concretas
-- Deben revelar patrones reales de comportamiento, emoción o energía del usuario
-- NO incluir observaciones triviales como "usa imágenes" o "confirma acciones"
-- NO incluir inferencias sin evidencia directa
+Una observación es válida solo si cumple LOS TRES criterios siguientes:
+1. ES ESTRUCTURAL — describe algo que probablemente se repetiría en otras conversaciones, no un evento único de esta
+2. ES ACCIONABLE — cuando ANNI la lea en el futuro, le cambia algo: cómo pregunta, qué anticipa, qué señala
+3. TIENE EVIDENCIA — hay una frase concreta del usuario que la demuestra, no es una inferencia
+
+Tipos y qué significan:
+- patron: algo que el usuario hace recurrentemente que revela cómo funciona su mente o sus decisiones. Ej: "Tiende a reiniciar proyectos cuando siente que perdieron el rumbo" ✓ / "Menciona la edad de sus hijos" ✗
+- emocion: estado emocional con frecuencia o intensidad notable, no una reacción puntual. Ej: "Expresa culpa recurrente cuando no dedica tiempo a su familia" ✓ / "Tono neutro al relatar un dato" ✗
+- energia: patrón de cómo arranca, decae o se activa — no una descripción de un mensaje concreto. Ej: "Alta energía al inicio de proyectos nuevos, decae cuando entran en fase de mantenimiento" ✓ / "Confirma acción inmediata" ✗
+- evitacion: algo que el usuario pospone, justifica o rodea de forma consistente. Ej: "Usa el cansancio como justificación para no involucrarse con sus hijos" ✓ / "Tardó 2 días en completar una tarea" ✗
+- velocidad: patrón real de ejecución que revela algo sobre cómo decide o actúa. Ej: "Ejecuta inmediatamente las tareas financieras simples, dilata las que implican negociación" ✓ / "La tarea tardó 7 días, el doble del promedio de 3.4 días" ✗
+
+NUNCA generes una observación de estos tipos — son ruido, no memoria útil:
+- Métricas o estadísticas de tareas concretas ("tardó X días", "el doble del promedio")
+- Comportamientos obvios de comunicación ("responde directo", "usa imágenes", "confirma acciones")
+- Hechos factuales puntuales que pertenecen a hitos, no a patrones ("menciona su estructura familiar", "cita a una autoridad")
+- Eventos únicos sin evidencia de repetición
+- Observaciones sobre ANNI, el sistema, o la conversación misma
+
+Máximo 2 observaciones por conversación. Si no hay nada que cumpla los tres criterios, deja el array vacío. Menos y mejor.
 
 Para PERSONAS:
 - Registrar CUALQUIER nombre propio de persona real mencionado en la conversación
