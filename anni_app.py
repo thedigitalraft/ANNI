@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.24"
+ANNI_VERSION = "1.02.26"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4593,24 +4593,27 @@ def api_get_eventos():
     hoy = dt_mod.date.today().isoformat()
     try:
         if vista == 'pasados':
-            c.execute("""SELECT id, titulo, fecha, '' as fecha_fin, hora, '' as hora_fin,
+            c.execute("""SELECT id, titulo, fecha, COALESCE(fecha_fin,'') as fecha_fin, hora, COALESCE(hora_fin,'') as hora_fin,
                                 descripcion, lugar, COALESCE(categoria,'personal'),
-                                todo_el_dia, '' as recurrencia,
-                                'pendiente' as estado, '' as cliente, 0 as es_tarea
+                                todo_el_dia, COALESCE(recurrencia,'') as recurrencia,
+                                COALESCE(estado,'pendiente') as estado, COALESCE(cliente,'') as cliente,
+                                CASE WHEN categoria='tarea' THEN 1 ELSE 0 END as es_tarea
                          FROM eventos WHERE usuario_id=? AND activo=1 AND (fecha < ? OR cerrado=1)
-                         ORDER BY fecha DESC, hora DESC LIMIT 50""", (usuario_id, hoy))
+                         ORDER BY fecha DESC, hora DESC""", (usuario_id, hoy))
         elif vista == 'todos':
-            c.execute("""SELECT id, titulo, fecha, '' as fecha_fin, hora, '' as hora_fin,
+            c.execute("""SELECT id, titulo, fecha, COALESCE(fecha_fin,'') as fecha_fin, hora, COALESCE(hora_fin,'') as hora_fin,
                                 descripcion, lugar, COALESCE(categoria,'personal'),
-                                todo_el_dia, '' as recurrencia,
-                                'pendiente' as estado, '' as cliente, 0 as es_tarea
+                                todo_el_dia, COALESCE(recurrencia,'') as recurrencia,
+                                COALESCE(estado,'pendiente') as estado, COALESCE(cliente,'') as cliente,
+                                CASE WHEN categoria='tarea' THEN 1 ELSE 0 END as es_tarea
                          FROM eventos WHERE usuario_id=? AND activo=1
                          ORDER BY fecha ASC, hora ASC""", (usuario_id,))
         else:
-            c.execute("""SELECT id, titulo, fecha, '' as fecha_fin, hora, '' as hora_fin,
+            c.execute("""SELECT id, titulo, fecha, COALESCE(fecha_fin,'') as fecha_fin, hora, COALESCE(hora_fin,'') as hora_fin,
                                 descripcion, lugar, COALESCE(categoria,'personal'),
-                                todo_el_dia, '' as recurrencia,
-                                'pendiente' as estado, '' as cliente, 0 as es_tarea
+                                todo_el_dia, COALESCE(recurrencia,'') as recurrencia,
+                                COALESCE(estado,'pendiente') as estado, COALESCE(cliente,'') as cliente,
+                                CASE WHEN categoria='tarea' THEN 1 ELSE 0 END as es_tarea
                          FROM eventos WHERE usuario_id=? AND activo=1 AND fecha >= ? AND (cerrado IS NULL OR cerrado != 1)
                          ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy))
     except Exception as e:
