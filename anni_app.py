@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.21"
+ANNI_VERSION = "1.02.23"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4599,6 +4599,13 @@ def api_get_eventos():
                                 'pendiente' as estado, '' as cliente, 0 as es_tarea
                          FROM eventos WHERE usuario_id=? AND activo=1 AND (fecha < ? OR cerrado=1)
                          ORDER BY fecha DESC, hora DESC LIMIT 50""", (usuario_id, hoy))
+        elif vista == 'todos':
+            c.execute("""SELECT id, titulo, fecha, '' as fecha_fin, hora, '' as hora_fin,
+                                descripcion, lugar, COALESCE(categoria,'personal'),
+                                todo_el_dia, '' as recurrencia,
+                                'pendiente' as estado, '' as cliente, 0 as es_tarea
+                         FROM eventos WHERE usuario_id=? AND activo=1
+                         ORDER BY fecha ASC, hora ASC""", (usuario_id,))
         else:
             c.execute("""SELECT id, titulo, fecha, '' as fecha_fin, hora, '' as hora_fin,
                                 descripcion, lugar, COALESCE(categoria,'personal'),
@@ -5834,7 +5841,7 @@ function renderCalSemana(){
   nav.appendChild(bp); nav.appendChild(tit); nav.appendChild(bn);
   body.appendChild(nav);
 
-  fetch('/api/eventos?vista=proximos').then(r=>r.json()).then(function(res){
+  fetch('/api/eventos?vista=todos').then(r=>r.json()).then(function(res){
     var todos=res.eventos||[];
     var evPorDia={};
     todos.forEach(function(ev){
@@ -5896,7 +5903,7 @@ function renderCalDia(){
   nav.appendChild(bp); nav.appendChild(tit); nav.appendChild(bn);
   body.appendChild(nav);
 
-  fetch('/api/eventos?vista=proximos').then(r=>r.json()).then(function(res){
+  fetch('/api/eventos?vista=todos').then(r=>r.json()).then(function(res){
     var todos=res.eventos||[];
     var evsDia=todos.filter(function(ev){
       if(ev.es_tarea) return false; // tareas solo en vista Lista
@@ -6055,8 +6062,8 @@ function renderCalMes(){
     }
   }
 
-  // Cargar eventos del mes (tanto próximos como pasados)
-  fetch('/api/eventos?vista=proximos').then(r=>r.json()).then(function(results){
+  // Cargar eventos del mes (próximos + pasados)
+  fetch('/api/eventos?vista=todos').then(r=>r.json()).then(function(results){
     var todos = results.eventos||[];
     var eventosPorDia = {};
     todos.forEach(function(ev){
