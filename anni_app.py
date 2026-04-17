@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.15"
+ANNI_VERSION = "1.02.16"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4597,14 +4597,14 @@ def api_get_eventos():
                                 descripcion, lugar, COALESCE(categoria,'personal'),
                                 todo_el_dia, '' as recurrencia,
                                 'pendiente' as estado, '' as cliente, 0 as es_tarea
-                         FROM eventos WHERE usuario_id=? AND activo=1 AND fecha < ?
+                         FROM eventos WHERE usuario_id=? AND activo=1 AND (fecha < ? OR cerrado=1)
                          ORDER BY fecha DESC, hora DESC LIMIT 50""", (usuario_id, hoy))
         else:
             c.execute("""SELECT id, titulo, fecha, '' as fecha_fin, hora, '' as hora_fin,
                                 descripcion, lugar, COALESCE(categoria,'personal'),
                                 todo_el_dia, '' as recurrencia,
                                 'pendiente' as estado, '' as cliente, 0 as es_tarea
-                         FROM eventos WHERE usuario_id=? AND activo=1 AND fecha >= ?
+                         FROM eventos WHERE usuario_id=? AND activo=1 AND fecha >= ? AND COALESCE(cerrado,0)=0
                          ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy))
     except Exception as e:
         print(f"[ANNI] Error GET eventos: {e}")
