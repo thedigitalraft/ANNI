@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.10"
+ANNI_VERSION = "1.02.11"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4004,14 +4004,14 @@ def api_observaciones():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
-        c.execute("""SELECT id, tipo, contenido, evidencia, ts
+        c.execute("""SELECT id, tipo, contenido, evidencia, ts, peso
                      FROM observaciones WHERE usuario_id=? AND activa=1
-                     ORDER BY ts DESC LIMIT 30""", (usuario_id,))
+                     ORDER BY tipo ASC, peso DESC, ts DESC""", (usuario_id,))
     except Exception:
-        c.execute("SELECT id, tipo, contenido, evidencia, ts FROM observaciones WHERE usuario_id=? AND activa=1 ORDER BY ts DESC LIMIT 30", (usuario_id,))
+        c.execute("SELECT id, tipo, contenido, evidencia, ts, 1 FROM observaciones WHERE usuario_id=? AND activa=1 ORDER BY tipo ASC, ts DESC", (usuario_id,))
     rows = c.fetchall()
     conn.close()
-    obs = [{"id": r[0], "tipo": r[1], "contenido": r[2], "evidencia": r[3], "ts": ts_format(r[4])} for r in rows]
+    obs = [{"id": r[0], "tipo": r[1], "contenido": r[2], "evidencia": r[3], "ts": ts_format(r[4]), "peso": round(r[5], 2) if r[5] else 1} for r in rows]
     return jsonify({"observaciones": obs})
 
 
