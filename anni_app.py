@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.90"
+ANNI_VERSION = "1.01.92"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5342,6 +5342,12 @@ function agendaNav(vistaActiva){
   return nav;
 }
 // ── DATE PICKER CUSTOM (semana empieza lunes) ─────────────────────────────────
+// Fecha local del navegador en formato YYYY-MM-DD (no UTC)
+function fechaHoyLocal(){
+  var d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
 var MESES_ES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 var DIAS_CORTOS=['Lu','Ma','Mi','Ju','Vi','Sá','Do'];
 
@@ -5372,7 +5378,7 @@ function createDatePicker(inputId, placeholder){
     var dow=primero.getDay(); var offset=dow===0?6:dow-1;
     for(var i=0;i<offset;i++){var e=document.createElement('div');e.className='picker-cal-day empty';grid.appendChild(e);}
     var diasMes=new Date(año,mes+1,0).getDate();
-    var hoyStr=new Date().toISOString().slice(0,10);
+    var hoyStr=fechaHoyLocal();
     for(var d=1;d<=diasMes;d++){
       var ds=año+'-'+String(mes+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
       var cell=document.createElement('div'); cell.className='picker-cal-day';
@@ -5472,7 +5478,7 @@ function renderCalSemana(){
     var d=new Date(lunes); d.setDate(lunes.getDate()+i);
     dias.push(d);
   }
-  var hoyStr = new Date().toISOString().slice(0,10);
+  var hoyStr = fechaHoyLocal();
 
   // Nav
   var nav=document.createElement('div');
@@ -5493,9 +5499,10 @@ function renderCalSemana(){
     var todos=res.eventos||[];
     var evPorDia={};
     todos.forEach(function(ev){
+      if(ev.es_tarea) return; // tareas solo en vista Lista
       var fi=ev.fecha; var ff=(ev.fecha_fin&&ev.fecha_fin>fi)?ev.fecha_fin:fi;
       var cur=new Date(fi+'T12:00:00'); var fin2=new Date(ff+'T12:00:00');
-      while(cur<=fin2){ var ds=cur.toISOString().slice(0,10); if(!evPorDia[ds])evPorDia[ds]=[];evPorDia[ds].push(ev); cur.setDate(cur.getDate()+1); }
+      while(cur<=fin2){ var ds=cur.getFullYear()+'-'+String(cur.getMonth()+1).padStart(2,'0')+'-'+String(cur.getDate()).padStart(2,'0'); if(!evPorDia[ds])evPorDia[ds]=[];evPorDia[ds].push(ev); cur.setDate(cur.getDate()+1); }
     });
 
     var grid=document.createElement('div');
@@ -5534,8 +5541,8 @@ function renderCalDia(){
   body.innerHTML = '';
   body.classList.remove('fullscreen');
   body.appendChild(agendaNav('cal_dia'));
-  var hoyStr = new Date().toISOString().slice(0,10);
-  var diaStr = calDiaRef.toISOString().slice(0,10);
+  var hoyStr = fechaHoyLocal();
+  var d_=calDiaRef; var diaStr=d_.getFullYear()+'-'+String(d_.getMonth()+1).padStart(2,'0')+'-'+String(d_.getDate()).padStart(2,'0');
   var label = calDiaRef.toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 
   var nav=document.createElement('div');
@@ -5553,6 +5560,7 @@ function renderCalDia(){
   fetch('/api/eventos?todos=1').then(r=>r.json()).then(function(res){
     var todos=res.eventos||[];
     var evsDia=todos.filter(function(ev){
+      if(ev.es_tarea) return false; // tareas solo en vista Lista
       var fi=ev.fecha; var ff=(ev.fecha_fin&&ev.fecha_fin>fi)?ev.fecha_fin:fi;
       return diaStr>=fi&&diaStr<=ff;
     });
@@ -5650,7 +5658,7 @@ function renderCalMes(){
   var diaSemana = primero.getDay(); // 0=dom
   var offset = diaSemana === 0 ? 6 : diaSemana - 1; // ajuste lunes: Lu=0
   var diasEnMes = new Date(año, mes+1, 0).getDate();
-  var hoyStr = new Date().toISOString().slice(0,10);
+  var hoyStr = fechaHoyLocal();
 
   // Fechas inicio/fin del mes para el fetch
   var mesStr = String(mes+1).padStart(2,'0');
@@ -5713,12 +5721,13 @@ function renderCalMes(){
     var todos = results.eventos||[];
     var eventosPorDia = {};
     todos.forEach(function(ev){
+      if(ev.es_tarea) return; // tareas solo en vista Lista
       var fInicio = ev.fecha;
       var fFin = (ev.fecha_fin && ev.fecha_fin > fInicio) ? ev.fecha_fin : fInicio;
       var cur = new Date(fInicio+'T12:00:00');
       var fin2 = new Date(fFin+'T12:00:00');
       while(cur <= fin2){
-        var ds = cur.toISOString().slice(0,10);
+        var ds = cur.getFullYear()+'-'+String(cur.getMonth()+1).padStart(2,'0')+'-'+String(cur.getDate()).padStart(2,'0');
         if(ds >= fechaIni && ds <= fechaFinMes){
           if(!eventosPorDia[ds]) eventosPorDia[ds] = [];
           eventosPorDia[ds].push(ev);
@@ -5790,7 +5799,7 @@ function loadCalendario(){
   var formLbl=document.createElement('div'); formLbl.style.cssText='font-size:11px;font-weight:900;letter-spacing:1px;color:#aaa;margin-bottom:12px'; formLbl.textContent='NUEVO EVENTO'; form.appendChild(formLbl);
   var evTitulo=document.createElement('input'); evTitulo.placeholder='Título *'; evTitulo.style.cssText=iStyle; form.appendChild(evTitulo);
   var evCat=document.createElement('select'); evCat.style.cssText=iStyle;
-  [{v:'personal',l:'🟢 Personal'},{v:'tarea',l:'🔵 Tarea'},{v:'reunion',l:'⚫ Reunión'},{v:'curso',l:'🔴 Curso'},{v:'cumpleanos',l:'🩷 Cumpleaños'}].forEach(function(o){var opt=document.createElement('option');opt.value=o.v;opt.textContent=o.l;evCat.appendChild(opt);}); form.appendChild(evCat);
+  [{v:'personal',l:'🟢 Personal'},{v:'tarea',l:'🔵 Tarea'},{v:'reunion',l:'⚫ Reunión'},{v:'curso',l:'🟡 Curso'},{v:'cumpleanos',l:'🩷 Cumpleaños'}].forEach(function(o){var opt=document.createElement('option');opt.value=o.v;opt.textContent=o.l;evCat.appendChild(opt);}); form.appendChild(evCat);
   // Fechas
   var gf=document.createElement('div'); gf.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px';
   var df1=document.createElement('div'); var lf1=document.createElement('div'); lf1.style.cssText=lStyle; lf1.textContent='FECHA INICIO *'; df1.appendChild(lf1);
@@ -5959,7 +5968,7 @@ function editEvento(id, btn){
   var eTit=document.createElement('input'); eTit.value=ev.titulo||''; eTit.placeholder='Título *'; eTit.style.cssText=iS; modal.appendChild(eTit);
 
   var eCat=document.createElement('select'); eCat.style.cssText=iS;
-  [{v:'personal',l:'🟢 Personal'},{v:'tarea',l:'🔵 Tarea'},{v:'reunion',l:'⚫ Reunión'},{v:'curso',l:'🔴 Curso'},{v:'cumpleanos',l:'🩷 Cumpleaños'}].forEach(function(o){var opt=document.createElement('option');opt.value=o.v;opt.textContent=o.l;if(o.v===ev.categoria)opt.selected=true;eCat.appendChild(opt);}); modal.appendChild(eCat);
+  [{v:'personal',l:'🟢 Personal'},{v:'tarea',l:'🔵 Tarea'},{v:'reunion',l:'⚫ Reunión'},{v:'curso',l:'🟡 Curso'},{v:'cumpleanos',l:'🩷 Cumpleaños'}].forEach(function(o){var opt=document.createElement('option');opt.value=o.v;opt.textContent=o.l;if(o.v===ev.categoria)opt.selected=true;eCat.appendChild(opt);}); modal.appendChild(eCat);
 
   // Fechas
   var gf=document.createElement('div'); gf.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px';
