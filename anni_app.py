@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.98"
+ANNI_VERSION = "1.01.99"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2402,7 +2402,7 @@ def api_chat():
             flux_resp = together.images.generate(
                 prompt=msg_completo,
                 model='black-forest-labs/FLUX.1-schnell-Free',
-                width=1024, height=768, steps=4, n=1,
+                steps=4, n=1,
                 response_format='b64_json'
             )
             img_b64 = flux_resp.data[0].b64_json
