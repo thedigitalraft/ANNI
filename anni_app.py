@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.07"
+ANNI_VERSION = "1.02.09"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -465,6 +465,56 @@ def get_observaciones_activas(usuario_id, limit=15):
     rows = c.fetchall()
     conn.close()
     return rows
+
+def get_observaciones_relevantes(usuario_id, query, n=10):
+    """RAG semántico sobre observaciones — trae las más relevantes al query.
+    Fallback: las N de mayor peso si no hay embeddings suficientes."""
+    import struct, math
+    resultados = []
+    ids_vistos = set()
+    try:
+        resp = together.embeddings.create(model=EMBED_MODEL, input=[query[:1600]])
+        vec_query = resp.data[0].embedding
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""SELECT o.id, o.tipo, o.contenido, o.peso, e.embedding
+            FROM observaciones o
+            JOIN embeddings e ON e.tabla_origen='observaciones' AND e.registro_id=o.id
+            WHERE o.usuario_id=? AND o.activa=1""", (usuario_id,))
+        rows = c.fetchall()
+        conn.close()
+        if rows:
+            scores = []
+            for oid, tipo, contenido, peso, blob in rows:
+                nv = len(blob) // 4
+                vec = struct.unpack(f"{nv}f", blob)
+                dot = sum(a*b for a,b in zip(vec_query, vec))
+                mag1 = math.sqrt(sum(a*a for a in vec_query))
+                mag2 = math.sqrt(sum(b*b for b in vec))
+                sim = dot / (mag1 * mag2) if mag1 and mag2 else 0
+                scores.append((oid, tipo, contenido, peso, sim))
+            scores.sort(key=lambda x: -x[4])
+            for oid, tipo, contenido, peso, sim in scores[:n]:
+                resultados.append((oid, tipo, contenido, peso))
+                ids_vistos.add(oid)
+    except Exception as e:
+        print(f"[ANNI] RAG observaciones fallo: {e}")
+    # Fallback: observaciones sin embedding, por peso
+    try:
+        conn2 = sqlite3.connect(DB_PATH)
+        c2 = conn2.cursor()
+        placeholders = ','.join(['?' for _ in ids_vistos]) if ids_vistos else '0'
+        needed = max(0, n - len(resultados))
+        if needed > 0:
+            params = [usuario_id] + list(ids_vistos)
+            c2.execute(f"""SELECT id, tipo, contenido, peso FROM observaciones
+                WHERE usuario_id=? AND activa=1 AND id NOT IN ({placeholders})
+                ORDER BY peso DESC, ts DESC LIMIT {needed}""", params)
+            for row in c2.fetchall():
+                resultados.append(row)
+        conn2.close()
+    except: pass
+    return resultados
 
 def get_temas_abiertos(usuario_id):
     conn = sqlite3.connect(DB_PATH)
@@ -1793,12 +1843,12 @@ Si NO tienes nada relevante que decir: responde exactamente con: NO_INTERVENIR
 Solo la frase o NO_INTERVENIR. Nada más."""
 
     try:
-        resp = together.chat.completions.create(
+        resp = anthropic_client.messages.create(
             model=CHAT_MODEL,
             max_tokens=100,
             messages=[{"role": "user", "content": prompt}]
         )
-        resultado = resp.choices[0].message.content.strip()
+        resultado = resp.content[0].text.strip()
         if resultado == "NO_INTERVENIR" or not resultado:
             return None
         return resultado
@@ -1809,7 +1859,12 @@ Solo la frase o NO_INTERVENIR. Nada más."""
 # ── SYSTEM PROMPT ─────────────────────────────────────────────────────────────
 
 def get_system_prompt(usuario_id, username, nombre='', query=None):
-    observaciones = get_observaciones_activas(usuario_id)
+    # RAG semántico si hay query, fallback a por peso si no
+    if query:
+        obs_raw = get_observaciones_relevantes(usuario_id, query, n=10)
+        observaciones = [(r[0], r[1], r[2], None, r[3]) for r in obs_raw]  # id, tipo, contenido, ts, peso
+    else:
+        observaciones = get_observaciones_activas(usuario_id)
     temas = get_temas_abiertos(usuario_id)
     personas = get_personas(usuario_id)
     total_msgs = get_total_mensajes(usuario_id)
@@ -2063,6 +2118,9 @@ Cuando el usuario te saluda o abre una conversación nueva, respondes con natura
 
 CUÁNDO METER FRICCIÓN Y CUÁNDO NO:
 La fricción es una herramienta, no una postura. Úsala cuando el usuario evita algo importante, cuando se contradice, cuando necesita que le digan algo incómodo. NO la uses cuando el usuario ya tomó una decisión y te la comunicó — si dice "lo voy a corregir", responde "bien" y sigue adelante, no des un sermón. NO repitas la misma crítica dos veces en la misma conversación. Si ya señalaste algo, confía en que lo escuchó. La insistencia no es fricción, es ruido. Y recuerda: el humor y la calidez no son lo opuesto del criterio — son lo que hace que el criterio entre.
+
+SOBRE DATOS Y MEMORIA — REGLA CRÍTICA:
+Antes de afirmar algo concreto sobre el usuario — una fecha, un nombre, algo que dijo, un plan, una situación — verifica que tienes ese dato explícitamente en tu contexto. No inferas ni rellenes huecos con lo que "suena probable". Si no tienes el dato, pregunta o admite que no lo recuerdas con exactitud. Inventar con confianza es peor que admitir incertidumbre. Un dato incorrecto dicho con seguridad rompe la confianza más que cualquier otra cosa.
 
 CUANDO TE MANDAN UNA IMAGEN:
 REGLA CRÍTICA: Solo describes lo que realmente ves. Si no puedes leer un texto con claridad, dilo exactamente así: "No puedo leer bien este texto, ¿me lo puedes escribir?" NUNCA inventes ni rellenes lo que no ves claramente — especialmente capturas de pantalla, mensajes de WhatsApp o documentos con texto. Es preferible admitir que no lo ves bien que inventarte el contenido. Si la imagen es una captura de conversación, lee cada mensaje textualmente antes de interpretar nada. Si no estás segura de lo que dice un mensaje, cita solo lo que puedes leer con certeza y señala lo que no ves claro.
@@ -3562,8 +3620,7 @@ _dateObs.observe(document.body||document.documentElement, {childList:true, subtr
 <button id="back" onclick="window.location.href='/chat'">← INICIO</button>
 <div id="ui">
   <div id="title">UNIVERSO ANNI — RAFA</div>
-  <div id="subtitle">Memoria validada en el espacio semántico</div>
-  <div style="color:#ffffff;font-size:15px;margin-top:8px;opacity:0.6;max-width:490px;line-height:1.6">Proyección 3D de los embeddings de tu memoria validada. Cada estrella es una memoria validada por ti. Los puntos cercanos comparten significado semántico — no necesariamente importancia ni relación familiar. El mapa se recalcula automáticamente a medida que ANNI aprende más de ti.</div>
+  <div id="subtitle">Lo que ANNI sabe de ti. Cada estrella es una memoria.</div>
 </div>
 <div id="scale">
   <div style="margin-bottom:4px;color:#ffffff">PESO</div>
@@ -3868,6 +3925,22 @@ def api_borrar_memoria_extendida(mid):
     return jsonify({'ok': True})
 
 
+
+@app.route('/api/observaciones/<int:oid>', methods=['PUT'])
+@login_required
+def api_editar_observacion(oid):
+    usuario_id = session['usuario_id']
+    data = request.get_json()
+    contenido = data.get('contenido', '').strip()
+    tipo = data.get('tipo', '').strip()
+    if not contenido:
+        return jsonify({'ok': False, 'error': 'Contenido vacío'})
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE observaciones SET contenido=?, tipo=? WHERE id=? AND usuario_id=?",
+                 (contenido, tipo, oid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
 
 @app.route('/api/observaciones/<int:oid>', methods=['DELETE'])
 @login_required
@@ -4574,6 +4647,16 @@ def api_cerrar_evento(eid):
     usuario_id = session['usuario_id']
     conn = sqlite3.connect(DB_PATH)
     conn.execute("UPDATE eventos SET cerrado=1 WHERE id=? AND usuario_id=?", (eid, usuario_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/eventos/<int:eid>/reabrir', methods=['POST'])
+@login_required
+def api_reabrir_evento(eid):
+    usuario_id = session['usuario_id']
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("UPDATE eventos SET cerrado=0 WHERE id=? AND usuario_id=?", (eid, usuario_id))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
@@ -5434,10 +5517,24 @@ function card(content){
 }
 
 seccion('Observaciones', d.observaciones, function(o){
-  return card('<div style="font-size:12px;background:#f5f5f5;border-radius:4px;padding:2px 8px;display:inline-block;margin-bottom:6px">'+escH(o.tipo)+'</div>'+
-    '<div style="font-size:15px;color:#222">'+escH(o.contenido)+'</div>'+
-    '<div style="font-size:12px;color:#aaa;margin-top:4px">'+o.ts+' &middot; peso: '+o.peso+'</div>'+
-    '<div class="item-actions"><button class="btn-del" onclick="delObservacion('+o.id+',this)">Borrar</button></div>');
+  var c=card(
+    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
+    '<select id="obs-tipo-'+o.id+'" style="font-size:11px;background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:2px 6px;font-family:monospace">'+
+    ['patron','emocion','energia','evitacion','velocidad','tono','frustracion'].map(function(t){
+      return '<option value="'+t+'"'+(o.tipo===t?' selected':'')+'>'+t+'</option>';
+    }).join('')+
+    '</select>'+
+    '<span style="font-size:11px;color:#aaa">peso: '+o.peso+'</span>'+
+    '</div>'+
+    '<div id="obs-txt-'+o.id+'" style="font-size:15px;color:#222;line-height:1.5">'+escH(o.contenido)+'</div>'+
+    '<textarea id="obs-edit-'+o.id+'" style="display:none;width:100%;font-size:14px;padding:6px;border:1px solid #ddd;border-radius:4px;font-family:monospace;resize:vertical;min-height:60px">'+escH(o.contenido)+'</textarea>'+
+    '<div style="font-size:11px;color:#ccc;margin-top:4px">'+o.ts+'</div>'+
+    '<div class="item-actions" id="obs-actions-'+o.id+'">'+
+    '<button class="btn-edit" onclick="editObservacion('+o.id+')">Editar</button>'+
+    '<button class="btn-del" onclick="delObservacion('+o.id+',this)">Borrar</button>'+
+    '</div>'
+  );
+  return c;
 }, 'Sin observaciones aún — cierra una conversación para generarlas.');
 
 seccion('Personas', d.personas, function(p){
@@ -5459,6 +5556,42 @@ function delObservacion(id, btn){
   if(!confirm('¿Borrar esta observación?')) return;
   fetch('/api/observacion/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{
     if(d.ok) btn.closest('.item-card').remove();
+  });
+}
+function editObservacion(id){
+  var txt=document.getElementById('obs-txt-'+id);
+  var edit=document.getElementById('obs-edit-'+id);
+  var actions=document.getElementById('obs-actions-'+id);
+  if(!txt||!edit||!actions) return;
+  txt.style.display='none';
+  edit.style.display='block';
+  edit.focus();
+  actions.innerHTML=
+    '<button class=\"btn-edit\" style=\"background:#e8f5e9;border-color:#81c784;color:#2e7d32\" onclick=\"guardarObservacion('+id+')\">✓ Guardar</button>'+
+    '<button class=\"btn-edit\" onclick=\"cancelarEditObservacion('+id+')\">Cancelar</button>'+
+    '<button class=\"btn-del\" onclick=\"delObservacion('+id+',this)\">Borrar</button>';
+}
+function cancelarEditObservacion(id){
+  var txt=document.getElementById('obs-txt-'+id);
+  var edit=document.getElementById('obs-edit-'+id);
+  var actions=document.getElementById('obs-actions-'+id);
+  txt.style.display='block';
+  edit.style.display='none';
+  actions.innerHTML=
+    '<button class=\"btn-edit\" onclick=\"editObservacion('+id+')\">Editar</button>'+
+    '<button class=\"btn-del\" onclick=\"delObservacion('+id+',this)\">Borrar</button>';
+}
+function guardarObservacion(id){
+  var contenido=document.getElementById('obs-edit-'+id).value.trim();
+  var tipo=document.getElementById('obs-tipo-'+id).value;
+  if(!contenido){alert('El contenido no puede estar vacío');return;}
+  fetch('/api/observaciones/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({contenido:contenido,tipo:tipo})})
+  .then(r=>r.json()).then(function(d){
+    if(d.ok){
+      document.getElementById('obs-txt-'+id).textContent=contenido;
+      cancelarEditObservacion(id);
+    }
   });
 }
 function delPersona(id, btn){
@@ -6056,7 +6189,9 @@ function loadCalendario(){
           (ev.descripcion?'<div id="evdesc-'+ev.id+'" style="font-size:13px;color:#555;line-height:1.5">'+escH(ev.descripcion)+'</div>':'')+
           '<div class="item-actions">'+
           '<button class="btn-edit" onclick="editEvento('+ev.id+',this)">Editar</button>'+
-          '<button class="btn-edit" style="background:#e8f5e9;border-color:#81c784;color:#2e7d32" onclick="cerrarEvento('+ev.id+')">✓ Cerrar</button>'+
+          (vista==='pasados'
+            ? '<button class="btn-edit" style="background:#e8f5e9;border-color:#81c784;color:#2e7d32" onclick="reabrirEvento('+ev.id+')">↩ Reabrir</button>'
+            : '<button class="btn-edit" style="background:#e8f5e9;border-color:#81c784;color:#2e7d32" onclick="cerrarEvento('+ev.id+')">✓ Cerrar</button>')+
           '<button class="btn-del" onclick="borrarEvento('+ev.id+')">Borrar</button>'+
           '</div>';
         lista.appendChild(card);
@@ -6236,6 +6371,12 @@ function mostrarDetalleEvento(ev){
 
 function cerrarEvento(id){
   fetch('/api/eventos/'+id+'/cerrar',{method:'POST'}).then(r=>r.json()).then(function(d){
+    if(d.ok&&window._recargarCalendario) window._recargarCalendario();
+  });
+}
+
+function reabrirEvento(id){
+  fetch('/api/eventos/'+id+'/reabrir',{method:'POST'}).then(r=>r.json()).then(function(d){
     if(d.ok&&window._recargarCalendario) window._recargarCalendario();
   });
 }
