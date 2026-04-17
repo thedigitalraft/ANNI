@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.14"
+ANNI_VERSION = "1.02.15"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -6398,7 +6398,10 @@ function mostrarDetalleEvento(ev){
 
 function cerrarEvento(id){
   fetch('/api/eventos/'+id+'/cerrar',{method:'POST'}).then(r=>r.json()).then(function(d){
-    if(d.ok&&window._recargarCalendario) window._recargarCalendario();
+    if(d.ok){
+      var card=document.getElementById('evento-'+id);
+      if(card) card.remove();
+    }
   });
 }
 
