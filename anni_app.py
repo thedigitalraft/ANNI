@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.03"
+ANNI_VERSION = "1.02.04"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2399,7 +2399,7 @@ def api_chat():
     if modelo_sel == 'flux':
         save_mensaje(usuario_id, 'user', msg_completo or '[imagen flux]', 'flux')
         try:
-            import urllib.request, json as json_lib
+            import urllib.request, urllib.error, json as json_lib
             together_key = os.environ.get('TOGETHER_API_KEY', '')
             payload = json_lib.dumps({
                 'model': 'black-forest-labs/FLUX.1-schnell-Free',
@@ -2411,12 +2411,19 @@ def api_chat():
                 headers={'Authorization': f'Bearer {together_key}', 'Content-Type': 'application/json'},
                 method='POST'
             )
-            with urllib.request.urlopen(req_obj, timeout=60) as resp_obj:
-                result = json_lib.loads(resp_obj.read())
-            img_url = result['data'][0]['url']
-            img_msg = f'[FLUX_URL]{img_url}[/FLUX_URL]'
-            save_mensaje(usuario_id, 'assistant', img_msg, 'flux')
-            return jsonify({'response': img_msg, 'conv_id': conv_id, 'modelo': 'flux'})
+            try:
+                with urllib.request.urlopen(req_obj, timeout=60) as resp_obj:
+                    result = json_lib.loads(resp_obj.read())
+                img_url = result['data'][0]['url']
+                img_msg = f'[FLUX_URL]{img_url}[/FLUX_URL]'
+                save_mensaje(usuario_id, 'assistant', img_msg, 'flux')
+                return jsonify({'response': img_msg, 'conv_id': conv_id, 'modelo': 'flux'})
+            except urllib.error.HTTPError as http_err:
+                body = http_err.read().decode('utf-8', errors='ignore')
+                print(f"[ANNI] Flux HTTP {http_err.code}: {body}")
+                err = f'Error {http_err.code}: {body[:300]}'
+                save_mensaje(usuario_id, 'assistant', err, 'flux')
+                return jsonify({'response': err, 'conv_id': conv_id})
         except Exception as e:
             err = f'Error generando imagen: {str(e)}'
             save_mensaje(usuario_id, 'assistant', err, 'flux')
