@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.20"
+ANNI_VERSION = "1.02.21"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4892,8 +4892,8 @@ input:focus{border-color:#cc0000}
 <body>
 <div class='wrap'>
 <div class='logo'>ANNI</div>
-<div class='ver'>v__ANNI_VERSION__</div>
-<div class='cred'>Created by Rafa Torrijos</div>
+<div class='ver'>I.A. CON MEMORIA PERSISTENTE</div>
+<div class='cred'>Creada por Rafa Torrijos</div>
 <div class='card'>
 <div class='err' id='err'></div>
 <label for='u'>Email</label>
@@ -4952,8 +4952,8 @@ input:focus{border-color:#cc0000}
 <body>
 <div class='wrap'>
 <div class='logo'>ANNI</div>
-<div class='ver'>v__ANNI_VERSION__</div>
-<div class='cred'>Created by Rafa Torrijos</div>
+<div class='ver'>I.A. CON MEMORIA PERSISTENTE</div>
+<div class='cred'>Creada por Rafa Torrijos</div>
 <div class='card'>
 <div class='err' id='err'></div>
 <label for='n'>Como te llamas</label>
