@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.05"
+ANNI_VERSION = "1.02.06"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2402,8 +2402,9 @@ def api_chat():
             import urllib.request, urllib.error, json as json_lib
             together_key = os.environ.get('TOGETHER_API_KEY', '')
             payload = json_lib.dumps({
-                'model': 'black-forest-labs/FLUX.1-schnell-Free',
-                'prompt': msg_completo
+                'model': 'black-forest-labs/FLUX.1-schnell',
+                'prompt': msg_completo,
+                'n': 1
             }).encode()
             req_obj = urllib.request.Request(
                 'https://api.together.ai/v1/images/generations',
