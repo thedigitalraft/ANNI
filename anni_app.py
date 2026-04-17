@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.92"
+ANNI_VERSION = "1.01.93"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4414,24 +4414,30 @@ def api_get_eventos():
     import datetime as dt_mod
     if todos:
         # Para vistas calendario: todos los eventos activos sin filtrar por fecha ni cerrado
-        c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria,
-                            todo_el_dia, recurrencia, estado, cliente, es_tarea
+        c.execute("""SELECT id, titulo, fecha, COALESCE(fecha_fin,''), hora, COALESCE(hora_fin,''),
+                            descripcion, lugar, COALESCE(categoria,'personal'),
+                            todo_el_dia, COALESCE(recurrencia,''),
+                            COALESCE(estado,'pendiente'), COALESCE(cliente,''), COALESCE(es_tarea,0)
                      FROM eventos WHERE usuario_id=? AND activo=1
                      ORDER BY fecha ASC, hora ASC""", (usuario_id,))
     elif vista == 'pasados':
         hoy = dt_mod.date.today().isoformat()
-        c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria,
-                            todo_el_dia, recurrencia, estado, cliente, es_tarea
+        c.execute("""SELECT id, titulo, fecha, COALESCE(fecha_fin,''), hora, COALESCE(hora_fin,''),
+                            descripcion, lugar, COALESCE(categoria,'personal'),
+                            todo_el_dia, COALESCE(recurrencia,''),
+                            COALESCE(estado,'pendiente'), COALESCE(cliente,''), COALESCE(es_tarea,0)
                      FROM eventos WHERE usuario_id=? AND activo=1
-                     AND ((COALESCE(NULLIF(fecha_fin,''), fecha)) < ? OR cerrado = 1)
+                     AND ((COALESCE(NULLIF(fecha_fin,''), fecha)) < ? OR COALESCE(cerrado,0) = 1)
                      ORDER BY fecha DESC, hora DESC LIMIT 50""", (usuario_id, hoy))
     else:
         hoy = dt_mod.date.today().isoformat()
-        c.execute("""SELECT id, titulo, fecha, fecha_fin, hora, hora_fin, descripcion, lugar, categoria,
-                            todo_el_dia, recurrencia, estado, cliente, es_tarea
+        c.execute("""SELECT id, titulo, fecha, COALESCE(fecha_fin,''), hora, COALESCE(hora_fin,''),
+                            descripcion, lugar, COALESCE(categoria,'personal'),
+                            todo_el_dia, COALESCE(recurrencia,''),
+                            COALESCE(estado,'pendiente'), COALESCE(cliente,''), COALESCE(es_tarea,0)
                      FROM eventos WHERE usuario_id=? AND activo=1
                      AND (COALESCE(NULLIF(fecha_fin,''), fecha)) >= ?
-                     AND (cerrado IS NULL OR cerrado = 0)
+                     AND (COALESCE(cerrado,0) = 0)
                      ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy))
     rows = c.fetchall()
     conn.close()
