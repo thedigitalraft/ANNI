@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.04"
+ANNI_VERSION = "1.02.05"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2408,22 +2408,42 @@ def api_chat():
             req_obj = urllib.request.Request(
                 'https://api.together.ai/v1/images/generations',
                 data=payload,
-                headers={'Authorization': f'Bearer {together_key}', 'Content-Type': 'application/json'},
+                headers={
+                    'Authorization': f'Bearer {together_key}',
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'ANNI/1.0 (together-ai-client)'
+                },
                 method='POST'
             )
-            try:
-                with urllib.request.urlopen(req_obj, timeout=60) as resp_obj:
-                    result = json_lib.loads(resp_obj.read())
-                img_url = result['data'][0]['url']
-                img_msg = f'[FLUX_URL]{img_url}[/FLUX_URL]'
-                save_mensaje(usuario_id, 'assistant', img_msg, 'flux')
-                return jsonify({'response': img_msg, 'conv_id': conv_id, 'modelo': 'flux'})
-            except urllib.error.HTTPError as http_err:
-                body = http_err.read().decode('utf-8', errors='ignore')
-                print(f"[ANNI] Flux HTTP {http_err.code}: {body}")
-                err = f'Error {http_err.code}: {body[:300]}'
-                save_mensaje(usuario_id, 'assistant', err, 'flux')
-                return jsonify({'response': err, 'conv_id': conv_id})
+            for base_url in ['https://api.together.xyz/v1/images/generations', 'https://api.together.ai/v1/images/generations']:
+                req_obj = urllib.request.Request(
+                    base_url,
+                    data=payload,
+                    headers={
+                        'Authorization': f'Bearer {together_key}',
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'python-together/1.3.0'
+                    },
+                    method='POST'
+                )
+                try:
+                    with urllib.request.urlopen(req_obj, timeout=60) as resp_obj:
+                        result = json_lib.loads(resp_obj.read())
+                    img_url = result['data'][0]['url']
+                    img_msg = f'[FLUX_URL]{img_url}[/FLUX_URL]'
+                    save_mensaje(usuario_id, 'assistant', img_msg, 'flux')
+                    return jsonify({'response': img_msg, 'conv_id': conv_id, 'modelo': 'flux'})
+                except urllib.error.HTTPError as http_err:
+                    body = http_err.read().decode('utf-8', errors='ignore')
+                    print(f"[ANNI] Flux {base_url} → HTTP {http_err.code}: {body[:200]}")
+                    if http_err.code != 403:
+                        err = f'Error {http_err.code}: {body[:300]}'
+                        save_mensaje(usuario_id, 'assistant', err, 'flux')
+                        return jsonify({'response': err, 'conv_id': conv_id})
+                    # Si es 403, intentar con el siguiente URL
+            err = 'Error 403 en todos los endpoints de Together AI. Verifica que la API key tenga permisos de imágenes.'
+            save_mensaje(usuario_id, 'assistant', err, 'flux')
+            return jsonify({'response': err, 'conv_id': conv_id})
         except Exception as e:
             err = f'Error generando imagen: {str(e)}'
             save_mensaje(usuario_id, 'assistant', err, 'flux')
