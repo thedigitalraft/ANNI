@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.00"
+ANNI_VERSION = "1.02.01"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2399,12 +2399,16 @@ def api_chat():
     if modelo_sel == 'flux':
         save_mensaje(usuario_id, 'user', msg_completo or '[imagen flux]', 'flux')
         try:
-            flux_resp = together.images.generate(
-                prompt=msg_completo,
-                model='black-forest-labs/FLUX.1-schnell',
-                width=1024, height=1024, steps=4, n=1,
+            import requests as req_lib
+            together_key = os.environ.get('TOGETHER_API_KEY', '')
+            resp_img = req_lib.post(
+                'https://api.together.xyz/v1/images/generations',
+                headers={'Authorization': f'Bearer {together_key}', 'Content-Type': 'application/json'},
+                json={'model': 'black-forest-labs/FLUX.1-schnell-Free', 'prompt': msg_completo},
+                timeout=60
             )
-            img_url = flux_resp.data[0].url
+            resp_img.raise_for_status()
+            img_url = resp_img.json()['data'][0]['url']
             img_msg = f'[FLUX_URL]{img_url}[/FLUX_URL]'
             save_mensaje(usuario_id, 'assistant', img_msg, 'flux')
             return jsonify({'response': img_msg, 'conv_id': conv_id, 'modelo': 'flux'})
