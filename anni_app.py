@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.97"
+ANNI_VERSION = "1.01.98"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -221,6 +221,9 @@ def init_db():
 
     # Índices para rendimiento
     c.execute("CREATE INDEX IF NOT EXISTS idx_mensajes_usuario ON mensajes(usuario_id, ts)")
+    try:
+        c.execute("ALTER TABLE mensajes ADD COLUMN modelo TEXT DEFAULT ''")
+    except: pass
     c.execute("""CREATE TABLE IF NOT EXISTS tareas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         usuario_id INTEGER NOT NULL,
@@ -443,10 +446,13 @@ def get_mensajes_recientes(usuario_id, n=20):
     conn.close()
     return rows
 
-def save_mensaje(usuario_id, role, content):
+def save_mensaje(usuario_id, role, content, modelo=''):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("INSERT INTO mensajes (usuario_id, role, content) VALUES (?,?,?)", (usuario_id, role, content))
+    try:
+        c.execute("INSERT INTO mensajes (usuario_id, role, content, modelo) VALUES (?,?,?,?)", (usuario_id, role, content, modelo))
+    except Exception:
+        c.execute("INSERT INTO mensajes (usuario_id, role, content) VALUES (?,?,?)", (usuario_id, role, content))
     conn.commit()
     conn.close()
 
@@ -1361,7 +1367,7 @@ Total: 250-350 palabras.""",
     try:
         if use_web and anthropic_client:
             resp = anthropic_client.messages.create(
-                model=CHAT_MODEL,
+                model=modelo_override or CHAT_MODEL,
                 max_tokens=800,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
                 messages=[{"role": "user", "content": prompt}]
@@ -2150,7 +2156,7 @@ def quiere_buscar_web(user_input):
     texto = user_input.lower()
     return any(t in texto for t in triggers)
 
-def responder(usuario_id, username, nombre, user_input, history, imagen_data=None, imagen_media_type=None):
+def responder(usuario_id, username, nombre, user_input, history, imagen_data=None, imagen_media_type=None, modelo_override=None):
     system = get_system_prompt(usuario_id, username, nombre, query=user_input)
 
     # Construir historial para Sonnet (sin imagen — solo texto)
@@ -2328,6 +2334,16 @@ def api_chat():
     data = request.json or {}
     msg = data.get('message', '').strip()
     archivo = data.get('archivo')
+    modelo_sel = data.get('modelo', 'haiku')  # haiku | sonnet | opus | flux
+
+    # Mapear nombre amigable a string de API
+    MODELOS_MAP = {
+        'haiku':  'claude-haiku-4-5-20251001',
+        'sonnet': 'claude-sonnet-4-5-20251022',
+        'opus':   'claude-opus-4-5-20251101',
+    }
+    modelo_api = MODELOS_MAP.get(modelo_sel, CHAT_MODEL)
+
     if not msg and not archivo:
         return jsonify({'response': ''})
     conv = get_conversacion_activa(usuario_id)
@@ -2363,7 +2379,8 @@ def api_chat():
             imagen_media_type = 'application/pdf'
         else:
             msg_completo = f"{msg}\n\n[ARCHIVO: {nombre_arch}]\n{contenido[:3000]}"
-    save_mensaje(usuario_id, 'user', msg_completo if msg_completo else f"[imagen]")
+    if modelo_sel != 'flux':  # flux lo guarda después
+        save_mensaje(usuario_id, 'user', msg_completo if msg_completo else '[imagen]', modelo_sel)
 
     # Avanzar ciclo CURIOSA en background
     threading.Thread(target=tick_curiosa, args=(usuario_id,), daemon=True).start()
@@ -2378,10 +2395,30 @@ def api_chat():
         save_mensaje(usuario_id, 'assistant', response)
         return jsonify({'response': response, 'conv_id': conv_id, 'ts': time.time()})
 
+    # ── FLUX: generación de imagen ──────────────────────────────────────────
+    if modelo_sel == 'flux':
+        save_mensaje(usuario_id, 'user', msg_completo or '[imagen flux]', 'flux')
+        try:
+            flux_resp = together.images.generate(
+                prompt=msg_completo,
+                model='black-forest-labs/FLUX.1-schnell-Free',
+                width=1024, height=768, steps=4, n=1,
+                response_format='b64_json'
+            )
+            img_b64 = flux_resp.data[0].b64_json
+            img_msg = f'[FLUX_IMAGE]{img_b64}[/FLUX_IMAGE]'
+            save_mensaje(usuario_id, 'assistant', img_msg, 'flux')
+            return jsonify({'response': img_msg, 'conv_id': conv_id, 'modelo': 'flux'})
+        except Exception as e:
+            err = f'Error generando imagen: {str(e)}'
+            save_mensaje(usuario_id, 'assistant', err, 'flux')
+            return jsonify({'response': err, 'conv_id': conv_id})
+
+    # ── CHAT NORMAL ──────────────────────────────────────────────────────────
     history = get_mensajes_recientes(usuario_id, 20)
-    response = responder(usuario_id, username, nombre, msg_completo, history, imagen_data, imagen_media_type)
-    save_mensaje(usuario_id, 'assistant', response)
-    return jsonify({'response': response, 'conv_id': conv_id})
+    response = responder(usuario_id, username, nombre, msg_completo, history, imagen_data, imagen_media_type, modelo_override=modelo_api)
+    save_mensaje(usuario_id, 'assistant', response, modelo_sel)
+    return jsonify({'response': response, 'conv_id': conv_id, 'modelo': modelo_sel})
 
 
 def auto_cerrar_conversacion_inactiva(usuario_id):
@@ -4838,7 +4875,14 @@ body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,'He
 @keyframes b{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
 
 /* INPUT */
-#ia{border-top:1px solid #e8e8e8;padding:12px 16px;padding-bottom:max(12px,env(safe-area-inset-bottom));flex-shrink:0;background:#fff}
+#ia{border-top:1px solid #e8e8e8;padding:10px 16px;padding-bottom:max(10px,env(safe-area-inset-bottom));flex-shrink:0;background:#fff}
+#modelo-selector{display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap}
+.modelo-btn{font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;color:#888;cursor:pointer;letter-spacing:0.3px;transition:all 0.15s}
+.modelo-btn.activo{border-color:#cc0000;background:#cc0000;color:#fff}
+.modelo-btn.flux-btn.activo{border-color:#7c3aed;background:#7c3aed;color:#fff}
+.img-flux-wrap{margin:4px 0}
+.img-flux-wrap img{max-width:100%;border-radius:8px;display:block;cursor:pointer}
+.img-flux-wrap a{font-size:12px;color:#cc0000;text-decoration:none;display:inline-block;margin-top:4px;font-weight:700}
 #preview{max-width:720px;margin:0 auto 6px;font-size:13px;color:#cc0000;display:none}
 .ir{display:flex;gap:8px;align-items:flex-end;max-width:720px;margin:0 auto}
 .clip{background:none;border:1px solid #e0e0e0;border-radius:10px;padding:12px 13px;cursor:pointer;flex-shrink:0;font-size:15px;color:#888;-webkit-appearance:none}
@@ -4952,6 +4996,12 @@ textarea{font-size:16px}}
 
 <div id='ia'>
   <div id='preview'></div>
+  <div id='modelo-selector'>
+    <button class='modelo-btn activo' data-modelo='haiku' onclick='selModelo(this)'>⚡ Haiku</button>
+    <button class='modelo-btn' data-modelo='sonnet' onclick='selModelo(this)'>🧠 Sonnet</button>
+    <button class='modelo-btn' data-modelo='opus' onclick='selModelo(this)'>🔬 Opus</button>
+    <button class='modelo-btn flux-btn' data-modelo='flux' onclick='selModelo(this)'>🎨 Imagen</button>
+  </div>
   <div class='ir'>
     <button class='clip' onclick='document.getElementById("finput").click()' title='Adjuntar'>[+]</button>
     <input type='file' id='finput' accept='image/*,.pdf,.txt,.doc,.docx' onchange='archivoSel(this)'>
@@ -5097,6 +5147,25 @@ d.appendChild(t);C.appendChild(d);C.scrollTop=C.scrollHeight;}
 function rmtyp(){var t=document.getElementById('ty');if(t)t.remove();}
 
 var archivoData=null;
+var modeloActual='haiku';
+
+function selModelo(btn){
+  document.querySelectorAll('.modelo-btn').forEach(function(b){b.classList.remove('activo');});
+  btn.classList.add('activo');
+  modeloActual=btn.dataset.modelo;
+  // Cambiar placeholder según modo
+  var inp=document.getElementById('inp');
+  if(modeloActual==='flux'){
+    inp.placeholder='Describe la imagen que quieres generar...';
+    document.querySelector('.clip').style.opacity='0.3';
+    document.querySelector('.clip').style.pointerEvents='none';
+  } else {
+    inp.placeholder='Habla con Anni...';
+    document.querySelector('.clip').style.opacity='1';
+    document.querySelector('.clip').style.pointerEvents='auto';
+  }
+}
+
 function archivoSel(input){
 var f=input.files[0];if(!f)return;
 PRV.style.display='block';PRV.textContent='Adjunto: '+f.name;
@@ -5111,29 +5180,58 @@ reader.readAsDataURL(f);
 reader.onload=function(e){archivoData={tipo:'texto',data:e.target.result,nombre:f.name};};
 reader.readAsText(f);}}
 
+function renderRespuesta(resp, ts){
+  // Detectar imagen Flux
+  if(resp && resp.indexOf('[FLUX_IMAGE]')===0){
+    var b64=resp.replace('[FLUX_IMAGE]','').replace('[/FLUX_IMAGE]','');
+    var d=document.createElement('div');d.className='msg-anni';
+    var lbl=document.createElement('div');lbl.className='lbl';
+    lbl.textContent='ANNI · 🎨 Imagen generada';
+    var wrap=document.createElement('div');wrap.className='img-flux-wrap';
+    var img=document.createElement('img');
+    img.src='data:image/webp;base64,'+b64;
+    img.alt='Imagen generada';
+    var dl=document.createElement('a');
+    dl.href='data:image/webp;base64,'+b64;
+    dl.download='anni-imagen.webp';
+    dl.textContent='⬇ Descargar imagen';
+    wrap.appendChild(img);wrap.appendChild(dl);
+    d.appendChild(lbl);d.appendChild(wrap);
+    C.appendChild(d);C.scrollTop=C.scrollHeight;
+    return;
+  }
+  add('anni',resp,null,ts);
+}
+
 function env(){
 var msg=I.value.trim();
 if(!msg&&!archivoData)return;
 var disp=msg+(archivoData?' ['+archivoData.nombre+']':'');
 I.value='';I.style.height='auto';S.disabled=true;
-var userTs=Math.floor(Date.now()/1000);add('user',disp,null,userTs);PRV.style.display='none';typing();
-var body={message:msg};
-if(archivoData){body.archivo=archivoData;}
+var userTs=Math.floor(Date.now()/1000);add('user',disp,null,userTs);PRV.style.display='none';
+// Mostrar indicador según modelo
+if(modeloActual==='flux'){
+  var tyDiv=document.createElement('div');tyDiv.className='msg-anni';tyDiv.id='ty';
+  var tyT=document.createElement('div');tyT.className='lbl';tyT.textContent='Generando imagen...';
+  tyDiv.appendChild(tyT);C.appendChild(tyDiv);C.scrollTop=C.scrollHeight;
+} else { typing(); }
+var body={message:msg, modelo:modeloActual};
+if(archivoData&&modeloActual!=='flux'){body.archivo=archivoData;}
 var lastMsg=msg;
 archivoData=null;document.getElementById('finput').value='';
 fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
 .then(r=>r.json()).then(d=>{
-rmtyp();var resp=d.response||'';add('anni',resp,null,d.ts);
+rmtyp();var resp=d.response||'';
+renderRespuesta(resp,d.ts);
 if(d.conv_id){if(!convActiva||convActiva!==d.conv_id){convActiva=d.conv_id;convNum=d.conv_id;updateBtn();}}
 S.disabled=false;I.focus();
-if(lastMsg&&resp){
+if(lastMsg&&resp&&modeloActual!=='flux'){
 fetch('/api/detectar-hito',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify({mensaje:lastMsg,respuesta:resp})})
 .then(r=>r.json()).then(h=>{
   if(h.hito&&h.hito.hito){
     mostrarModalHito(h.hito);
   } else {
-    // Check if there are personas without hitos to propose
     fetch('/api/personas-sin-hito').then(r=>r.json()).then(function(ph){
       if(ph.hito) mostrarModalHito(ph.hito);
     }).catch(()=>{});
