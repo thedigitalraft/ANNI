@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.02"
+ANNI_VERSION = "1.02.03"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2401,9 +2401,12 @@ def api_chat():
         try:
             import urllib.request, json as json_lib
             together_key = os.environ.get('TOGETHER_API_KEY', '')
-            payload = json_lib.dumps({'model': 'black-forest-labs/FLUX.1-schnell-Free', 'prompt': msg_completo}).encode()
+            payload = json_lib.dumps({
+                'model': 'black-forest-labs/FLUX.1-schnell-Free',
+                'prompt': msg_completo
+            }).encode()
             req_obj = urllib.request.Request(
-                'https://api.together.xyz/v1/images/generations',
+                'https://api.together.ai/v1/images/generations',
                 data=payload,
                 headers={'Authorization': f'Bearer {together_key}', 'Content-Type': 'application/json'},
                 method='POST'
