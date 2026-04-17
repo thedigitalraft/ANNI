@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.93"
+ANNI_VERSION = "1.01.95"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -253,16 +253,28 @@ def init_db():
         activo INTEGER DEFAULT 1,
         FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
     )""")
-    # Migraciones para BDs existentes
-    for col, defval in [
-        ('fecha_fin',"''"),('categoria',"'personal'"),('hora_fin',"''"),
-        ('estado',"'pendiente'"),('cliente',"''"),('veces_mencionada','0'),
-        ('es_tarea','0'),('ts_completada','NULL'),('cerrado','0')
-    ]:
+    # Migraciones para BDs existentes — corren siempre, fallan silenciosamente si ya existe
+    migraciones_eventos = [
+        ('fecha_fin', "TEXT DEFAULT ''"),
+        ('fecha_fin', "TEXT DEFAULT ''"),  # idempotente
+        ('hora_fin', "TEXT DEFAULT ''"),
+        ('categoria', "TEXT DEFAULT 'personal'"),
+        ('estado', "TEXT DEFAULT 'pendiente'"),
+        ('cliente', "TEXT DEFAULT ''"),
+        ('veces_mencionada', "INTEGER DEFAULT 0"),
+        ('es_tarea', "INTEGER DEFAULT 0"),
+        ('ts_completada', "REAL DEFAULT NULL"),
+        ('cerrado', "INTEGER DEFAULT 0"),
+    ]
+    seen = set()
+    for col, typedef in migraciones_eventos:
+        if col in seen: continue
+        seen.add(col)
         try:
-            c.execute(f"ALTER TABLE eventos ADD COLUMN {col} TEXT DEFAULT {defval}")
-        except:
-            pass
+            c.execute(f"ALTER TABLE eventos ADD COLUMN {col} {typedef}")
+            print(f"[ANNI] Migración eventos: columna '{col}' añadida")
+        except Exception:
+            pass  # Ya existe
     c.execute("CREATE INDEX IF NOT EXISTS idx_eventos_usuario ON eventos(usuario_id, fecha)")
 
     # Tablas para ANNI CURIOSA
@@ -4408,38 +4420,56 @@ def api_migrar_tareas():
 def api_get_eventos():
     usuario_id = session['usuario_id']
     vista = request.args.get('vista', 'proximos')
-    todos = request.args.get('todos', '0') == '1'  # todos=1 ignora cerrado/fecha
+    todos = request.args.get('todos', '0') == '1'
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     import datetime as dt_mod
-    if todos:
-        # Para vistas calendario: todos los eventos activos sin filtrar por fecha ni cerrado
-        c.execute("""SELECT id, titulo, fecha, COALESCE(fecha_fin,''), hora, COALESCE(hora_fin,''),
-                            descripcion, lugar, COALESCE(categoria,'personal'),
-                            todo_el_dia, COALESCE(recurrencia,''),
-                            COALESCE(estado,'pendiente'), COALESCE(cliente,''), COALESCE(es_tarea,0)
+    hoy = dt_mod.date.today().isoformat()
+
+    # Detectar columnas disponibles
+    c.execute("PRAGMA table_info(eventos)")
+    cols = {r[1] for r in c.fetchall()}
+    has_fecha_fin = 'fecha_fin' in cols
+    has_hora_fin = 'hora_fin' in cols
+    has_categoria = 'categoria' in cols
+    has_estado = 'estado' in cols
+    has_cliente = 'cliente' in cols
+    has_es_tarea = 'es_tarea' in cols
+    has_cerrado = 'cerrado' in cols
+
+    def safe_col(name, default):
+        return f"COALESCE({name},'{default}')" if name in cols else f"'{default}'"
+
+    sel = f"""SELECT id, titulo, fecha,
+              {safe_col('fecha_fin','')}, hora, {safe_col('hora_fin','')},
+              descripcion, lugar, {safe_col('categoria','personal')},
+              todo_el_dia, {safe_col('recurrencia','')},
+              {safe_col('estado','pendiente')}, {safe_col('cliente','')},
+              {'COALESCE(es_tarea,0)' if has_es_tarea else '0'}
+              FROM eventos WHERE usuario_id=? AND activo=1"""
+
+    try:
+        if todos:
+            c.execute(sel + " ORDER BY fecha ASC, hora ASC", (usuario_id,))
+        elif vista == 'pasados':
+            fecha_fin_expr = f"COALESCE(NULLIF(fecha_fin,''), fecha)" if has_fecha_fin else "fecha"
+            cerrado_expr = f"OR COALESCE(cerrado,0) = 1" if has_cerrado else ""
+            c.execute(sel + f" AND (({fecha_fin_expr}) < ? {cerrado_expr}) ORDER BY fecha DESC, hora DESC LIMIT 50", (usuario_id, hoy))
+        else:
+            fecha_fin_expr = f"COALESCE(NULLIF(fecha_fin,''), fecha)" if has_fecha_fin else "fecha"
+            cerrado_cond = f"AND COALESCE(cerrado,0) = 0" if has_cerrado else ""
+            c.execute(sel + f" AND ({fecha_fin_expr}) >= ? {cerrado_cond} ORDER BY fecha ASC, hora ASC", (usuario_id, hoy))
+        rows = c.fetchall()
+    except Exception as e:
+        print(f"[ANNI] Error GET eventos: {e}")
+        # Fallback absoluto — query mínima sin columnas nuevas
+        c.execute("""SELECT id, titulo, fecha, '' as fecha_fin, hora, '' as hora_fin,
+                            descripcion, lugar, COALESCE(categoria,'personal') as categoria,
+                            todo_el_dia, '' as recurrencia,
+                            'pendiente' as estado, '' as cliente, 0 as es_tarea
                      FROM eventos WHERE usuario_id=? AND activo=1
                      ORDER BY fecha ASC, hora ASC""", (usuario_id,))
-    elif vista == 'pasados':
-        hoy = dt_mod.date.today().isoformat()
-        c.execute("""SELECT id, titulo, fecha, COALESCE(fecha_fin,''), hora, COALESCE(hora_fin,''),
-                            descripcion, lugar, COALESCE(categoria,'personal'),
-                            todo_el_dia, COALESCE(recurrencia,''),
-                            COALESCE(estado,'pendiente'), COALESCE(cliente,''), COALESCE(es_tarea,0)
-                     FROM eventos WHERE usuario_id=? AND activo=1
-                     AND ((COALESCE(NULLIF(fecha_fin,''), fecha)) < ? OR COALESCE(cerrado,0) = 1)
-                     ORDER BY fecha DESC, hora DESC LIMIT 50""", (usuario_id, hoy))
-    else:
-        hoy = dt_mod.date.today().isoformat()
-        c.execute("""SELECT id, titulo, fecha, COALESCE(fecha_fin,''), hora, COALESCE(hora_fin,''),
-                            descripcion, lugar, COALESCE(categoria,'personal'),
-                            todo_el_dia, COALESCE(recurrencia,''),
-                            COALESCE(estado,'pendiente'), COALESCE(cliente,''), COALESCE(es_tarea,0)
-                     FROM eventos WHERE usuario_id=? AND activo=1
-                     AND (COALESCE(NULLIF(fecha_fin,''), fecha)) >= ?
-                     AND (COALESCE(cerrado,0) = 0)
-                     ORDER BY fecha ASC, hora ASC""", (usuario_id, hoy))
-    rows = c.fetchall()
+        rows = c.fetchall()
     conn.close()
     eventos = [{'id':r[0],'titulo':r[1],'fecha':r[2],'fecha_fin':r[3],'hora':r[4],'hora_fin':r[5],
                 'descripcion':r[6],'lugar':r[7],'categoria':r[8],'todo_el_dia':r[9],
