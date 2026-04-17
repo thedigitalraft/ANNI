@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.01.96"
+ANNI_VERSION = "1.01.97"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -6564,6 +6564,22 @@ var MV_TIPOS = [
       };
       guardarHitoTipado(payload);
     }
+  },
+  {
+    tipo: '_otros',
+    label: 'Otros',
+    icon: '📌',
+    desc: 'Memorias sin categoría específica',
+    campos: function(h){
+      h=h||{};
+      return mkF('TÍTULO', mkI('mv-titulo_otros', h.titulo||'', 'Título', true))+
+             mkF('CONTENIDO', mkTA('mv-contenido_otros', h.contenido||'', 'Descripción o contenido'));
+    },
+    guardar: function(form){
+      var titulo=fval(form,'mv-titulo_otros');
+      if(!titulo){alert('El título es obligatorio');return;}
+      guardarHitoTipado({titulo:titulo.toUpperCase(), categoria:'manual', tipo_nuevo:'manual', contenido:fval(form,'mv-contenido_otros')||titulo});
+    }
   }
 ];
 
@@ -6698,12 +6714,21 @@ function loadMVPage(){
   fetch('/api/hitos').then(r=>r.json()).then(function(d){
     var hitos=d.hitos||[];
 
+    var tiposConocidos = MV_TIPOS.filter(function(d){return d.tipo!=='_otros';}).map(function(d){return d.tipo;});
     MV_TIPOS.forEach(function(def){
       // Filtrar hitos de este tipo
-      var del_tipo=hitos.filter(function(h){
-        return (h.tipo||'').toLowerCase()===(def.tipo||'').toLowerCase() ||
-               (h.categoria||'').toLowerCase()===(def.tipo||'').toLowerCase();
-      });
+      var del_tipo;
+      if(def.tipo === '_otros'){
+        del_tipo = hitos.filter(function(h){
+          var t=(h.tipo||'').toLowerCase();
+          return tiposConocidos.indexOf(t) === -1;
+        });
+      } else {
+        del_tipo=hitos.filter(function(h){
+          return (h.tipo||'').toLowerCase()===(def.tipo||'').toLowerCase() ||
+                 (h.categoria||'').toLowerCase()===(def.tipo||'').toLowerCase();
+        });
+      }
 
       // Acordeón
       var acc=document.createElement('div');
