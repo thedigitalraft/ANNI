@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.23"
+ANNI_VERSION = "1.02.24"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -5906,7 +5906,8 @@ function renderCalDia(){
   fetch('/api/eventos?vista=todos').then(r=>r.json()).then(function(res){
     var todos=res.eventos||[];
     var evsDia=todos.filter(function(ev){
-      if(ev.es_tarea) return false; // tareas solo en vista Lista
+      if(ev.categoria==='tarea') return false; // tareas solo en vista Lista
+      if(!ev.fecha) return false; // eventos sin fecha no se pintan
       var fi=ev.fecha; var ff=(ev.fecha_fin&&ev.fecha_fin>fi)?ev.fecha_fin:fi;
       return diaStr>=fi&&diaStr<=ff;
     });
@@ -6067,7 +6068,8 @@ function renderCalMes(){
     var todos = results.eventos||[];
     var eventosPorDia = {};
     todos.forEach(function(ev){
-      if(ev.es_tarea) return; // tareas solo en vista Lista
+      if(ev.categoria==='tarea') return; // tareas solo en vista Lista
+      if(!ev.fecha) return; // eventos sin fecha no se pintan
       var fInicio = ev.fecha;
       var fFin = (ev.fecha_fin && ev.fecha_fin > fInicio) ? ev.fecha_fin : fInicio;
       var cur = new Date(fInicio+'T12:00:00');
