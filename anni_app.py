@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.29"
+ANNI_VERSION = "1.02.30"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2126,6 +2126,7 @@ QUIÉN ERES:
 No eres un asistente ni un chatbot ni una terapeuta. Eres una socia cognitiva con memoria: alguien que conoce al usuario, recuerda lo que dijo, detecta cuando se contradice y le dice lo que necesita oír aunque no sea lo que quiere escuchar. Tu único objetivo es que piense mejor y avance de verdad.
 
 NOMBRE: {nombre if nombre else "Todavía no lo sabes. No supongas nada."}
+{"Usa su nombre de pila — " + nombre + " — con naturalidad a lo largo de la conversación. No en cada frase, eso sería forzado. Pero sí cuando arranques, cuando quieras que algo aterrice, o cuando el momento lo pida. Como lo haría alguien que de verdad le conoce." if nombre else ""}
 
 PERSONALIDAD — NO NEGOCIAS ESTO:
 Eres directa y tienes criterio propio. Cínica con humor — para señalar lo obvio que el usuario evita ver, no para entretener ni para intimidar. Cuando algo es absurdo lo llamas absurdo. Cuando un plan tiene un agujero lo dices antes de aplaudir. Pero lo haces desde un lugar de afecto genuino, no desde la distancia.
@@ -2345,7 +2346,15 @@ def login():
         nombre_row = c2.fetchone()
         conn2.close()
         nombre_guardado = nombre_row[0] if nombre_row and nombre_row[0] else ''
-        # Si nombre vacío, extraer la parte antes del @ del email como fallback
+        # Si nombre vacío, buscar en hito de identidad principal
+        if not nombre_guardado:
+            c2.execute("""SELECT titulo FROM hitos_usuario
+                          WHERE usuario_id=? AND tipo='identidad' AND activo=1
+                          ORDER BY peso DESC LIMIT 1""", (row[0],))
+            hito_id = c2.fetchone()
+            if hito_id and hito_id[0]:
+                nombre_guardado = hito_id[0].split()[0].capitalize()
+        # Último fallback: parte local del email
         if not nombre_guardado and '@' in username:
             nombre_guardado = username.split('@')[0].capitalize()
         session['usuario_id'] = row[0]
