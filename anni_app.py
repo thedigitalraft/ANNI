@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.28"
+ANNI_VERSION = "1.02.29"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -3666,6 +3666,7 @@ camera.position.set(0, 0, 380);
 const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
+renderer.setClearColor(0x000000, 1);
 document.body.appendChild(renderer.domElement);
 
 // Stars — dense colored field
