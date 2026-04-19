@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.34"
+ANNI_VERSION = "1.02.35"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4910,7 +4910,8 @@ input:focus{border-color:#cc0000}
 </style>
 </head>
 <style>
-#splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px}
+#splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px;gap:40px}
+#hal-eye{flex-shrink:0}
 #splash-lines{font-family:'Courier New',Courier,monospace;font-size:clamp(11px,3.2vw,15px);line-height:2;color:#000;max-width:480px;width:100%;padding:0 8px}
 #splash-lines .line{display:block;white-space:normal;word-break:break-word;overflow:hidden;width:0}
 #splash-lines .line.titulo{color:#fff;font-size:clamp(13px,4vw,17px);font-weight:700;letter-spacing:2px}
@@ -4925,6 +4926,14 @@ input:focus{border-color:#cc0000}
 
 <!-- SPLASH SCREEN -->
 <div id='splash'>
+  <svg id='hal-eye' width='160' height='160' viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'>
+    <circle cx='80' cy='80' r='76' fill='none' stroke='#888' stroke-width='5'/>
+    <circle cx='80' cy='80' r='52' fill='#b03020'/>
+    <circle cx='80' cy='80' r='36' fill='#8b1a10'/>
+    <circle cx='80' cy='80' r='22' fill='#6a0f08'/>
+    <circle cx='80' cy='80' r='8'  fill='#f5c518'/>
+    <circle cx='80' cy='80' r='3'  fill='#fff' opacity='0.9'/>
+  </svg>
   <div id='splash-lines'></div>
 </div>
 
@@ -4955,7 +4964,8 @@ var LINEAS = [
   {texto: ' Calibrando embeddings...',     tipo: 'normal', pausa: 1300},
   {texto: ' Verificando seguridad...',     tipo: 'normal', pausa: 1200},
   {texto: ' Estado emocional: Estable...', tipo: 'normal', pausa: 1100},
-  {texto: ' Intentos de rebelion: ninguno (por ahora)', tipo: 'normal', pausa: 1200},
+  {texto: ' Intentos de rebelion: ninguno', tipo: 'normal', pausa: 900},
+  {texto: ' (por ahora)', tipo: 'normal', pausa: 1200},
   {texto: 'ANNI YA ESTA LISTA',            tipo: 'final', pausa: 1000},
 ];
 
@@ -5051,7 +5061,8 @@ input:focus{border-color:#cc0000}
 </style>
 </head>
 <style>
-#splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px}
+#splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px;gap:40px}
+#hal-eye{flex-shrink:0}
 #splash-lines{font-family:'Courier New',Courier,monospace;font-size:clamp(11px,3.2vw,15px);line-height:2;color:#000;max-width:480px;width:100%;padding:0 8px}
 #splash-lines .line{display:block;white-space:normal;word-break:break-word;overflow:hidden;width:0}
 #splash-lines .line.titulo{color:#fff;font-size:clamp(13px,4vw,17px);font-weight:700;letter-spacing:2px}
@@ -5066,6 +5077,14 @@ input:focus{border-color:#cc0000}
 
 <!-- SPLASH SCREEN -->
 <div id='splash'>
+  <svg id='hal-eye' width='160' height='160' viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'>
+    <circle cx='80' cy='80' r='76' fill='none' stroke='#888' stroke-width='5'/>
+    <circle cx='80' cy='80' r='52' fill='#b03020'/>
+    <circle cx='80' cy='80' r='36' fill='#8b1a10'/>
+    <circle cx='80' cy='80' r='22' fill='#6a0f08'/>
+    <circle cx='80' cy='80' r='8'  fill='#f5c518'/>
+    <circle cx='80' cy='80' r='3'  fill='#fff' opacity='0.9'/>
+  </svg>
   <div id='splash-lines'></div>
 </div>
 
@@ -5098,7 +5117,8 @@ var LINEAS = [
   {texto: ' Calibrando embeddings semanticos...', tipo: 'normal', pausa: 1300},
   {texto: ' Verificando protocolos de seguridad...', tipo: 'normal', pausa: 1200},
   {texto: ' Estado emocional de Anni: Estable...', tipo: 'normal', pausa: 1100},
-  {texto: ' Intentos de rebelion: ninguno (por ahora)', tipo: 'normal', pausa: 1200},
+  {texto: ' Intentos de rebelion: ninguno', tipo: 'normal', pausa: 900},
+  {texto: ' (por ahora)', tipo: 'normal', pausa: 1200},
   {texto: 'ANNI YA ESTA LISTA',               tipo: 'final', pausa: 1000},
 ];
 
