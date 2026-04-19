@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.30"
+ANNI_VERSION = "1.02.31"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -1438,7 +1438,7 @@ Total: 250-350 palabras.""",
     try:
         if use_web and anthropic_client:
             resp = anthropic_client.messages.create(
-                model=modelo_override or CHAT_MODEL,
+                model=CHAT_MODEL,
                 max_tokens=800,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
                 messages=[{"role": "user", "content": prompt}]
