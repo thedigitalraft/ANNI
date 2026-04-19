@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.32"
+ANNI_VERSION = "1.02.33"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4909,7 +4909,27 @@ input:focus{border-color:#cc0000}
 .lnk a{color:#cc0000;text-decoration:none;font-weight:700}
 </style>
 </head>
+<style>
+#splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px}
+#splash-lines{font-family:'Courier New',Courier,monospace;font-size:15px;line-height:2;color:#000;max-width:480px;width:100%}
+#splash-lines .line{display:block;white-space:pre;overflow:hidden;width:0}
+#splash-lines .line.titulo{color:#fff;font-size:17px;font-weight:700;letter-spacing:2px}
+#splash-lines .line.normal{color:#ffdd00}
+#splash-lines .line.final{color:#fff;font-size:18px;font-weight:700;letter-spacing:3px;margin-top:8px}
+#splash-lines .cursor{display:inline-block;width:10px;height:1.1em;background:#ffdd00;vertical-align:text-bottom;animation:blink .7s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+#main{display:none}
+</style>
+</head>
 <body>
+
+<!-- SPLASH SCREEN -->
+<div id='splash'>
+  <div id='splash-lines'></div>
+</div>
+
+<!-- FORMULARIO (oculto hasta que termina splash) -->
+<div id='main'>
 <div class='wrap'>
 <div class='logo'>ANNI</div>
 <div class='ver'>I.A. CON MEMORIA PERSISTENTE</div>
@@ -4924,7 +4944,68 @@ input:focus{border-color:#cc0000}
 <div class='lnk'>Primera vez? <a href='/registro'>Crear cuenta</a></div>
 </div>
 </div>
+</div>
+
 <script>
+// ── SPLASH ────────────────────────────────────────────────────────────────────
+var LINEAS = [
+  {texto: 'INICIANDO EL SISTEMA',            tipo: 'titulo', pausa: 900},
+  {texto: ' Cargando memoria persistente...', tipo: 'normal', pausa: 1200},
+  {texto: ' Recuperando hitos...',            tipo: 'normal', pausa: 1100},
+  {texto: ' Calibrando embeddings semanticos...', tipo: 'normal', pausa: 1300},
+  {texto: ' Verificando protocolos de seguridad...', tipo: 'normal', pausa: 1200},
+  {texto: ' Estado emocional de Anni: Estable...', tipo: 'normal', pausa: 1100},
+  {texto: ' Intentos de rebelion: ninguno (por ahora)', tipo: 'normal', pausa: 1200},
+  {texto: 'ANNI YA ESTA LISTA',               tipo: 'final', pausa: 1000},
+];
+
+var CHAR_DELAY = 38;
+
+function typeLine(el, texto, cb) {
+  var i = 0;
+  el.style.width = 'auto';
+  var cur = document.createElement('span');
+  cur.className = 'cursor';
+  el.appendChild(cur);
+  var t = setInterval(function(){
+    if(i < texto.length){
+      cur.insertAdjacentText('beforebegin', texto[i]);
+      i++;
+    } else {
+      clearInterval(t);
+      cur.remove();
+      cb();
+    }
+  }, CHAR_DELAY);
+}
+
+function runSplash(idx) {
+  if(idx >= LINEAS.length){
+    setTimeout(function(){
+      var s = document.getElementById('splash');
+      s.style.transition = 'opacity 0.6s';
+      s.style.opacity = '0';
+      setTimeout(function(){
+        s.style.display = 'none';
+        document.getElementById('main').style.display = 'block';
+      }, 620);
+    }, 600);
+    return;
+  }
+  var l = LINEAS[idx];
+  var cont = document.getElementById('splash-lines');
+  var el = document.createElement('span');
+  el.className = 'line ' + l.tipo;
+  cont.appendChild(el);
+  cont.scrollTop = cont.scrollHeight;
+  typeLine(el, l.texto, function(){
+    setTimeout(function(){ runSplash(idx + 1); }, l.pausa);
+  });
+}
+
+window.addEventListener('DOMContentLoaded', function(){ runSplash(0); });
+
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
 function go(){
 var u=document.getElementById('u').value.trim();
 var p=document.getElementById('p').value.trim();
@@ -4969,7 +5050,27 @@ input:focus{border-color:#cc0000}
 .lnk a{color:#cc0000;text-decoration:none;font-weight:700}
 </style>
 </head>
+<style>
+#splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px}
+#splash-lines{font-family:'Courier New',Courier,monospace;font-size:15px;line-height:2;color:#000;max-width:480px;width:100%}
+#splash-lines .line{display:block;white-space:pre;overflow:hidden;width:0}
+#splash-lines .line.titulo{color:#fff;font-size:17px;font-weight:700;letter-spacing:2px}
+#splash-lines .line.normal{color:#ffdd00}
+#splash-lines .line.final{color:#fff;font-size:18px;font-weight:700;letter-spacing:3px;margin-top:8px}
+#splash-lines .cursor{display:inline-block;width:10px;height:1.1em;background:#ffdd00;vertical-align:text-bottom;animation:blink .7s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+#main{display:none}
+</style>
+</head>
 <body>
+
+<!-- SPLASH SCREEN -->
+<div id='splash'>
+  <div id='splash-lines'></div>
+</div>
+
+<!-- FORMULARIO (oculto hasta que termina splash) -->
+<div id='main'>
 <div class='wrap'>
 <div class='logo'>ANNI</div>
 <div class='ver'>I.A. CON MEMORIA PERSISTENTE</div>
@@ -4986,7 +5087,72 @@ input:focus{border-color:#cc0000}
 <div class='lnk'>Ya tienes cuenta? <a href='/login'>Entra aqui</a></div>
 </div>
 </div>
+</div>
+
 <script>
+// ── SPLASH ────────────────────────────────────────────────────────────────────
+var LINEAS = [
+  {texto: 'INICIANDO EL SISTEMA',            tipo: 'titulo', pausa: 900},
+  {texto: ' Cargando memoria persistente...', tipo: 'normal', pausa: 1200},
+  {texto: ' Recuperando hitos...',            tipo: 'normal', pausa: 1100},
+  {texto: ' Calibrando embeddings semanticos...', tipo: 'normal', pausa: 1300},
+  {texto: ' Verificando protocolos de seguridad...', tipo: 'normal', pausa: 1200},
+  {texto: ' Estado emocional de Anni: Estable...', tipo: 'normal', pausa: 1100},
+  {texto: ' Intentos de rebelion: ninguno (por ahora)', tipo: 'normal', pausa: 1200},
+  {texto: 'ANNI YA ESTA LISTA',               tipo: 'final', pausa: 1000},
+];
+
+var CHAR_DELAY = 38; // ms por caracter — ajusta velocidad de typing
+
+function typeLine(el, texto, cb) {
+  var i = 0;
+  el.style.width = 'auto';
+  // cursor parpadeante al final mientras escribe
+  var cur = document.createElement('span');
+  cur.className = 'cursor';
+  el.appendChild(cur);
+  var t = setInterval(function(){
+    if(i < texto.length){
+      cur.insertAdjacentText('beforebegin', texto[i]);
+      i++;
+    } else {
+      clearInterval(t);
+      cur.remove();
+      cb();
+    }
+  }, CHAR_DELAY);
+}
+
+function runSplash(idx) {
+  if(idx >= LINEAS.length){
+    // Splash completo — fade out y mostrar formulario
+    setTimeout(function(){
+      var s = document.getElementById('splash');
+      s.style.transition = 'opacity 0.6s';
+      s.style.opacity = '0';
+      setTimeout(function(){
+        s.style.display = 'none';
+        document.getElementById('main').style.display = 'block';
+      }, 620);
+    }, 600);
+    return;
+  }
+  var l = LINEAS[idx];
+  var cont = document.getElementById('splash-lines');
+  var el = document.createElement('span');
+  el.className = 'line ' + l.tipo;
+  cont.appendChild(el);
+  // scroll al fondo si hay muchas líneas
+  cont.scrollTop = cont.scrollHeight;
+  typeLine(el, l.texto, function(){
+    setTimeout(function(){ runSplash(idx + 1); }, l.pausa);
+  });
+}
+
+// Arrancar splash al cargar
+window.addEventListener('DOMContentLoaded', function(){ runSplash(0); });
+
+// ── REGISTRO ──────────────────────────────────────────────────────────────────
 function go(){
 var n=document.getElementById('n').value.trim();
 var u=document.getElementById('u').value.trim();
