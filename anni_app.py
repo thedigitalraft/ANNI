@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.31"
+ANNI_VERSION = "1.02.32"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -2344,7 +2344,6 @@ def login():
         c2 = conn2.cursor()
         c2.execute("SELECT nombre FROM usuarios WHERE id=?", (row[0],))
         nombre_row = c2.fetchone()
-        conn2.close()
         nombre_guardado = nombre_row[0] if nombre_row and nombre_row[0] else ''
         # Si nombre vacío, buscar en hito de identidad principal
         if not nombre_guardado:
@@ -2354,6 +2353,7 @@ def login():
             hito_id = c2.fetchone()
             if hito_id and hito_id[0]:
                 nombre_guardado = hito_id[0].split()[0].capitalize()
+        conn2.close()
         # Último fallback: parte local del email
         if not nombre_guardado and '@' in username:
             nombre_guardado = username.split('@')[0].capitalize()
