@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.36"
+ANNI_VERSION = "1.02.37"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4911,7 +4911,7 @@ input:focus{border-color:#cc0000}
 </head>
 <style>
 #splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px;gap:40px}
-#hal-eye{flex-shrink:0}#hal-wrap{display:flex;flex-direction:column;align-items:center;gap:16px;flex-shrink:0}#hal-titulo{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(36px,10vw,56px);font-weight:900;letter-spacing:4px;text-align:center;line-height:1}
+#hal-eye{flex-shrink:0}#hal-wrap{display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0}#hal-titulo{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(36px,10vw,56px);font-weight:900;letter-spacing:4px;text-align:center;line-height:1}#hal-sub1,#hal-sub2{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(12px,3.5vw,16px);font-weight:400;letter-spacing:1px;text-align:center;line-height:1.4;opacity:0.85}#hal-cred{color:#ffdd00;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(11px,3vw,14px);font-weight:500;letter-spacing:0.5px;text-align:center;margin-top:6px}
 #splash-lines{font-family:'Courier New',Courier,monospace;font-size:clamp(11px,3.2vw,15px);line-height:2;color:#000;max-width:480px;width:100%;padding:0 8px}
 #splash-lines .line{display:block;white-space:normal;word-break:break-word;overflow:hidden;width:0}
 #splash-lines .line.titulo{color:#fff;font-size:clamp(13px,4vw,17px);font-weight:700;letter-spacing:2px}
@@ -4928,6 +4928,9 @@ input:focus{border-color:#cc0000}
 <div id='splash'>
   <div id='hal-wrap'>
     <div id='hal-titulo'>ANNI</div>
+    <div id='hal-sub1'>Cognitive Assistant</div>
+    <div id='hal-sub2'>with Persistent Memory</div>
+    <div id='hal-cred'>Created by Rafa Torrijos</div>
     <svg id='hal-eye' width='160' height='160' viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'>
       <circle cx='80' cy='80' r='76' fill='none' stroke='#888' stroke-width='5'/>
       <circle cx='80' cy='80' r='52' fill='#b03020'/>
@@ -5065,7 +5068,7 @@ input:focus{border-color:#cc0000}
 </head>
 <style>
 #splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px;gap:40px}
-#hal-eye{flex-shrink:0}#hal-wrap{display:flex;flex-direction:column;align-items:center;gap:16px;flex-shrink:0}#hal-titulo{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(36px,10vw,56px);font-weight:900;letter-spacing:4px;text-align:center;line-height:1}
+#hal-eye{flex-shrink:0}#hal-wrap{display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0}#hal-titulo{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(36px,10vw,56px);font-weight:900;letter-spacing:4px;text-align:center;line-height:1}#hal-sub1,#hal-sub2{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(12px,3.5vw,16px);font-weight:400;letter-spacing:1px;text-align:center;line-height:1.4;opacity:0.85}#hal-cred{color:#ffdd00;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(11px,3vw,14px);font-weight:500;letter-spacing:0.5px;text-align:center;margin-top:6px}
 #splash-lines{font-family:'Courier New',Courier,monospace;font-size:clamp(11px,3.2vw,15px);line-height:2;color:#000;max-width:480px;width:100%;padding:0 8px}
 #splash-lines .line{display:block;white-space:normal;word-break:break-word;overflow:hidden;width:0}
 #splash-lines .line.titulo{color:#fff;font-size:clamp(13px,4vw,17px);font-weight:700;letter-spacing:2px}
@@ -5082,6 +5085,9 @@ input:focus{border-color:#cc0000}
 <div id='splash'>
   <div id='hal-wrap'>
     <div id='hal-titulo'>ANNI</div>
+    <div id='hal-sub1'>Cognitive Assistant</div>
+    <div id='hal-sub2'>with Persistent Memory</div>
+    <div id='hal-cred'>Created by Rafa Torrijos</div>
     <svg id='hal-eye' width='160' height='160' viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'>
       <circle cx='80' cy='80' r='76' fill='none' stroke='#888' stroke-width='5'/>
       <circle cx='80' cy='80' r='52' fill='#b03020'/>
