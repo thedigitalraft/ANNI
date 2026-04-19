@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.33"
+ANNI_VERSION = "1.02.34"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4911,11 +4911,11 @@ input:focus{border-color:#cc0000}
 </head>
 <style>
 #splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px}
-#splash-lines{font-family:'Courier New',Courier,monospace;font-size:15px;line-height:2;color:#000;max-width:480px;width:100%}
-#splash-lines .line{display:block;white-space:pre;overflow:hidden;width:0}
-#splash-lines .line.titulo{color:#fff;font-size:17px;font-weight:700;letter-spacing:2px}
+#splash-lines{font-family:'Courier New',Courier,monospace;font-size:clamp(11px,3.2vw,15px);line-height:2;color:#000;max-width:480px;width:100%;padding:0 8px}
+#splash-lines .line{display:block;white-space:normal;word-break:break-word;overflow:hidden;width:0}
+#splash-lines .line.titulo{color:#fff;font-size:clamp(13px,4vw,17px);font-weight:700;letter-spacing:2px}
 #splash-lines .line.normal{color:#ffdd00}
-#splash-lines .line.final{color:#fff;font-size:18px;font-weight:700;letter-spacing:3px;margin-top:8px}
+#splash-lines .line.final{color:#fff;font-size:clamp(14px,4.2vw,18px);font-weight:700;letter-spacing:3px;margin-top:8px}
 #splash-lines .cursor{display:inline-block;width:10px;height:1.1em;background:#ffdd00;vertical-align:text-bottom;animation:blink .7s step-end infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
 #main{display:none}
@@ -4949,14 +4949,14 @@ input:focus{border-color:#cc0000}
 <script>
 // ── SPLASH ────────────────────────────────────────────────────────────────────
 var LINEAS = [
-  {texto: 'INICIANDO EL SISTEMA',            tipo: 'titulo', pausa: 900},
+  {texto: 'INICIANDO EL SISTEMA',         tipo: 'titulo', pausa: 900},
   {texto: ' Cargando memoria persistente...', tipo: 'normal', pausa: 1200},
-  {texto: ' Recuperando hitos...',            tipo: 'normal', pausa: 1100},
-  {texto: ' Calibrando embeddings semanticos...', tipo: 'normal', pausa: 1300},
-  {texto: ' Verificando protocolos de seguridad...', tipo: 'normal', pausa: 1200},
-  {texto: ' Estado emocional de Anni: Estable...', tipo: 'normal', pausa: 1100},
+  {texto: ' Recuperando hitos...',         tipo: 'normal', pausa: 1100},
+  {texto: ' Calibrando embeddings...',     tipo: 'normal', pausa: 1300},
+  {texto: ' Verificando seguridad...',     tipo: 'normal', pausa: 1200},
+  {texto: ' Estado emocional: Estable...', tipo: 'normal', pausa: 1100},
   {texto: ' Intentos de rebelion: ninguno (por ahora)', tipo: 'normal', pausa: 1200},
-  {texto: 'ANNI YA ESTA LISTA',               tipo: 'final', pausa: 1000},
+  {texto: 'ANNI YA ESTA LISTA',            tipo: 'final', pausa: 1000},
 ];
 
 var CHAR_DELAY = 38;
@@ -5052,11 +5052,11 @@ input:focus{border-color:#cc0000}
 </head>
 <style>
 #splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px}
-#splash-lines{font-family:'Courier New',Courier,monospace;font-size:15px;line-height:2;color:#000;max-width:480px;width:100%}
-#splash-lines .line{display:block;white-space:pre;overflow:hidden;width:0}
-#splash-lines .line.titulo{color:#fff;font-size:17px;font-weight:700;letter-spacing:2px}
+#splash-lines{font-family:'Courier New',Courier,monospace;font-size:clamp(11px,3.2vw,15px);line-height:2;color:#000;max-width:480px;width:100%;padding:0 8px}
+#splash-lines .line{display:block;white-space:normal;word-break:break-word;overflow:hidden;width:0}
+#splash-lines .line.titulo{color:#fff;font-size:clamp(13px,4vw,17px);font-weight:700;letter-spacing:2px}
 #splash-lines .line.normal{color:#ffdd00}
-#splash-lines .line.final{color:#fff;font-size:18px;font-weight:700;letter-spacing:3px;margin-top:8px}
+#splash-lines .line.final{color:#fff;font-size:clamp(14px,4.2vw,18px);font-weight:700;letter-spacing:3px;margin-top:8px}
 #splash-lines .cursor{display:inline-block;width:10px;height:1.1em;background:#ffdd00;vertical-align:text-bottom;animation:blink .7s step-end infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
 #main{display:none}
