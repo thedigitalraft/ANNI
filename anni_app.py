@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.35"
+ANNI_VERSION = "1.02.36"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4911,7 +4911,7 @@ input:focus{border-color:#cc0000}
 </head>
 <style>
 #splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px;gap:40px}
-#hal-eye{flex-shrink:0}
+#hal-eye{flex-shrink:0}#hal-wrap{display:flex;flex-direction:column;align-items:center;gap:16px;flex-shrink:0}#hal-titulo{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(36px,10vw,56px);font-weight:900;letter-spacing:4px;text-align:center;line-height:1}
 #splash-lines{font-family:'Courier New',Courier,monospace;font-size:clamp(11px,3.2vw,15px);line-height:2;color:#000;max-width:480px;width:100%;padding:0 8px}
 #splash-lines .line{display:block;white-space:normal;word-break:break-word;overflow:hidden;width:0}
 #splash-lines .line.titulo{color:#fff;font-size:clamp(13px,4vw,17px);font-weight:700;letter-spacing:2px}
@@ -4926,14 +4926,17 @@ input:focus{border-color:#cc0000}
 
 <!-- SPLASH SCREEN -->
 <div id='splash'>
-  <svg id='hal-eye' width='160' height='160' viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'>
-    <circle cx='80' cy='80' r='76' fill='none' stroke='#888' stroke-width='5'/>
-    <circle cx='80' cy='80' r='52' fill='#b03020'/>
-    <circle cx='80' cy='80' r='36' fill='#8b1a10'/>
-    <circle cx='80' cy='80' r='22' fill='#6a0f08'/>
-    <circle cx='80' cy='80' r='8'  fill='#f5c518'/>
-    <circle cx='80' cy='80' r='3'  fill='#fff' opacity='0.9'/>
-  </svg>
+  <div id='hal-wrap'>
+    <div id='hal-titulo'>ANNI</div>
+    <svg id='hal-eye' width='160' height='160' viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'>
+      <circle cx='80' cy='80' r='76' fill='none' stroke='#888' stroke-width='5'/>
+      <circle cx='80' cy='80' r='52' fill='#b03020'/>
+      <circle cx='80' cy='80' r='36' fill='#8b1a10'/>
+      <circle cx='80' cy='80' r='22' fill='#6a0f08'/>
+      <circle cx='80' cy='80' r='8'  fill='#f5c518'/>
+      <circle cx='80' cy='80' r='3'  fill='#fff' opacity='0.9'/>
+    </svg>
+  </div>
   <div id='splash-lines'></div>
 </div>
 
@@ -5062,7 +5065,7 @@ input:focus{border-color:#cc0000}
 </head>
 <style>
 #splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px;gap:40px}
-#hal-eye{flex-shrink:0}
+#hal-eye{flex-shrink:0}#hal-wrap{display:flex;flex-direction:column;align-items:center;gap:16px;flex-shrink:0}#hal-titulo{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(36px,10vw,56px);font-weight:900;letter-spacing:4px;text-align:center;line-height:1}
 #splash-lines{font-family:'Courier New',Courier,monospace;font-size:clamp(11px,3.2vw,15px);line-height:2;color:#000;max-width:480px;width:100%;padding:0 8px}
 #splash-lines .line{display:block;white-space:normal;word-break:break-word;overflow:hidden;width:0}
 #splash-lines .line.titulo{color:#fff;font-size:clamp(13px,4vw,17px);font-weight:700;letter-spacing:2px}
@@ -5077,14 +5080,17 @@ input:focus{border-color:#cc0000}
 
 <!-- SPLASH SCREEN -->
 <div id='splash'>
-  <svg id='hal-eye' width='160' height='160' viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'>
-    <circle cx='80' cy='80' r='76' fill='none' stroke='#888' stroke-width='5'/>
-    <circle cx='80' cy='80' r='52' fill='#b03020'/>
-    <circle cx='80' cy='80' r='36' fill='#8b1a10'/>
-    <circle cx='80' cy='80' r='22' fill='#6a0f08'/>
-    <circle cx='80' cy='80' r='8'  fill='#f5c518'/>
-    <circle cx='80' cy='80' r='3'  fill='#fff' opacity='0.9'/>
-  </svg>
+  <div id='hal-wrap'>
+    <div id='hal-titulo'>ANNI</div>
+    <svg id='hal-eye' width='160' height='160' viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'>
+      <circle cx='80' cy='80' r='76' fill='none' stroke='#888' stroke-width='5'/>
+      <circle cx='80' cy='80' r='52' fill='#b03020'/>
+      <circle cx='80' cy='80' r='36' fill='#8b1a10'/>
+      <circle cx='80' cy='80' r='22' fill='#6a0f08'/>
+      <circle cx='80' cy='80' r='8'  fill='#f5c518'/>
+      <circle cx='80' cy='80' r='3'  fill='#fff' opacity='0.9'/>
+    </svg>
+  </div>
   <div id='splash-lines'></div>
 </div>
 
