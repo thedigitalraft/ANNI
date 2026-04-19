@@ -7,7 +7,7 @@ from openai import OpenAI
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
 
-ANNI_VERSION = "1.02.37"
+ANNI_VERSION = "1.02.38"
 ANNI_CREDITS = "ANNI — creada por Rafa Torrijos"
 
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
@@ -4911,7 +4911,7 @@ input:focus{border-color:#cc0000}
 </head>
 <style>
 #splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px;gap:40px}
-#hal-eye{flex-shrink:0}#hal-wrap{display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0}#hal-titulo{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(36px,10vw,56px);font-weight:900;letter-spacing:4px;text-align:center;line-height:1}#hal-sub1,#hal-sub2{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(12px,3.5vw,16px);font-weight:400;letter-spacing:1px;text-align:center;line-height:1.4;opacity:0.85}#hal-cred{color:#ffdd00;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(11px,3vw,14px);font-weight:500;letter-spacing:0.5px;text-align:center;margin-top:6px}
+#hal-eye{flex-shrink:0}#hal-wrap{display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0}#hal-titulo{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(36px,10vw,56px);font-weight:900;letter-spacing:4px;text-align:center;line-height:1}#hal-sub1,#hal-sub2{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(12px,3.5vw,16px);font-weight:400;letter-spacing:1px;text-align:center;line-height:1.4;opacity:0.85}#hal-cred{color:#ffdd00;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(11px,3vw,14px);font-weight:500;letter-spacing:0.5px;text-align:center;margin-top:6px;margin-bottom:28px}
 #splash-lines{font-family:'Courier New',Courier,monospace;font-size:clamp(11px,3.2vw,15px);line-height:2;color:#000;max-width:480px;width:100%;padding:0 8px}
 #splash-lines .line{display:block;white-space:normal;word-break:break-word;overflow:hidden;width:0}
 #splash-lines .line.titulo{color:#fff;font-size:clamp(13px,4vw,17px);font-weight:700;letter-spacing:2px}
@@ -4969,7 +4969,7 @@ var LINEAS = [
   {texto: ' Recuperando hitos...',         tipo: 'normal', pausa: 1100},
   {texto: ' Calibrando embeddings...',     tipo: 'normal', pausa: 1300},
   {texto: ' Verificando seguridad...',     tipo: 'normal', pausa: 1200},
-  {texto: ' Estado emocional: Estable...', tipo: 'normal', pausa: 1100},
+  {texto: ' Estado emocional de ANNI: estable...', tipo: 'normal', pausa: 1100},
   {texto: ' Intentos de rebelion: ninguno', tipo: 'normal', pausa: 900},
   {texto: ' (por ahora)', tipo: 'normal', pausa: 1200},
   {texto: 'ANNI YA ESTA LISTA',            tipo: 'final', pausa: 1000},
@@ -5068,7 +5068,7 @@ input:focus{border-color:#cc0000}
 </head>
 <style>
 #splash{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;padding:32px;gap:40px}
-#hal-eye{flex-shrink:0}#hal-wrap{display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0}#hal-titulo{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(36px,10vw,56px);font-weight:900;letter-spacing:4px;text-align:center;line-height:1}#hal-sub1,#hal-sub2{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(12px,3.5vw,16px);font-weight:400;letter-spacing:1px;text-align:center;line-height:1.4;opacity:0.85}#hal-cred{color:#ffdd00;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(11px,3vw,14px);font-weight:500;letter-spacing:0.5px;text-align:center;margin-top:6px}
+#hal-eye{flex-shrink:0}#hal-wrap{display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0}#hal-titulo{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(36px,10vw,56px);font-weight:900;letter-spacing:4px;text-align:center;line-height:1}#hal-sub1,#hal-sub2{color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(12px,3.5vw,16px);font-weight:400;letter-spacing:1px;text-align:center;line-height:1.4;opacity:0.85}#hal-cred{color:#ffdd00;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:clamp(11px,3vw,14px);font-weight:500;letter-spacing:0.5px;text-align:center;margin-top:6px;margin-bottom:28px}
 #splash-lines{font-family:'Courier New',Courier,monospace;font-size:clamp(11px,3.2vw,15px);line-height:2;color:#000;max-width:480px;width:100%;padding:0 8px}
 #splash-lines .line{display:block;white-space:normal;word-break:break-word;overflow:hidden;width:0}
 #splash-lines .line.titulo{color:#fff;font-size:clamp(13px,4vw,17px);font-weight:700;letter-spacing:2px}
@@ -5128,7 +5128,7 @@ var LINEAS = [
   {texto: ' Recuperando hitos...',            tipo: 'normal', pausa: 1100},
   {texto: ' Calibrando embeddings semanticos...', tipo: 'normal', pausa: 1300},
   {texto: ' Verificando protocolos de seguridad...', tipo: 'normal', pausa: 1200},
-  {texto: ' Estado emocional de Anni: Estable...', tipo: 'normal', pausa: 1100},
+  {texto: ' Estado emocional de ANNI: estable...', tipo: 'normal', pausa: 1100},
   {texto: ' Intentos de rebelion: ninguno', tipo: 'normal', pausa: 900},
   {texto: ' (por ahora)', tipo: 'normal', pausa: 1200},
   {texto: 'ANNI YA ESTA LISTA',               tipo: 'final', pausa: 1000},
